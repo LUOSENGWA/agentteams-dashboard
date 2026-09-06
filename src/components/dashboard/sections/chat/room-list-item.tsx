@@ -83,19 +83,19 @@ export function RoomListItem({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <p className="font-medium text-sm truncate">{room.name}</p>
-            {room.phase && (
+            {room.phase ? (
               <Badge
                 variant="outline"
                 className={`text-[8px] px-1 py-0 h-3.5 shrink-0 ${PHASE_COLOR[room.phase] || ''}`}
               >
                 {room.phase}
               </Badge>
-            )}
-            {room.runtime && (
+            ) : null}
+            {room.runtime ? (
               <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 shrink-0">
                 {RUNTIME_LABELS[room.runtime] || room.runtime}
               </Badge>
-            )}
+            ) : null}
           </div>
           <p className="text-[10px] text-muted-foreground truncate mt-0.5">
             {room.lastMessagePreview || room.parentTeam || room.id}

@@ -81,4 +81,21 @@ describe('ChatRoomSidebar', () => {
     expect(screen.getByText('最新一条')).toBeInTheDocument();
     expect(screen.getByText('QwenPaw')).toBeInTheDocument();
   });
+
+  it('omits the runtime badge and never renders the literal "undefined" when phase/runtime are missing', () => {
+    const sparseRoom = room({
+      id: '!sparse:test',
+      name: 'Sparse',
+      type: 'worker',
+      // intentionally no phase, no runtime, no preview
+    });
+    renderSidebar({ rooms: [sparseRoom] });
+    // No undefined leakage anywhere in the document body.
+    expect(document.body.textContent).not.toMatch(/undefined/);
+    // The runtime badge would have rendered 'QwenPaw' for the old fixture;
+    // assert that the sparse room does NOT get one.
+    const sparseButton = screen.getByText('Sparse').closest('button');
+    expect(sparseButton).not.toBeNull();
+    expect(sparseButton?.querySelectorAll('span').length ?? 0).toBe(0);
+  });
 });
