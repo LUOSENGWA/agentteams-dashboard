@@ -1,5 +1,5 @@
-import { afterEach, describe, expect, it } from 'vitest';
-import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { TooltipProvider } from '@/components/ui/tooltip';
 import { WorkerCard } from './worker-card';
@@ -25,7 +25,10 @@ function makeWorker(overrides: Partial<WorkerResponse> = {}): WorkerResponse {
   };
 }
 
-function renderCard(worker: WorkerResponse, opts: { isDeleting?: boolean } = {}) {
+function renderCard(
+  worker: WorkerResponse,
+  opts: { isDeleting?: boolean; onOpenChat?: () => void } = {},
+) {
   return render(
     <TooltipProvider>
       <WorkerCard
@@ -35,6 +38,7 @@ function renderCard(worker: WorkerResponse, opts: { isDeleting?: boolean } = {})
         onToggleSelect={() => {}}
         onView={() => {}}
         onEdit={() => {}}
+        onOpenChat={opts.onOpenChat}
         onWake={() => {}}
         onSleep={() => {}}
         onEnsureReady={() => {}}
@@ -139,6 +143,18 @@ describe('WorkerCard v2', () => {
     expect(screen.getByTestId('deleting-overlay')).toBeInTheDocument();
     expect(screen.getByRole('status')).toHaveTextContent('删除中，等待 Controller 完成任务');
     expect(screen.getByRole('button', { name: '选择' })).toBeDisabled();
+  });
+
+  it('opens chat when the worker has a roomID', () => {
+    const onOpenChat = vi.fn();
+    renderCard(makeWorker(), { onOpenChat });
+    fireEvent.click(screen.getByRole('button', { name: '打开聊天' }));
+    expect(onOpenChat).toHaveBeenCalledTimes(1);
+  });
+
+  it('disables open chat when the worker has no roomID', () => {
+    renderCard(makeWorker({ roomID: '' }), { onOpenChat: vi.fn() });
+    expect(screen.getByRole('button', { name: '打开聊天' })).toBeDisabled();
   });
 
   it('uses tier wording instead of a bare health score (AC-W8)', () => {

@@ -17,23 +17,44 @@ function badRequest(message: string): NextResponse {
   return NextResponse.json({ success: false, error: message }, { status: 400 });
 }
 
-function isAdminLevel(value: string | null): boolean {
+/** Level 3+ is admin (sees all events). Level 2+ can audit their own actions. */
+function isAuditorLevel(value: string | null): boolean {
   if (!value) return false;
   const level = Number(value);
-  return Number.isFinite(level) && level >= 3;
+  return Number.isFinite(level) && level >= 2;
 }
 
 /**
  * GET /api/agentteams/audit?from=&to=&entityType=&limit=
  *
- * Lists recent audit events. Admin-only — the dashboard is the canonical
- * viewer for this data, and downstream operator personas are at level 3.
+ * Lists recent audit events. Admin (L3+) sees every event; auditors (L2+)
+ * are restricted to events they themselves performed so they can review
+ * their own actions without seeing other operators' traffic. L1 and below
+ * are denied. The dashboard is the canonical viewer for this data.
  */
 export async function GET(request: NextRequest) {
-  if (!isAdminLevel(request.headers.get(SERVER_USER_LEVEL_HEADER))) {
-    return NextResponse.json({ success: false, error: '需要管理员权限' }, { status: 403 });
+  const levelHeader = request.headers.get(SERVER_USER_LEVEL_HEADER);
+  const observedLevel = levelHeader == null
+    ? null
+    : (Number.isFinite(Number(levelHeader)) ? Number(levelHeader) : null);
+
+  const identity = readServerIdentity(request);
+  if (!identity || !isAuditorLevel(levelHeader)) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: '需要审计权限',
+        observedLevel,
+        requiredLevel: 2,
+      },
+      { status: 403 },
+    );
   }
 
+  // L3+ are platform admins (promoted by the Higress session map); L2 are
+  // operators who can audit only their own actions so the dashboard
+  // doesn't leak other operators' governance traffic.
+  const isAdmin = identity.level >= 3;
   const params = request.nextUrl.searchParams;
   const from = params.get('from');
   const to = params.get('to');
@@ -62,9 +83,14 @@ export async function GET(request: NextRequest) {
     if (!Number.isFinite(limit) || limit <= 0) return badRequest('limit 必须为正整数');
     query.limit = limit;
   }
+  if (!isAdmin) {
+    // Non-admins can only audit themselves; server enforces the scope so a
+    // tampered client cannot bypass by omitting the filter.
+    query.actor = identity.name;
+  }
 
   const events = await listAuditEvents(query);
-  return NextResponse.json({ success: true, events });
+  return NextResponse.json({ success: true, events, scope: isAdmin ? 'all' : 'self' });
 }
 
 /**

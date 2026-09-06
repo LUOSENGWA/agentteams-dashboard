@@ -24,6 +24,9 @@ export interface AuditEventsResponse {
   success: boolean;
   events?: AuditEvent[];
   error?: string;
+  observedLevel?: number | null;
+  requiredLevel?: number;
+  scope?: 'all' | 'self';
 }
 
 /**
@@ -46,7 +49,13 @@ export function useAuditEvents(query: AuditQuery = {}) {
         credentials: 'same-origin',
       });
       if (res.status === 403) {
-        return { success: false, error: '需要管理员权限' };
+        const body = (await res.json().catch(() => ({}))) as Partial<AuditEventsResponse>;
+        return {
+          success: false,
+          error: '需要管理员权限',
+          observedLevel: body.observedLevel ?? null,
+          requiredLevel: body.requiredLevel ?? 3,
+        };
       }
       if (!res.ok) {
         const text = await res.text().catch(() => '');

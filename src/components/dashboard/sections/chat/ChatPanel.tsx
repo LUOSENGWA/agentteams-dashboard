@@ -19,6 +19,8 @@ export function ChatPanel({ room, canSend = true, onSendMessage, className = '' 
           roomName={room.name}
           team={room.team}
           defaultWorkerName={room.workerName}
+          roomPhase={room.phase}
+          roomRuntime={room.runtime}
           topic={room.parentTeam ? `团队: ${room.parentTeam}` : undefined}
           canSend={canSend}
           onSendMessage={onSendMessage}

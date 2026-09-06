@@ -38,6 +38,8 @@ export interface AuditQuery {
   from?: number;
   to?: number;
   entityType?: AuditEventInput['entity_type'];
+  /** Restrict to events performed by this actor (case-sensitive exact match). */
+  actor?: string;
   limit?: number;
 }
 
@@ -179,10 +181,11 @@ export async function listAuditEvents(query: AuditQuery = {}): Promise<AuditEven
       for (let i = lines.length - 1; i >= 0; i--) {
         const record = parseLine(lines[i]);
         if (!record) continue;
-        if (record.timestamp < from) break;
-        if (record.timestamp > to) continue;
-        if (query.entityType && record.entity_type !== query.entityType) continue;
-        collected.push(record);
+          if (record.timestamp < from) break;
+          if (record.timestamp > to) continue;
+          if (query.entityType && record.entity_type !== query.entityType) continue;
+          if (query.actor && record.actor !== query.actor) continue;
+          collected.push(record);
         if (collected.length >= limit) return collected;
       }
     } catch (err) {

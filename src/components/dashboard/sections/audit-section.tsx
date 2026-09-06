@@ -69,7 +69,11 @@ export function AuditSection() {
     <div className="space-y-4">
       <SectionHeader
         title="审计日志"
-        description="服务端记录的治理事件（mutation、RBAC 拒绝、登录等）。10 MB 自动 rotate，保留 30 份归档。"
+        description={
+          data?.scope === 'self'
+            ? '服务端记录的治理事件。L2 操作员视图仅显示你本人执行的操作；L3+ 平台管理员可查看全部。'
+            : '服务端记录的治理事件（mutation、RBAC 拒绝、登录等）。10 MB 自动 rotate，保留 30 份归档。'
+        }
       />
 
       <Card>
@@ -107,15 +111,24 @@ export function AuditSection() {
           {data && data.success === false ? (
             <div className="flex items-start gap-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden />
-              <div>
-                  <p className="font-medium text-amber-700 dark:text-amber-300">{data.error}</p>
-                  <p className="text-xs text-muted-foreground">该视图仅对权限等级 ≥ 3 的管理员开放</p>
-                </div>
+              <div className="space-y-1">
+                <p className="font-medium text-amber-700 dark:text-amber-300">{data.error}</p>
+                <p className="text-xs text-muted-foreground">
+                  {data.observedLevel == null
+                    ? '服务端未收到身份头 — 当前可能处于 AGENTTEAMS_AUTH_DISABLED 本地模式或 Higress session 未透传'
+                    : `服务端识别到权限等级 L${data.observedLevel}，审计视图要求 ≥ L${data.requiredLevel ?? 2}。L3+ 平台管理员可在 Higress Console 提权；L2 操作员只能看到自己执行的事件`}
+                </p>
+              </div>
             </div>
           ) : isLoading ? (
             <p className="py-6 text-center text-sm text-muted-foreground">加载中...</p>
           ) : !data?.events?.length ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">暂无审计事件</p>
+            <div className="space-y-2 py-6 text-center text-sm text-muted-foreground">
+              <p>暂无审计事件</p>
+              {data?.scope === 'self' ? (
+                <p className="text-xs">视图已限定为你本人执行的治理操作</p>
+              ) : null}
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">

@@ -9,6 +9,7 @@ import { useWorkers } from '@/hooks/use-agentteams-workers';
 import { useTeams } from '@/hooks/use-agentteams-teams';
 import { useManagers } from '@/hooks/use-agentteams-managers';
 import { useSectionStore } from '@/lib/section-store';
+import { openChatRoom } from '@/lib/open-chat-room';
 import {
   selectConfirmationList,
   useHitlInboxStore,
@@ -23,11 +24,6 @@ function formatRelativeTime(timestamp: number): string {
   if (diff < 3600000) return `${Math.floor(diff / 60000)}分钟前`;
   if (diff < 86400000) return `${Math.floor(diff / 3600000)}小时前`;
   return `${Math.floor(diff / 86400000)}天前`;
-}
-
-function openChatRoom(roomId: string) {
-  useHitlInboxStore.getState().setPendingChatRoomId(roomId);
-  useSectionStore.getState().setActiveSection('chat');
 }
 
 function openProject(key: PendingProjectKey) {

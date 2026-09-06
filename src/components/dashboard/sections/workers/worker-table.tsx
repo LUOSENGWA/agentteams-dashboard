@@ -1,6 +1,6 @@
 'use client';
 
-import { Bot, CheckSquare, Eye, Moon, Pencil, Rocket, Square, Sun, Trash2 } from 'lucide-react';
+import { Bot, CheckSquare, Eye, MessageSquare, Moon, Pencil, Rocket, Square, Sun, Trash2 } from 'lucide-react';
 import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -31,6 +31,7 @@ export function WorkerTable({
   onToggleSelect,
   onView,
   onEdit,
+  onOpenChat,
   onWake,
   onSleep,
   onEnsureReady,
@@ -44,6 +45,7 @@ export function WorkerTable({
   onToggleSelect: (_name: string) => void;
   onView: (_worker: WorkerResponse) => void;
   onEdit: (_worker: WorkerResponse) => void;
+  onOpenChat?: (_worker: WorkerResponse) => void;
   onWake: (_name: string) => void;
   onSleep: (_name: string) => void;
   onEnsureReady: (_name: string) => void;
@@ -175,6 +177,17 @@ export function WorkerTable({
                     disabled={isDeleting}
                   >
                     <Pencil className="w-3.5 h-3.5" aria-hidden="true" />
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    onClick={() => onOpenChat?.(worker)}
+                    title="打开聊天"
+                    aria-label={`打开 ${worker.name} 聊天`}
+                    disabled={isDeleting || !worker.roomID || !onOpenChat}
+                  >
+                    <MessageSquare className="w-3.5 h-3.5" aria-hidden="true" />
                   </Button>
                   {worker.state === 'Sleeping' && (
                     <Button

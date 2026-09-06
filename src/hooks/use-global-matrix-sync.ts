@@ -15,6 +15,7 @@ import {
   useTypingStore,
   type RoomMeta,
 } from '@/hooks/use-matrix';
+import { extractMessagePreview } from '@/components/dashboard/sections/chat/room-builders';
 
 /**
  * Single global Matrix /sync loop, mounted once at dashboard level so it
@@ -162,22 +163,29 @@ export function useGlobalMatrixSync(): void {
       }
     };
 
-    /** Update sidebar meta (last message ts + unread counts) for one room. */
+    /** Update sidebar meta (last message ts/preview + unread counts) for one room. */
     const ingestRoomMeta = (
       rid: string,
-      roomData: { timeline?: { events: Array<{ origin_server_ts?: number }> }; unread_notifications?: { notification_count: number; highlight_count: number } },
+      roomData: {
+        timeline?: { events: Array<{ origin_server_ts?: number; type?: string; content?: { body?: unknown; msgtype?: string } }> };
+        unread_notifications?: { notification_count: number; highlight_count: number };
+      },
     ) => {
       const timelineEvents = roomData.timeline?.events || [];
       const unread = roomData.unread_notifications;
-      const lastEventTs = timelineEvents.reduce<number | undefined>(
-        (max, e) =>
-          typeof e.origin_server_ts === 'number' && e.origin_server_ts > (max ?? 0)
-            ? e.origin_server_ts
-            : max,
-        undefined,
-      );
+      let lastEvent: (typeof timelineEvents)[number] | undefined;
+      for (const event of timelineEvents) {
+        if (typeof event.origin_server_ts !== 'number') continue;
+        if (!lastEvent || event.origin_server_ts >= (lastEvent.origin_server_ts ?? 0)) {
+          lastEvent = event;
+        }
+      }
       const metaPartial: Partial<Omit<RoomMeta, 'updatedAt'>> = {};
-      if (typeof lastEventTs === 'number') metaPartial.lastMessageTs = lastEventTs;
+      if (typeof lastEvent?.origin_server_ts === 'number') {
+        metaPartial.lastMessageTs = lastEvent.origin_server_ts;
+        const preview = extractMessagePreview(lastEvent);
+        if (preview) metaPartial.lastMessagePreview = preview;
+      }
       if (unread) {
         metaPartial.unreadCount = unread.notification_count;
         metaPartial.unreadHighlightCount = unread.highlight_count;

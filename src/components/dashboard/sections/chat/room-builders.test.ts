@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import fc from 'fast-check';
 import type { ManagerResponse, TeamResponse, WorkerResponse } from '@/lib/agentteams-api';
-import { buildRooms, filterRooms, sortRoomsByRecency } from './room-builders';
+import {
+  buildRooms,
+  extractMessagePreview,
+  filterRooms,
+  groupRoomsByType,
+  sortRoomsByRecency,
+} from './room-builders';
 import type { RoomInfo } from './room-info';
 
 const team = (overrides: Partial<TeamResponse> = {}): TeamResponse => ({
@@ -74,15 +80,28 @@ describe('buildRooms', () => {
     expect(rooms).toEqual([]);
   });
 
-  it('builds worker rooms with matrixUserID', () => {
+  it('builds worker rooms with matrixUserID, phase and runtime', () => {
     const rooms = buildRooms(
-      [worker({ name: 'w1', roomID: '!w:matrix', matrixUserID: '@w:matrix' })],
+      [worker({ name: 'w1', roomID: '!w:matrix', matrixUserID: '@w:matrix', runtime: 'qwenpaw' })],
       undefined,
       undefined,
     );
     expect(rooms).toHaveLength(1);
     expect(rooms[0].type).toBe('worker');
     expect(rooms[0].members).toEqual(['@w:matrix']);
+    expect(rooms[0].runtime).toBe('qwenpaw');
+    expect(rooms[0].phase).toBe('Running');
+  });
+
+  it('copies lastMessagePreview from room meta', () => {
+    const rooms = buildRooms(
+      [worker({ roomID: '!w:matrix' })],
+      undefined,
+      undefined,
+      { '!w:matrix': { lastMessagePreview: '你好', lastMessageTs: 9 } },
+    );
+    expect(rooms[0].lastMessagePreview).toBe('你好');
+    expect(rooms[0].lastMessageTs).toBe(9);
   });
 
   it('skips workers without roomID', () => {
@@ -213,5 +232,52 @@ describe('sortRoomsByRecency', () => {
     const input = [a, b];
     sortRoomsByRecency(input);
     expect(input).toEqual([a, b]);
+  });
+});
+
+describe('groupRoomsByType', () => {
+  const make = (overrides: Partial<RoomInfo>): RoomInfo => ({
+    id: overrides.id ?? '!r:m',
+    name: overrides.name ?? 'r',
+    type: overrides.type ?? 'team',
+    members: overrides.members ?? [],
+    ...overrides,
+  });
+
+  it('groups in team → worker → manager order and skips empty types', () => {
+    const rooms = [
+      make({ id: 'w', name: 'W', type: 'worker' }),
+      make({ id: 't', name: 'T', type: 'team' }),
+      make({ id: 'm', name: 'M', type: 'manager' }),
+    ];
+    expect(groupRoomsByType(rooms).map((g) => g.type)).toEqual(['team', 'worker', 'manager']);
+    expect(groupRoomsByType(rooms).map((g) => g.label)).toEqual(['团队', 'Agent', 'Manager']);
+  });
+
+  it('keeps recency order inside a group', () => {
+    const rooms = [
+      make({ id: 'w2', name: 'W2', type: 'worker' }),
+      make({ id: 'w1', name: 'W1', type: 'worker' }),
+    ];
+    expect(groupRoomsByType(rooms)[0].rooms.map((r) => r.id)).toEqual(['w2', 'w1']);
+  });
+});
+
+describe('extractMessagePreview', () => {
+  it('flattens text and truncates at 72 chars', () => {
+    expect(extractMessagePreview({ type: 'm.room.message', content: { msgtype: 'm.text', body: 'hello\nworld' } })).toBe(
+      'hello world',
+    );
+    const long = 'x'.repeat(80);
+    expect(extractMessagePreview({ type: 'm.room.message', content: { msgtype: 'm.text', body: long } })).toBe(
+      `${'x'.repeat(72)}…`,
+    );
+  });
+
+  it('maps media msgtypes and ignores non-message events', () => {
+    expect(extractMessagePreview({ type: 'm.room.message', content: { msgtype: 'm.image' } })).toBe('[图片]');
+    expect(extractMessagePreview({ type: 'm.room.message', content: { msgtype: 'm.file' } })).toBe('[文件]');
+    expect(extractMessagePreview({ type: 'm.room.member', content: { body: 'join' } })).toBeUndefined();
+    expect(extractMessagePreview({ type: 'm.room.message', content: { msgtype: 'm.text', body: '   ' } })).toBeUndefined();
   });
 });

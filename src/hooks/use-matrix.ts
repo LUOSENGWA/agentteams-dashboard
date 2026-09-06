@@ -84,6 +84,8 @@ export const useReceiptStore = create<ReceiptStore>()((set) => ({
  */
 export interface RoomMeta {
   lastMessageTs?: number;
+  /** Latest timeline body preview for the sidebar (plain text, truncated). */
+  lastMessagePreview?: string;
   unreadCount?: number;
   unreadHighlightCount?: number;
   updatedAt: number;
@@ -134,6 +136,7 @@ export const useRoomMetaStore = create<RoomMetaStore>()((set) => ({
 
       if (
         prev.lastMessageTs === next.lastMessageTs &&
+        prev.lastMessagePreview === next.lastMessagePreview &&
         prev.unreadCount === next.unreadCount &&
         prev.unreadHighlightCount === next.unreadHighlightCount
       ) {

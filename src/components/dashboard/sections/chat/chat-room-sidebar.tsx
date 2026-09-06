@@ -1,11 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { motion } from 'framer-motion';
 import { MessageSquare, PanelLeftClose, Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { RoomListItem } from './room-list-item';
+import { filterRooms, groupRoomsByType } from './room-builders';
 import type { RoomInfo } from './room-info';
 
 function shortUserId(userId: string | null | undefined): string | null {
@@ -31,15 +31,8 @@ export function ChatRoomSidebar({
   onCollapse: () => void;
 }) {
   const [filter, setFilter] = useState('');
-  const q = filter.toLowerCase();
-  const filtered = !filter
-    ? rooms
-    : rooms.filter(
-        (r) =>
-          r.name.toLowerCase().includes(q) ||
-          r.id.toLowerCase().includes(q) ||
-          r.members.some((m) => m && m.toLowerCase().includes(q)),
-      );
+  const filtered = filterRooms(rooms, filter);
+  const groups = groupRoomsByType(filtered);
   const shortId = shortUserId(userId);
 
   return (
@@ -86,19 +79,21 @@ export function ChatRoomSidebar({
             </p>
           </div>
         ) : (
-          filtered.map((room, i) => (
-            <motion.div
-              key={room.id}
-              initial={{ opacity: 0, x: -10 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ delay: i * 0.02 }}
-            >
-              <RoomListItem
-                room={room}
-                isSelected={selectedRoomId === room.id}
-                onClick={() => onSelectRoom(room.id)}
-              />
-            </motion.div>
+          groups.map((group) => (
+            <div key={group.type} className="mb-1.5">
+              <p className="px-2 py-1 text-[10px] font-semibold tracking-wide text-muted-foreground">
+                {group.label}
+                <span className="ml-1 font-normal">{group.rooms.length}</span>
+              </p>
+              {group.rooms.map((room) => (
+                <RoomListItem
+                  key={room.id}
+                  room={room}
+                  isSelected={selectedRoomId === room.id}
+                  onClick={() => onSelectRoom(room.id)}
+                />
+              ))}
+            </div>
           ))
         )}
       </div>

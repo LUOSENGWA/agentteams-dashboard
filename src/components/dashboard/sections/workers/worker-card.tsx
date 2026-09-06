@@ -1,7 +1,7 @@
 'use client';
 
 import { motion, useReducedMotion } from 'framer-motion';
-import { Bot, CheckSquare, Eye, Moon, Pencil, Rocket, Square, Sun } from 'lucide-react';
+import { Bot, CheckSquare, Eye, MessageSquare, Moon, Pencil, Rocket, Square, Sun } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -39,6 +39,7 @@ export function WorkerCard({
   onToggleSelect,
   onView,
   onEdit,
+  onOpenChat,
   onWake,
   onSleep,
   onEnsureReady,
@@ -52,6 +53,7 @@ export function WorkerCard({
   onToggleSelect: () => void;
   onView: () => void;
   onEdit: () => void;
+  onOpenChat?: () => void;
   onWake: () => void;
   onSleep: () => void;
   onEnsureReady: () => void;
@@ -201,6 +203,16 @@ export function WorkerCard({
             >
               <Pencil className="w-3 h-3 mr-1" aria-hidden="true" />
               编辑
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 text-xs flex-1"
+              onClick={onOpenChat}
+              disabled={isDeleting || !worker.roomID || !onOpenChat}
+            >
+              <MessageSquare className="w-3 h-3 mr-1" aria-hidden="true" />
+              打开聊天
             </Button>
           </div>
 

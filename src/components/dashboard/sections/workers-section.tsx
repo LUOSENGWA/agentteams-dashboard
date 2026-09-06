@@ -33,6 +33,7 @@ import { ApiErrorState } from '@/components/dashboard/api-error-state';
 import { SectionHeader } from '@/components/dashboard/section-header';
 import { ConfirmDeleteDialog } from '@/components/dashboard/confirm-delete-dialog';
 import { describeWorkerDeleteError } from '@/lib/api-error';
+import { openChatRoom } from '@/lib/open-chat-room';
 import { toast } from 'sonner';
 import type { CreateWorkerRequest, UpdateWorkerRequest, WorkerResponse } from '@/lib/agentteams-api';
 import { SORT_OPTIONS, ITEMS_PER_PAGE, type SortKey } from './workers/worker-types';
@@ -773,6 +774,7 @@ export function WorkersSection() {
                   onToggleSelect={() => toggleSelect(worker.name)}
                   onView={() => setDetailWorker(worker)}
                   onEdit={() => openEdit(worker)}
+                  onOpenChat={() => openChatRoom(worker.roomID)}
                   onWake={() => wakeWorker.mutate(worker.name)}
                   onSleep={() => sleepWorker.mutate(worker.name)}
                   onEnsureReady={() => ensureReadyWorker.mutate(worker.name)}
@@ -789,6 +791,7 @@ export function WorkersSection() {
               onToggleSelect={toggleSelect}
               onView={setDetailWorker}
               onEdit={openEdit}
+              onOpenChat={(worker) => openChatRoom(worker.roomID)}
               onWake={(name) => wakeWorker.mutate(name)}
               onSleep={(name) => sleepWorker.mutate(name)}
               onEnsureReady={(name) => ensureReadyWorker.mutate(name)}

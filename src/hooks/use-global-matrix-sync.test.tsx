@@ -121,8 +121,10 @@ describe('useGlobalMatrixSync', () => {
 
     const meta = useRoomMetaStore.getState().meta;
     expect(meta['!r1:test'].lastMessageTs).toBe(1000);
+    expect(meta['!r1:test'].lastMessagePreview).toBe('msg $e1');
     expect(meta['!r1:test'].unreadCount).toBe(2);
     expect(meta['!r2:test'].lastMessageTs).toBe(2000);
+    expect(meta['!r2:test'].lastMessagePreview).toBe('msg $e2');
 
     unmount();
   });

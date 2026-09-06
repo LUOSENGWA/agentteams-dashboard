@@ -3,8 +3,8 @@
 import { motion } from 'framer-motion';
 import { Bot, Crown, Hash, UserCheck, Users } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { CopyButton } from '@/components/dashboard/copy-button';
 import { useRoomMetaStore } from '@/hooks/use-matrix';
+import { RUNTIME_LABELS } from '@/lib/phase-colors';
 import type { RoomInfo } from './room-info';
 
 const PHASE_COLOR: Record<string, string> = {
@@ -91,13 +91,15 @@ export function RoomListItem({
                 {room.phase}
               </Badge>
             )}
+            {room.runtime && (
+              <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 shrink-0">
+                {RUNTIME_LABELS[room.runtime] || room.runtime}
+              </Badge>
+            )}
           </div>
-          <div className="flex items-center gap-1 mt-0.5">
-            <p className="text-[10px] text-muted-foreground font-mono truncate max-w-[140px]">
-              {room.id}
-            </p>
-            <CopyButton text={room.id} className="h-5 w-5" />
-          </div>
+          <p className="text-[10px] text-muted-foreground truncate mt-0.5">
+            {room.lastMessagePreview || room.parentTeam || room.id}
+          </p>
         </div>
         {room.unreadCount !== undefined && room.unreadCount > 0 ? (
           <span

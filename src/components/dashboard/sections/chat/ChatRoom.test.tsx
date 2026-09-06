@@ -93,10 +93,10 @@ vi.mock('@/components/dashboard/sections/chat/markdown-message', () => ({
   MarkdownMessage: ({ content }: { content: string }) => <div>{content}</div>,
 }));
 
-function renderChatRoom() {
+function renderChatRoom(props: Partial<Parameters<typeof ChatRoom>[0]> = {}) {
   return render(
     <ChatProvider>
-      <ChatRoom roomId="!room:test" roomName="测试房间" />
+      <ChatRoom roomId="!room:test" roomName="测试房间" {...props} />
     </ChatProvider>
   );
 }
@@ -165,5 +165,12 @@ describe('ChatRoom read-position dual-write', () => {
       expect.objectContaining({ roomId: '!room:test', eventId: '$sent' }),
       expect.anything()
     );
+  });
+
+  it('shows phase and runtime badges in the header', () => {
+    useMatrixStore.setState({ userId: '@me:test', isLoggedIn: true, homeserver: 'https://hs.test', accessToken: 'tok' });
+    renderChatRoom({ roomPhase: 'Running', roomRuntime: 'qwenpaw' });
+    expect(screen.getByText('Running')).toBeInTheDocument();
+    expect(screen.getByText('QwenPaw')).toBeInTheDocument();
   });
 });

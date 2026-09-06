@@ -3,6 +3,7 @@ import type { RoomInfo } from './room-info';
 
 export interface RoomMetaInput {
   lastMessageTs?: number;
+  lastMessagePreview?: string;
   unreadCount?: number;
   unreadHighlightCount?: number;
 }
@@ -24,11 +25,14 @@ export function buildRooms(
   metaByRoomId?: RoomMetaByRoomId,
 ): RoomInfo[] {
   const lookup = metaByRoomId ?? {};
-  const enrich = (rid: string): Pick<RoomInfo, 'lastMessageTs' | 'unreadCount' | 'unreadHighlightCount'> => {
+  const enrich = (
+    rid: string,
+  ): Pick<RoomInfo, 'lastMessageTs' | 'lastMessagePreview' | 'unreadCount' | 'unreadHighlightCount'> => {
     const m = lookup[rid];
     if (!m) return {};
     return {
       lastMessageTs: m.lastMessageTs,
+      lastMessagePreview: m.lastMessagePreview,
       unreadCount: m.unreadCount,
       unreadHighlightCount: m.unreadHighlightCount,
     };
@@ -60,6 +64,7 @@ export function buildRooms(
         matrixUserId: worker.matrixUserID,
         workerName: worker.name,
         phase: worker.phase,
+        runtime: worker.runtime,
         ...enrich(worker.roomID),
       });
     }
@@ -115,4 +120,56 @@ export function sortRoomsByRecency(rooms: RoomInfo[]): RoomInfo[] {
     }
     return a.name.localeCompare(b.name);
   });
+}
+
+export const ROOM_TYPE_ORDER: RoomInfo['type'][] = ['team', 'worker', 'manager', 'human', 'unknown'];
+
+export const ROOM_TYPE_LABELS: Record<RoomInfo['type'], string> = {
+  team: '团队',
+  worker: 'Agent',
+  manager: 'Manager',
+  human: 'Human',
+  unknown: '其他',
+};
+
+export interface RoomTypeGroup {
+  type: RoomInfo['type'];
+  label: string;
+  rooms: RoomInfo[];
+}
+
+/** Group rooms by type while keeping recency order inside each group. */
+export function groupRoomsByType(rooms: RoomInfo[]): RoomTypeGroup[] {
+  const buckets = new Map<RoomInfo['type'], RoomInfo[]>();
+  for (const room of rooms) {
+    const list = buckets.get(room.type);
+    if (list) list.push(room);
+    else buckets.set(room.type, [room]);
+  }
+  return ROOM_TYPE_ORDER.filter((type) => (buckets.get(type)?.length ?? 0) > 0).map((type) => ({
+    type,
+    label: ROOM_TYPE_LABELS[type],
+    rooms: buckets.get(type) ?? [],
+  }));
+}
+
+const PREVIEW_MAX = 72;
+
+/** Flatten a Matrix event body into a one-line sidebar preview. */
+export function extractMessagePreview(event: {
+  type?: string;
+  content?: { body?: unknown; msgtype?: string };
+}): string | undefined {
+  if (event.type && event.type !== 'm.room.message') return undefined;
+  const content = event.content;
+  if (!content) return undefined;
+  if (content.msgtype === 'm.image') return '[图片]';
+  if (content.msgtype === 'm.file') return '[文件]';
+  if (content.msgtype === 'm.audio') return '[音频]';
+  if (content.msgtype === 'm.video') return '[视频]';
+  const body = content.body;
+  if (typeof body !== 'string') return undefined;
+  const flat = body.replace(/\s+/g, ' ').trim();
+  if (!flat) return undefined;
+  return flat.length > PREVIEW_MAX ? `${flat.slice(0, PREVIEW_MAX)}…` : flat;
 }

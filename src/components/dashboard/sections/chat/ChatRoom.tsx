@@ -34,6 +34,7 @@ import { Button } from '@/components/ui/button';
 import { ChatComposer, type MentionEntry } from './chat-composer';
 import { parseOutboundCommand } from './composer-commands';
 import { TypingIndicator } from './typing-indicator';
+import { AgentActivityTrack } from './agent-activity-track';
 import { useMatrixTypingUsers, useTypingNotification, useMatrixUploadMedia } from '@/hooks/use-matrix';
 import { FilesBrowserPanel } from './views/worker-files-panel';
 import { useRuntimeMap } from './runtime-map-context';
@@ -50,6 +51,10 @@ interface ChatRoomProps {
   team?: TeamResponse;
   /** Worker resource name owning this room; auto-selected in the files panel. */
   defaultWorkerName?: string;
+  /** Worker phase shown in the conversation header. */
+  roomPhase?: string;
+  /** Worker runtime shown in the conversation header. */
+  roomRuntime?: string;
   topic?: string;
   avatar?: string;
   members?: RoomMember[];
@@ -63,6 +68,8 @@ export function ChatRoom({
   roomName,
   team,
   defaultWorkerName,
+  roomPhase,
+  roomRuntime,
   topic,
   avatar,
   members: initialMembers = [],
@@ -648,6 +655,16 @@ export function ChatRoom({
         <div className="flex items-center gap-1.5">
           <h3 className="font-semibold text-sm truncate">{roomName}</h3>
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="实时同步" />
+          {roomPhase && (
+            <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 shrink-0">
+              {roomPhase}
+            </Badge>
+          )}
+          {roomRuntime && (
+            <Badge variant="secondary" className="text-[9px] px-1 py-0 h-4 shrink-0">
+              {RUNTIME_LABELS[roomRuntime] || roomRuntime}
+            </Badge>
+          )}
         </div>
         {team ? (
           <div className="flex items-center gap-2 text-xs text-muted-foreground min-w-0">
@@ -702,7 +719,7 @@ export function ChatRoom({
         <FolderTree className="w-4 h-4" />
       </Button>
     </div>
-  ), [roomName, team, topic, avatar, roomMembers.length, showMembers, showWorkers]);
+  ), [roomName, team, topic, avatar, roomMembers.length, showMembers, showWorkers, roomPhase, roomRuntime]);
 
   return (
     <div
@@ -792,6 +809,7 @@ export function ChatRoom({
             </div>
           )}
           <TypingIndicator users={typingUsers} />
+          <AgentActivityTrack roomId={roomId} />
           <ChatComposer
             value={inputValue}
             onChange={handleInputChange}

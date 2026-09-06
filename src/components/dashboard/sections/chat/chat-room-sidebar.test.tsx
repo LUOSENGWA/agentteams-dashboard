@@ -16,9 +16,9 @@ const room = (overrides: Partial<RoomInfo>): RoomInfo => ({
 });
 
 const rooms: RoomInfo[] = [
-  room({ id: '!new:test', name: 'Newest', lastMessageTs: 3000 }),
+  room({ id: '!new:test', name: 'Newest', lastMessageTs: 3000, lastMessagePreview: '最新一条' }),
   room({ id: '!unread:test', name: 'Unread Room', lastMessageTs: 2000, unreadCount: 3 }),
-  room({ id: '!old:test', name: 'Oldest', lastMessageTs: 1000 }),
+  room({ id: '!old:test', name: 'Oldest', lastMessageTs: 1000, type: 'worker', runtime: 'qwenpaw' }),
 ];
 
 const renderSidebar = (props: Partial<Parameters<typeof ChatRoomSidebar>[0]> = {}) =>
@@ -72,5 +72,13 @@ describe('ChatRoomSidebar', () => {
     fireEvent.change(screen.getByPlaceholderText('搜索房间...'), { target: { value: 'unread' } });
     expect(screen.getByText('Unread Room')).toBeInTheDocument();
     expect(screen.queryByText('Newest')).toBeNull();
+  });
+
+  it('groups rooms by type and shows last message preview', () => {
+    renderSidebar();
+    expect(screen.getByText('团队')).toBeInTheDocument();
+    expect(screen.getByText('Agent')).toBeInTheDocument();
+    expect(screen.getByText('最新一条')).toBeInTheDocument();
+    expect(screen.getByText('QwenPaw')).toBeInTheDocument();
   });
 });

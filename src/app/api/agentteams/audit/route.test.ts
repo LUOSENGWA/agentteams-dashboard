@@ -42,14 +42,14 @@ afterEach(() => {
   received.length = 0;
 });
 
-function makeRequest(pathSuffix: string, init: { method?: string; body?: string; admin?: boolean } = {}) {
+function makeRequest(pathSuffix: string, init: { method?: string; body?: string; admin?: boolean; actor?: string; level?: number } = {}) {
   const url = new URL(`http://localhost${pathSuffix}`);
   url.searchParams.set('controllerUrl', controllerUrl);
   const headers: Record<string, string> = {};
   if (init.body) headers['content-type'] = 'application/json';
   if (init.admin !== false) {
-    headers['x-agentteams-user'] = 'admin';
-    headers['x-agentteams-user-level'] = '3';
+    headers['x-agentteams-user'] = init.actor ?? 'admin';
+    headers['x-agentteams-user-level'] = String(init.level ?? 3);
   }
   return new NextRequest(url, {
     method: init.method ?? 'GET',
@@ -59,17 +59,79 @@ function makeRequest(pathSuffix: string, init: { method?: string; body?: string;
 }
 
 describe('GET /api/agentteams/audit', () => {
-  it('returns 403 when the caller is not admin', async () => {
+  it('returns 403 when the caller has no identity (dev / auth disabled)', async () => {
     const res = await GET(makeRequest('/api/agentteams/audit', { admin: false }));
     expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body).toMatchObject({ success: false, error: '需要审计权限', requiredLevel: 2 });
+    expect(body.observedLevel).toBeNull();
   });
 
-  it('returns 200 with the active log entries when admin', async () => {
-    const res = await GET(makeRequest('/api/agentteams/audit'));
+  it('returns 403 with observedLevel=1 for a level-1 caller', async () => {
+    const url = new URL('http://localhost/api/agentteams/audit');
+    const req = new NextRequest(url, {
+      method: 'GET',
+      headers: {
+        'x-agentteams-user': 'junior',
+        'x-agentteams-user-level': '1',
+      },
+    });
+    const res = await GET(req);
+    expect(res.status).toBe(403);
+    const body = await res.json();
+    expect(body.observedLevel).toBe(1);
+    expect(body.requiredLevel).toBe(2);
+  });
+
+  it('returns 200 with the full log when admin (L3)', async () => {
+    const res = await GET(makeRequest('/api/agentteams/audit', { actor: 'admin', level: 3 }));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.success).toBe(true);
+    expect(body.scope).toBe('all');
     expect(Array.isArray(body.events)).toBe(true);
+  });
+
+  it('returns 200 scoped to the auditor for an L2 caller', async () => {
+    // Seed two events: one by admin, one by auditor-l2; auditor should only see their own.
+    await POST(
+      makeRequest('/api/agentteams/audit', {
+        method: 'POST',
+        body: JSON.stringify({
+          entity_type: 'worker',
+          entity_name: 'w-by-admin',
+          action: 'create',
+        }),
+        actor: 'admin',
+        level: 3,
+      }),
+    );
+    await POST(
+      makeRequest('/api/agentteams/audit', {
+        method: 'POST',
+        body: JSON.stringify({
+          entity_type: 'worker',
+          entity_name: 'w-by-l2',
+          action: 'create',
+        }),
+        actor: 'auditor-l2',
+        level: 2,
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 20));
+
+    const res = await GET(
+      makeRequest('/api/agentteams/audit', { actor: 'auditor-l2', level: 2 }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.success).toBe(true);
+    expect(body.scope).toBe('self');
+    expect(Array.isArray(body.events)).toBe(true);
+    for (const ev of body.events) {
+      expect(ev.actor).toBe('auditor-l2');
+    }
+    expect(body.events.some((ev: { entity_name: string }) => ev.entity_name === 'w-by-admin')).toBe(false);
   });
 });
 

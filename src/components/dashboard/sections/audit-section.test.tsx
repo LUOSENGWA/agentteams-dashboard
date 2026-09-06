@@ -1,5 +1,5 @@
-import { render, screen, waitFor } from '@testing-library/react';
-import { describe, expect, it, vi, beforeEach } from 'vitest';
+import { render, screen, waitFor, cleanup } from '@testing-library/react';
+import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
@@ -25,24 +25,43 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
+afterEach(() => {
+  cleanup();
+});
+
 describe('AuditSection', () => {
-  it('renders an inline admin-only notice when the API returns 403', async () => {
+  it('renders an inline notice when the API returns 403 for an L1 caller', async () => {
     mockedUseAuditEvents.mockReturnValue({
-      data: { success: false, error: '需要管理员权限' },
+      data: { success: false, error: '需要审计权限', observedLevel: 1, requiredLevel: 2 },
       isLoading: false,
       isFetching: false,
       refetch: vi.fn(),
     } as unknown as ReturnType<typeof useAuditEvents>);
     render(<AuditSection />, { wrapper: makeWrapper() });
     await waitFor(() => {
-      expect(screen.getByText('需要管理员权限')).toBeInTheDocument();
+      expect(screen.getByText('需要审计权限')).toBeInTheDocument();
     });
-    expect(screen.getByText(/权限等级 ≥ 3/)).toBeInTheDocument();
+    expect(screen.getByText(/L1/)).toBeInTheDocument();
+    expect(screen.getByText(/≥ L2/)).toBeInTheDocument();
   });
 
-  it('renders an empty state when the API returns no events', async () => {
+  it('points to dev-mode hint when the server received no identity header', async () => {
     mockedUseAuditEvents.mockReturnValue({
-      data: { success: true, events: [] } as AuditEventsResponse,
+      data: { success: false, error: '需要审计权限', observedLevel: null, requiredLevel: 2 },
+      isLoading: false,
+      isFetching: false,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useAuditEvents>);
+    render(<AuditSection />, { wrapper: makeWrapper() });
+    await waitFor(() => {
+      expect(screen.getByText('需要审计权限')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/未收到身份头/)).toBeInTheDocument();
+  });
+
+  it('renders an empty state and explains the self-scope for an L2 auditor', async () => {
+    mockedUseAuditEvents.mockReturnValue({
+      data: { success: true, events: [], scope: 'self' } as AuditEventsResponse,
       isLoading: false,
       isFetching: false,
       refetch: vi.fn(),
@@ -51,6 +70,7 @@ describe('AuditSection', () => {
     await waitFor(() => {
       expect(screen.getByText('暂无审计事件')).toBeInTheDocument();
     });
+    expect(screen.getByText(/限定为你本人执行/)).toBeInTheDocument();
   });
 
   it('renders audit events with actor, entity, action and severity', async () => {
