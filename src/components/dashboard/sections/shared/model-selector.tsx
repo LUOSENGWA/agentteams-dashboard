@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { Pencil, Sparkles } from 'lucide-react';
+import { Cpu, Pencil, Sparkles } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -54,6 +54,7 @@ export function ModelSelector({
   // 组内按名称排序（buildModelSelectionOptions 已整体排序，filter 保序）。
   const configuredOptions = uniqueOptions.filter((option) => option.kind === 'configured');
   const builtinOptions = uniqueOptions.filter((option) => option.kind === 'builtin');
+  const sglangOptions = uniqueOptions.filter((option) => option.kind === 'sglang');
   const known = uniqueOptions.some((option) => option.alias === value);
   const [customMode, setCustomMode] = useState(false);
 
@@ -160,6 +161,26 @@ export function ModelSelector({
               ))}
             </SelectGroup>
           )}
+          {sglangOptions.length > 0 && (
+            <SelectGroup>
+              <SelectLabel>SGLang 在线模型</SelectLabel>
+              {sglangOptions.map((option) => (
+                <SelectItem key={option.alias} value={option.alias} className="min-w-0">
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    <span className="font-mono truncate">{option.alias}</span>
+                    <Badge variant="secondary" className="text-[9px] shrink-0">
+                      <Cpu className="mr-0.5 size-2.5" />
+                      SGLang
+                    </Badge>
+                  </span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    SGLang 推理服务在线模型，经 AI 网关路由转发
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          )}
+
           {uniqueOptions.length > 0 && <SelectSeparator />}
           <SelectItem value={CUSTOM_ALIAS}>
             <span className="flex items-center gap-1.5 text-muted-foreground">
@@ -173,6 +194,10 @@ export function ModelSelector({
         <p className="text-xs text-muted-foreground break-words">
           通过路由 {selectedOption.binding.routeName} 转发至{' '}
           {selectedOption.binding.providerName} / {selectedOption.binding.targetModel}
+        </p>
+      ) : selectedOption?.kind === 'sglang' ? (
+        <p className="text-xs text-muted-foreground break-words">
+          SGLang 推理服务在线模型；请求按模型名经 AI 网关路由至本地推理服务。
         </p>
       ) : selectedOption?.kind === 'builtin' ? (
         <p className="text-xs text-amber-600/80 break-words">

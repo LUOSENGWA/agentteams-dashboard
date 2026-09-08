@@ -120,6 +120,22 @@ describe('ModelSelector', () => {
     expect(screen.getByRole('option', { name: /team-chat/ })).toBeTruthy();
   });
 
+  it('marks a SGLang serving model with its source badge and hint', () => {
+    if (!('ResizeObserver' in window)) {
+      Object.defineProperty(window, 'ResizeObserver', { value: ResizeObserverStub, configurable: true });
+    }
+    const sglangOptions = [
+      { alias: 'qwen3.6-27b-fp8', kind: 'sglang' as const },
+      { alias: 'deepseek-chat', kind: 'builtin' as const },
+    ];
+    render(<ModelSelector value="qwen3.6-27b-fp8" onChange={vi.fn()} options={sglangOptions} />);
+
+    expect(screen.getByText(/SGLang 推理服务在线模型；请求按模型名经 AI 网关路由至本地推理服务/)).toBeTruthy();
+
+    fireEvent.click(screen.getByLabelText('请求模型别名'));
+    expect(screen.getByRole('option', { name: /SGLang 推理服务在线模型，经 AI 网关路由转发/ })).toBeTruthy();
+  });
+
   it('marks an unconfigured built-in model alias in the dropdown', () => {
     if (!('ResizeObserver' in window)) {
       Object.defineProperty(window, 'ResizeObserver', { value: ResizeObserverStub, configurable: true });

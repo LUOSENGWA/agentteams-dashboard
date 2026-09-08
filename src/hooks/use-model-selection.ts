@@ -13,7 +13,7 @@
 // aliases" symptom). Consumers must surface the reason + the way out instead
 // of silently degrading.
 import { useMemo } from 'react';
-import { useModels, useAiRoutes } from '@/hooks/use-agentteams-models';
+import { useModels, useAiRoutes, useSglangModels } from '@/hooks/use-agentteams-models';
 import {
   buildModelSelectionOptions,
   type ModelSelectionOption,
@@ -36,11 +36,13 @@ export interface ModelSelection {
 export function useModelSelection(): ModelSelection {
   const models = useModels();
   const routes = useAiRoutes();
+  const sglang = useSglangModels();
   const providers = models.data ?? [];
   const aiRoutes = routes.data ?? [];
+  const sglangModels = sglang.data?.models ?? [];
   const options = useMemo(
-    () => buildModelSelectionOptions(aiRoutes, providers),
-    [aiRoutes, providers],
+    () => buildModelSelectionOptions(aiRoutes, providers, sglangModels),
+    [aiRoutes, providers, sglangModels],
   );
   const error = (models.error ?? routes.error) as Error | null;
   return {

@@ -31,22 +31,32 @@ export const BUILTIN_MODEL_ALIASES: readonly string[] = [
 export interface ModelSelectionOption {
   alias: string;
   // configured = resolvable through an existing Higress AI route + provider;
-  // builtin = official built-in alias that still needs a route mapping.
-  kind: 'builtin' | 'configured';
+  // builtin = official built-in alias that still needs a route mapping;
+  // sglang = model actually served by a reachable SGLang inference server
+  // (server-side, configured via AGENTTEAMS_SGLANG_URL).
+  kind: 'builtin' | 'configured' | 'sglang';
   binding?: AgentTeamsModelBinding;
 }
 
 export function buildModelSelectionOptions(
   routes: AiRoute[],
   providers: LlmProviderResponse[],
+  sglangModels: readonly string[] = [],
 ): ModelSelectionOption[] {
   const available = listAvailableRequestModelAliases(routes, providers);
   const configuredAliases = new Set(available.map((binding) => binding.requestModelAlias));
-  const options: ModelSelectionOption[] = [
+  const aliasLayer: ModelSelectionOption[] = [
     ...available.map((binding) => ({ alias: binding.requestModelAlias, kind: 'configured' as const, binding })),
     ...BUILTIN_MODEL_ALIASES
       .filter((alias) => !configuredAliases.has(alias))
       .map((alias) => ({ alias, kind: 'builtin' as const })),
   ];
-  return options.sort((left, right) => left.alias.localeCompare(right.alias));
+  // SGLang serving layer: models actually served by the local inference
+  // server. On name collision the alias layer (configured + builtin) wins —
+  // a routed alias carries binding truth that a bare SGLang id cannot.
+  const aliasNames = new Set(aliasLayer.map((option) => option.alias));
+  const sglangLayer: ModelSelectionOption[] = [...new Set(sglangModels)]
+    .filter((alias) => alias.length > 0 && !aliasNames.has(alias))
+    .map((alias) => ({ alias, kind: 'sglang' as const }));
+  return [...aliasLayer, ...sglangLayer].sort((left, right) => left.alias.localeCompare(right.alias));
 }
