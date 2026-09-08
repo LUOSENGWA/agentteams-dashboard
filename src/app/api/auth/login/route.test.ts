@@ -167,11 +167,10 @@ describe('POST /api/auth/login (dual track, M19)', () => {
   });
 
   it('L2: Console 401 + Matrix login + CR level 2 → level-2 session, matrix mode, no Console cookie', async () => {
-    mockCallHigressConsole.mockImplementation(async (path: string) =>
-      path === '/system/init'
-        ? { response: new Response(null, { status: 200 }), body: {} }
-        : { response: new Response(null, { status: 401 }), body: { error: 'bad' } },
-    );
+    mockCallHigressConsole.mockResolvedValue({
+      response: new Response(null, { status: 401 }),
+      body: { error: 'bad' },
+    });
     installFetchMock({
       humans: { sunzong: { body: { name: 'sunzong', permissionLevel: 2, accessibleTeams: ['biz-team'] } } },
       matrixLogin: {
@@ -219,6 +218,21 @@ describe('POST /api/auth/login (dual track, M19)', () => {
     expect(response.status).toBe(401);
     const data = await responseJson(response);
     expect(data.success).toBe(false);
+  });
+
+  it('never calls /system/init (auto-registration removed — fresh-Console privilege escalation)', async () => {
+    mockCallHigressConsole.mockResolvedValue(successfulConsoleLogin());
+    installFetchMock({
+      humans: { luo: { body: { name: 'luo', permissionLevel: 1 } } },
+      matrixLogin: { status: 401 },
+    });
+
+    await POST(request({ username: 'admin', password: 'password' }));
+    expect(mockCallHigressConsole).toHaveBeenCalledTimes(1);
+    expect(mockCallHigressConsole).not.toHaveBeenCalledWith(
+      '/system/init',
+      expect.anything(),
+    );
   });
 
   it('external mode: no init, no Matrix token returned, session still created for L1', async () => {
