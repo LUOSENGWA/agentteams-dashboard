@@ -58,3 +58,4 @@ server.log
 # Agent configurations
 .claude/
 .agents/
+dist/
