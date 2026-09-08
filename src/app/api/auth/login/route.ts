@@ -147,25 +147,14 @@ async function attemptConsoleLogin(
 ): Promise<ConsoleAttempt> {
   const consoleUrl = getHigressConsoleURL();
 
-  // Embedded/direct deployments retain the upstream idempotent initializer.
-  if (opts.allowMatrix) {
-    try {
-    await callHigressConsole('/system/init', {
-      method: 'POST',
-      body: {
-        adminUser: {
-          name: username,
-          password,
-          displayName: username,
-        },
-      },
-      consoleUrl,
-    });
-    } catch {
-      // Continue to the login attempt; initialization is best-effort only.
-    }
-  }
-
+  // NOTE: the upstream auto-initializer (/system/init, "first login auto-
+  // registers a Console admin") was intentionally REMOVED. It is a privilege
+  // escalation path in a multi-user deployment: a fresh Console would be
+  // initialized with whoever logs in first — and in the dual-track flow a
+  // failed L2 (Matrix) attempt with mistyped credentials would create a
+  // Console admin that the L1 track then accepts as the L1 human. The Console
+  // admin account must be provisioned out-of-band (installer / first-time
+  // setup only).
   let consoleRes: Response;
   try {
     const result = await callHigressConsole('/session/login', {

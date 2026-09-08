@@ -63,7 +63,7 @@ export function LoginPage({ onLoginSuccess, defaultUsername = '' }: LoginPagePro
             </div>
             <div>
               <CardTitle className="text-lg">AgentTeams Dashboard</CardTitle>
-              <CardDescription>管理员账号登录（首次登录自动注册）</CardDescription>
+              <CardDescription>账号登录（L1 管理员 / L2 Matrix 账号）</CardDescription>
             </div>
           </div>
         </CardHeader>
