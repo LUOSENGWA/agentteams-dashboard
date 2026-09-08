@@ -71,6 +71,7 @@ AGENTTEAMS_DEFAULT_MODEL=${AGENTTEAMS_DEFAULT_MODEL:-}
 AGENTTEAMS_AUTH_TOKEN=${AGENTTEAMS_AUTH_TOKEN:-}
 AGENTTEAMS_ADMIN_USER=${AGENTTEAMS_ADMIN_USER:-}
 AGENTTEAMS_ADMIN_PASSWORD=${AGENTTEAMS_ADMIN_PASSWORD:-}
+DASHBOARD_SESSION_SECRET=${DASHBOARD_SESSION_SECRET:-}
 EOF
   chmod 600 "${_tmp}"
   mv -f "${_tmp}" "${ENV_FILE}"
@@ -213,6 +214,13 @@ wizard() {
   prompt_value AGENTTEAMS_CONTROLLER_URL "AgentTeams Controller URL" "${ctrl_url}"
 
   prompt_value NEXT_PUBLIC_MATRIX_API_URL "Matrix Homeserver URL" "http://agentteams-controller:6167"
+
+  # Multi-user session secret (M19): generated once and persisted so container
+  # rebuilds keep the same secret (a changed secret invalidates all sessions).
+  if [ -z "${DASHBOARD_SESSION_SECRET:-}" ]; then
+    DASHBOARD_SESSION_SECRET="$(openssl rand -hex 32)"
+  fi
+  info "DASHBOARD_SESSION_SECRET ready (persisted in ${ENV_FILE}, mode 600)."
 
   # Detect Higress Console URL from running container (for shared auth with Higress)
   # Use internal Docker network URL (container:port) — works for dashboard on the same network.
@@ -409,6 +417,7 @@ recreate_container() {
   env_args+=(-e AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS="${AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS:-}")
   env_args+=(-e MATRIX_HOMESERVER_ALLOWLIST="agentteams-controller,matrix-local.agentteams.io,matrix.org")
   [ -n "${AGENTTEAMS_AUTH_TOKEN:-}" ] && env_args+=(-e AGENTTEAMS_AUTH_TOKEN="${AGENTTEAMS_AUTH_TOKEN}")
+  env_args+=(-e DASHBOARD_SESSION_SECRET="${DASHBOARD_SESSION_SECRET:-}")
   [ -n "${AGENTTEAMS_ADMIN_USER:-}" ] && env_args+=(-e AGENTTEAMS_ADMIN_USER="${AGENTTEAMS_ADMIN_USER}")
   [ -n "${AGENTTEAMS_ADMIN_PASSWORD:-}" ] && env_args+=(-e AGENTTEAMS_ADMIN_PASSWORD="${AGENTTEAMS_ADMIN_PASSWORD}")
   [ -n "${AGENTTEAMS_FS_ENDPOINT:-}" ] && env_args+=(-e AGENTTEAMS_FS_ENDPOINT="${AGENTTEAMS_FS_ENDPOINT}")

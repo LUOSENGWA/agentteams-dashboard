@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { apiUrl } from '@/lib/api-base';
 import { useMatrixStore } from '@/lib/matrix-store';
 import { Lock, LogIn, RefreshCw, AlertCircle } from 'lucide-react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -17,6 +17,10 @@ interface LoginPageProps {
 export function LoginPage({ onLoginSuccess, defaultUsername = '' }: LoginPageProps) {
   const [username, setUsername] = useState(defaultUsername);
   const [password, setPassword] = useState('');
+  const [adminUsername, setAdminUsername] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
+  const [controllerToken, setControllerToken] = useState('');
+  const [adminVisible, setAdminVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const setMatrixAuth = useMatrixStore((s) => s.setMatrixAuth);
@@ -31,7 +35,12 @@ export function LoginPage({ onLoginSuccess, defaultUsername = '' }: LoginPagePro
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({
+          username,
+          password,
+          ...(adminUsername ? { adminUsername, adminPassword } : {}),
+          ...(controllerToken ? { controllerToken } : {}),
+        }),
       });
 
       const data = await res.json();
@@ -63,7 +72,6 @@ export function LoginPage({ onLoginSuccess, defaultUsername = '' }: LoginPagePro
             </div>
             <div>
               <CardTitle className="text-lg">AgentTeams Dashboard</CardTitle>
-              <CardDescription>管理员账号登录（首次登录自动注册）</CardDescription>
             </div>
           </div>
         </CardHeader>
@@ -91,6 +99,54 @@ export function LoginPage({ onLoginSuccess, defaultUsername = '' }: LoginPagePro
               disabled={isLoading}
             />
           </div>
+          <div className="space-y-1.5">
+            <button
+              type="button"
+              onClick={() => setAdminVisible((v) => !v)}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {adminVisible ? '收起管理员账号验证 ▲' : '管理员账号验证（仅L1账号需要）▼'}
+            </button>
+            {adminVisible && (
+              <div className="space-y-2">
+                <Input
+                  id="admin-username"
+                  placeholder="管理员账号"
+                  value={adminUsername}
+                  onChange={(e) => setAdminUsername(e.target.value)}
+                  disabled={isLoading}
+                />
+                <Input
+                  id="admin-password"
+                  type="password"
+                  placeholder="管理员密码"
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                  disabled={isLoading}
+                />
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <div className="h-px flex-1 bg-border" />
+                  或
+                  <div className="h-px flex-1 bg-border" />
+                </div>
+                <Input
+                  id="controller-token"
+                  type="password"
+                  placeholder="Controller 管理员 token（与上两种方式二选一）"
+                  value={controllerToken}
+                  onChange={(e) => setControllerToken(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                  disabled={isLoading}
+                />
+                <p className="text-xs text-muted-foreground">
+                  仅 L1 账号（Human CR level 1，需管理数据时）填写：填管理员账号与密码（部署管理员告知），或直接填
+                  Controller 管理员 token，二选一。L2/L3 账号留空即可。
+                </p>
+              </div>
+            )}
+          </div>
+
           {error && (
             <div className="flex items-center gap-2 text-destructive text-sm">
               <AlertCircle className="w-4 h-4 shrink-0" />

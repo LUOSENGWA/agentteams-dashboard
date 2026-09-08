@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
-import { validateHigressSession } from './lib/api-auth';
+import { getSessionFromRequest } from './lib/dashboard-session';
 
 // Force Node.js runtime because api-auth.ts imports higress/proxy-helper which
 // uses AbortController/timeout patterns that are safer under Node runtime.
@@ -48,8 +48,11 @@ export async function middleware(request: NextRequest) {
   }
 
   // API auth gate: protect ALL /api/agentteams/* routes.
-  // The SA token authenticates Dashboard→Controller, not the browser caller.
-  // All browser requests (GET included) must present a valid Higress session cookie.
+  // Identity = the dashboard session cookie (at_dash_sess), created by the
+  // dual-track login (M19): L1 = Higress Console admin (SA credential,
+  // dashboard level 3) or L2 = Matrix login (own Matrix token, level 2).
+  // The Controller credential (SA or Matrix token) never leaves the server —
+  // see proxy-helper: "NEVER trust browser-supplied Authorization header".
   if (pathname.startsWith('/api/agentteams/')) {
     const isPublicPath = PUBLIC_PATHS.some((p) => pathname.startsWith(p));
     if (isPublicPath) {
@@ -80,14 +83,18 @@ export async function middleware(request: NextRequest) {
       return res;
     }
 
-    const { valid, user } = await validateHigressSession(request);
-    if (!valid) {
+    const session = getSessionFromRequest(request);
+    if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     // Forward the resolved identity downstream so route handlers (and the
     // Controller proxy) can apply server-side RBAC + audit attribution.
-    return NextResponse.next({ request: { headers: withUserHeaders(request, user) } });
+    // `level` is already the dashboard rbac-engine level (E5 mapping applied
+    // at session creation: CRD 1→3, 2→2, 3→1).
+    return NextResponse.next({
+      request: { headers: withUserHeaders(request, { name: session.user, level: session.level }) },
+    });
   }
 
   return NextResponse.next();

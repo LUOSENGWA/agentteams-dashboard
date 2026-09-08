@@ -1,5 +1,6 @@
 // Shared proxy helper for AgentTeams API routes
 import { NextRequest, NextResponse } from 'next/server';
+import { getSessionFromRequest } from '@/lib/dashboard-session';
 
 const TIMEOUT_MS = 10000;
 
@@ -104,21 +105,31 @@ export async function proxyToAgentTeams(
       headers: {},
     };
 
-    // In cluster mode the dashboard must authenticate to the controller using its
-    // own service-account token. When SA token is configured, NEVER trust the
-    // browser-supplied Authorization header to prevent token injection attacks.
-    // Only fall back to the incoming header when no server-side token exists at all.
+    // Per-session Controller credential (M19 dual-track):
+    // - L2 session → the user's own Matrix access token, held in the
+    //   server-side session store (A2 chain scopes the request to the user's
+    //   teams; token never touches the browser).
+    // - L1 session / AUTH_DISABLED → the admin SA token.
+    // When a server-side credential exists, NEVER trust the browser-supplied
+    // Authorization header (token-injection protection, upstream #89). The
+    // browser header is only a fallback when no server-side credential exists
+    // at all (legacy dev setups).
+    const session = getSessionFromRequest(request);
+    const sessionToken =
+      session?.credential.kind === 'matrix' || session?.credential.kind === 'controller-token'
+        ? session.credential.token
+        : undefined;
     const saToken = await getAuthToken();
-    const authToken = saToken || (
+    const authToken = sessionToken || saToken || (
       request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') || undefined
     );
     if (authToken) {
       (fetchOptions.headers as Record<string, string>)['authorization'] = `Bearer ${authToken}`;
     }
 
-    // Forward the server-resolved identity (set by middleware from the Higress
-    // session) so the controller can attribute write actions to the right user
-    // without trusting browser-supplied headers.
+    // Forward the server-resolved identity (set by middleware from the
+    // dashboard session) so the controller can attribute write actions to the
+    // right user without trusting browser-supplied headers.
     for (const name of ['x-agentteams-user', 'x-agentteams-user-level']) {
       const value = request.headers.get(name);
       if (value) (fetchOptions.headers as Record<string, string>)[name] = value;

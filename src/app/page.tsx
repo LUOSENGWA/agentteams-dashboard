@@ -5,6 +5,7 @@ import { AgentTeamsDashboard } from '@/components/dashboard/agent-teams-dashboar
 import { LoginPage } from '@/components/auth/login-page';
 import { SetupWizard } from '@/components/setup/setup-wizard';
 import { QueryProvider } from '@/lib/query-provider';
+import { useAgentTeamsStore } from '@/lib/agentteams-store';
 import { SearchProvider } from '@/lib/search-context';
 import { apiUrl } from '@/lib/api-base';
 import { ThemeProvider } from '@/components/theme/theme-provider';
@@ -38,6 +39,14 @@ export default function Home() {
           return;
         }
         setAuth({ status: 'authenticated', username: data.username });
+        // M19: publish the dashboard level for the UI level gate (nav items).
+        // Falls back to 3 (full nav) when the session endpoint predates the
+        // level field or in AUTH_DISABLED dev setups.
+        useAgentTeamsStore.getState().setUserLevel(data.level ?? 3);
+        // Account chip in the header (identity = the session's own username).
+        if (data.username) {
+          useAgentTeamsStore.getState().setSessionUser(data.username);
+        }
         fetch(apiUrl('/api/agentteams/setup/status/'), { credentials: 'same-origin' })
           .then((res) => res.json().catch(() => ({})))
           .then((sdata) => {

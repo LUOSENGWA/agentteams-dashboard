@@ -31,6 +31,24 @@ interface AgentTeamsState {
   taskBoardVisible: boolean;
 
   /**
+   * Dashboard rbac level of the logged-in user (M19 dual track):
+   * 3 Admin (L1, SA credential) / 2 Operator (L2, own Matrix token) /
+   * 1 Observer. Used ONLY for the UI level gate — the security boundary is
+   * server-side (middleware + Controller A2). Default 3 so unauthenticated
+   * dev setups (AUTH_DISABLED) keep full nav; the session endpoint sets the
+   * real level on mount. Deliberately NOT persisted.
+   */
+  userLevel: number;
+
+  /**
+   * Current dashboard session username (from /api/auth/session on mount).
+   * Null when unauthenticated. Drives the header account chip.
+   * Deliberately NOT persisted (partialize) — identity must never survive
+   * a page reload without a fresh session check.
+   */
+  sessionUser: string | null;
+
+  /**
    * Whether the 项目 nav item is visible (beta feature). Defaults to true
    * so the section is on out of the box; users can opt out in Settings.
    * Hidden = the nav item is removed, the section route still works if
@@ -46,6 +64,8 @@ interface AgentTeamsState {
   setReconnectInterval: (_ms: number) => void;
   setTaskBoardVisible: (_val: boolean) => void;
   setProjectsVisible: (_val: boolean) => void;
+  setUserLevel: (_val: number) => void;
+  setSessionUser: (_val: string | null) => void;
   addConnectionAttempt: (_attempt: ConnectionAttempt) => void;
 }
 
@@ -69,6 +89,8 @@ export const useAgentTeamsStore = create<AgentTeamsState>()(
       connectionHistory: [],
       taskBoardVisible: true,
       projectsVisible: true,
+      userLevel: 3,
+      sessionUser: null,
 
       setControllerUrl: (url: string) => {
         set({ controllerUrl: url });
@@ -145,6 +167,14 @@ export const useAgentTeamsStore = create<AgentTeamsState>()(
 
       setTaskBoardVisible: (val: boolean) => {
         set({ taskBoardVisible: val });
+      },
+
+      setUserLevel: (val: number) => {
+        set({ userLevel: val });
+      },
+
+      setSessionUser: (val: string | null) => {
+        set({ sessionUser: val });
       },
 
       setProjectsVisible: (val: boolean) => {
