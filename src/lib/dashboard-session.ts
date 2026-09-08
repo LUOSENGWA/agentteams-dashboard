@@ -28,8 +28,12 @@ const MAX_SESSIONS = 1000;
 
 /** Controller credential carried server-side per session. */
 export type ControllerCredential =
-  | { kind: 'sa' } // L1: use the admin SA token from env (never leave the server)
-  | { kind: 'matrix'; token: string }; // L2: the user's own Matrix access token
+  | { kind: 'sa' } // L1 via Console track: admin SA token from env (never leaves the server)
+  | { kind: 'matrix'; token: string } // L2: the user's own Matrix access token
+  | { kind: 'controller-token'; token: string }; // L1 via Matrix track: admin Controller
+  // token pasted at login (the Controller's Matrix auth only accepts level-2
+  // tokens, so a level-1 human like luo needs an admin-grade token for the
+  // data plane — same dual mode as the workbench plugin's admin-token mode).
 
 export interface DashboardSession {
   sid: string;

@@ -17,6 +17,8 @@ interface LoginPageProps {
 export function LoginPage({ onLoginSuccess, defaultUsername = '' }: LoginPageProps) {
   const [username, setUsername] = useState(defaultUsername);
   const [password, setPassword] = useState('');
+  const [controllerToken, setControllerToken] = useState('');
+  const [tokenVisible, setTokenVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const setMatrixAuth = useMatrixStore((s) => s.setMatrixAuth);
@@ -31,7 +33,11 @@ export function LoginPage({ onLoginSuccess, defaultUsername = '' }: LoginPagePro
         method: 'POST',
         credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({
+          username,
+          password,
+          ...(controllerToken ? { controllerToken } : {}),
+        }),
       });
 
       const data = await res.json();
@@ -90,6 +96,33 @@ export function LoginPage({ onLoginSuccess, defaultUsername = '' }: LoginPagePro
               disabled={isLoading}
             />
           </div>
+          <div className="space-y-1.5">
+            <button
+              type="button"
+              onClick={() => setTokenVisible((v) => !v)}
+              className="text-xs text-muted-foreground hover:text-foreground transition-colors"
+            >
+              {tokenVisible ? '收起 Controller 管理员 token ▲' : 'L1 账号（luo）？展开 Controller 管理员 token ▼'}
+            </button>
+            {tokenVisible && (
+              <div className="space-y-2">
+                <Input
+                  id="controller-token"
+                  type="password"
+                  placeholder="Controller 管理员 token"
+                  value={controllerToken}
+                  onChange={(e) => setControllerToken(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                  disabled={isLoading}
+                />
+                <p className="text-xs text-muted-foreground">
+                  由部署管理员提供（Node1: docker exec agentteams-controller cat /var/run/agentteams/cli-token）。
+                  L1 账号数据面必须填；L2 账号（sunzong/maizong）留空即可。
+                </p>
+              </div>
+            )}
+          </div>
+
           {error && (
             <div className="flex items-center gap-2 text-destructive text-sm">
               <AlertCircle className="w-4 h-4 shrink-0" />
