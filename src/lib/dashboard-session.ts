@@ -43,7 +43,7 @@ export type ControllerCredential =
 
 export interface DashboardSession {
   sid: string;
-  /** Human CR name / display username (luo / sunzong / maizong). */
+  /** Human CR name / display username (the Matrix localpart of the account). */
   user: string;
   /** Dashboard rbac-engine level: 1 Observer / 2 Operator / 3 Admin. */
   level: 1 | 2 | 3;

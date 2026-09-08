@@ -1,21 +1,23 @@
 // POST /api/auth/login - Dual-track multi-user authentication (M19 / batch M).
 //
-// Track L1 (Higress Console admin):
+// Track Console (deployment admin account):
 //   Console /session/login. The Console is single-operator: whoever holds the
 //   admin password IS the deployment admin. Identity = the logged-in username
-//   itself (NO Human CR lookup — the Console "admin" account and the Human CR
-//   "luo" are different accounts, and luo logs in via the Matrix track below).
-//   The session carries the admin SA credential (server-side only, level 3).
-//   The Higress Console session cookie is still forwarded so the gateway tab
-//   (/api/higress/*) keeps working.
+//   itself (NO Human CR lookup — the Console admin account is not required to
+//   have a Human CR). The session carries the admin SA credential
+//   (server-side only, level 3). The Higress Console session cookie is still
+//   forwarded so the gateway tab (/api/higress/*) keeps working.
 //
-// Track Matrix (any Human account — luo/sunzong/maizong, …):
+// Track Matrix (any Human account):
 //   Server-side Matrix password login → own access token → localpart →
-//   SA GET /humans/{localpart}; permissionLevel maps 1→3 (full, e.g. luo),
-//   2→2 (scoped to accessibleTeams, e.g. sunzong/maizong), 3→1 (observer).
+//   SA GET /humans/{localpart}; permissionLevel maps 1→3 (full),
+//   2→2 (scoped to accessibleTeams), 3→1 (observer). Level 3 via this track
+//   additionally requires admin verification (admin account password OR a
+//   pasted Controller admin token) before the session may use admin-grade
+//   data-plane credentials.
 //   The session carries the user's Matrix token (server-side only) as the
-//   Controller credential — A2 chain scopes reads to accessibleTeams.
-//   Non-Human Matrix accounts (no CR) → generic 401.
+//   Controller credential for level 2/3 — A2 chain scopes reads to
+//   accessibleTeams. Non-Human Matrix accounts (no CR) → generic 401.
 //
 // Both tracks fail → 401. Session secret missing → login fails closed
 // (dashboard-session throws, logged once).
@@ -179,7 +181,8 @@ async function attemptConsoleLogin(
   }
 
   // Identity = the Console username itself. The Console admin account and the
-  // Human CRs are different accounts (admin ≠ luo): no CR lookup here.
+  // Human CRs are different accounts (the Console admin may have no CR):
+  // no CR lookup here.
   let cookieValue: string;
   try {
     ({ cookieValue } = createSession({
