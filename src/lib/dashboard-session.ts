@@ -31,9 +31,13 @@ export type ControllerCredential =
   | { kind: 'sa' } // Admin data-plane access: the admin SA token from env
   //   (never leaves the server). Used by the Console track AND by
   //   top-permission (CR level 1) accounts logging in via the Matrix track
-  //   after their admin account password has been verified — the Controller's
+  //   after their admin account PASSWORD has been verified — the Controller's
   //   Matrix auth only accepts level-2 tokens, so a level-1 Matrix token
   //   cannot be the data-plane credential.
+  | { kind: 'controller-token'; token: string } // CR level 1 via the Matrix
+  //   track with a pasted Controller admin token (verified against the
+  //   Controller at login, held server-side only — same as the workbench
+  //   plugin's admin-token mode).
   | { kind: 'matrix'; token: string }; // Own-permission accounts (CR level 2/3):
   //   the user's own Matrix access token; A2 scopes reads to accessibleTeams.
 

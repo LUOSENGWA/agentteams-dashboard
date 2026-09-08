@@ -115,7 +115,10 @@ export async function proxyToAgentTeams(
     // browser header is only a fallback when no server-side credential exists
     // at all (legacy dev setups).
     const session = getSessionFromRequest(request);
-    const sessionToken = session?.credential.kind === 'matrix' ? session.credential.token : undefined;
+    const sessionToken =
+      session?.credential.kind === 'matrix' || session?.credential.kind === 'controller-token'
+        ? session.credential.token
+        : undefined;
     const saToken = await getAuthToken();
     const authToken = sessionToken || saToken || (
       request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') || undefined

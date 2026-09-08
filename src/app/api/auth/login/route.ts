@@ -106,10 +106,13 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { username, password } = body;
-    // Optional admin account verification — only consumed by the Matrix track
-    // for top-permission (CR level 1) accounts; see attemptMatrixLogin.
+    // Optional admin verification (two alternatives) — only consumed by the
+    // Matrix track for top-permission (CR level 1) accounts; see
+    // attemptMatrixLogin. adminUsername+adminPassword (Console check) OR
+    // controllerToken (Bearer check against the Controller).
     const adminUsername = typeof body.adminUsername === 'string' ? body.adminUsername.trim() : '';
     const adminPassword = typeof body.adminPassword === 'string' ? body.adminPassword : '';
+    const controllerToken = typeof body.controllerToken === 'string' ? body.controllerToken.trim() : '';
 
     if (!username || !password) {
       return NextResponse.json({ success: false, error: 'Username and password are required' }, { status: 400 });
@@ -127,7 +130,7 @@ export async function POST(request: NextRequest) {
       return l1.response;
     }
 
-    return await attemptMatrixLogin(request, username, password, adminUsername, adminPassword);
+    return await attemptMatrixLogin(request, username, password, adminUsername, adminPassword, controllerToken);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     // Fail-closed: a missing session secret surfaces here (dashboard-session throws).
@@ -245,6 +248,22 @@ async function verifyAdminConsoleCredentials(username: string, password: string)
 }
 
 /**
+ * Verify a user-supplied Controller admin token by calling an admin endpoint.
+ * Returns true only when the Controller accepts it.
+ */
+async function verifyControllerToken(request: NextRequest, token: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${getControllerUrl(request)}/api/v1/teams/`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Matrix track: password login for ANY Human account (top-permission level
  * 1 / operators level 2 / observers level 3) → session carrying server-side
  * credentials. The level is derived from the Human CR's permissionLevel —
@@ -253,13 +272,15 @@ async function verifyAdminConsoleCredentials(username: string, password: string)
  * Credential selection:
  * - Dashboard level 3 via Matrix (CR level 1): the Controller's Matrix auth
  *   only accepts level-2 tokens, so the user's own Matrix token would 401 on
- *   every data-plane call. Admin-level data access is gated on VERIFYING THE
- *   ADMIN ACCOUNT'S CONSOLE PASSWORD (adminUsername/adminPassword). On
- *   success the session uses the server's SA token (kind 'sa') — it never
- *   leaves the server and is never pasted by the user. The Matrix token is
+ *   every data-plane call. Admin-level data access is gated on EITHER
+ *   verifying the admin account's CONSOLE PASSWORD (adminUsername/
+ *   adminPassword → session uses the server's SA token, kind 'sa', which
+ *   never leaves the server) OR a pasted Controller admin TOKEN (verified
+ *   against the Controller → kind 'controller-token', held server-side only;
+ *   same as the workbench plugin's admin-token mode). The Matrix token is
  *   still returned for the chat tab.
  * - Dashboard level 2/3 (CR level 2/3): the user's own Matrix token; A2
- *   scopes level-2 reads to accessibleTeams.
+ *   scopes level-2 reads to accessibleTeams. Admin verification is ignored.
  */
 async function attemptMatrixLogin(
   request: NextRequest,
@@ -267,6 +288,7 @@ async function attemptMatrixLogin(
   password: string,
   adminUsername: string,
   adminPassword: string,
+  controllerToken: string,
 ): Promise<NextResponse> {
   const matrix = await tryMatrixLogin(username, password);
   if (!matrix || !matrix.accessToken) {
@@ -284,24 +306,31 @@ async function attemptMatrixLogin(
   }
 
   // Level 3 via Matrix (CR level 1): the data plane needs admin-grade access
-  // (the Controller's Matrix auth rejects level-1 tokens). Gate it on the
-  // admin account's Console password, then use the server-side SA token.
-  let credential: { kind: 'sa' } | { kind: 'matrix'; token: string };
+  // (the Controller's Matrix auth rejects level-1 tokens). Gate it on EITHER
+  // the admin account's Console password OR a pasted Controller admin token.
+  let credential: { kind: 'sa' } | { kind: 'matrix'; token: string } | { kind: 'controller-token'; token: string };
   if (dashLevel === 3) {
-    if (!adminUsername || !adminPassword) {
+    if (adminUsername && adminPassword) {
+      const adminOk = await verifyAdminConsoleCredentials(adminUsername, adminPassword);
+      if (!adminOk) {
+        return NextResponse.json({ success: false, error: '管理员账号验证失败（账号或密码不正确）' }, { status: 401 });
+      }
+      credential = { kind: 'sa' };
+    } else if (controllerToken) {
+      const tokenOk = await verifyControllerToken(request, controllerToken);
+      if (!tokenOk) {
+        return NextResponse.json({ success: false, error: 'Controller 管理员 token 无效' }, { status: 401 });
+      }
+      credential = { kind: 'controller-token', token: controllerToken };
+    } else {
       return NextResponse.json(
         {
           success: false,
-          error: '该账号需要管理员账号验证：请在「管理员账号验证」中填写管理员账号与密码（由部署管理员告知）',
+          error: 'L1 账号需要管理员验证：请展开「管理员账号验证」填写管理员账号与密码，或 Controller 管理员 token（二选一，由部署管理员提供）',
         },
         { status: 400 },
       );
     }
-    const adminOk = await verifyAdminConsoleCredentials(adminUsername, adminPassword);
-    if (!adminOk) {
-      return NextResponse.json({ success: false, error: '管理员账号验证失败（账号或密码不正确）' }, { status: 401 });
-    }
-    credential = { kind: 'sa' };
   } else {
     credential = { kind: 'matrix', token: String(matrix.accessToken) };
   }

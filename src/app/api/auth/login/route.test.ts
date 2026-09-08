@@ -226,6 +226,54 @@ describe('POST /api/auth/login (dual track, M19)', () => {
     expect(String(data.error)).toContain('管理员账号');
   });
 
+  it('Matrix: CR level 1 + valid pasted Controller token → level-3 session (plugin admin-token mode), token never in a cookie', async () => {
+    mockCallHigressConsole.mockResolvedValue(failedConsoleLogin());
+    installFetchMock({
+      humans: { luo: { body: { name: 'luo', permissionLevel: 1 } } },
+      matrixLogin: {
+        body: { access_token: 'syt_l1_token', user_id: '@luo:sat.example', device_id: 'D2' },
+      },
+    });
+    // The token verification hits /api/v1/teams via fetch → answer 200.
+    const routerFetch = vi.mocked(fetch);
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).includes('/api/v1/teams')) return new Response('{}', { status: 200 });
+        return routerFetch(input as RequestInfo);
+      }),
+    );
+
+    const response = await POST(
+      request({ username: 'luo', password: 'matrix-password', controllerToken: 'cli-admin-token' }),
+    );
+    expect(response.status).toBe(200);
+    const data = await responseJson(response);
+    expect(data.user).toEqual({ username: 'luo', level: 3 });
+    expect(data.mode).toBe('matrix');
+    expect((data.matrix as { accessToken?: string }).accessToken).toBe('syt_l1_token');
+    expect(response.headers.getSetCookie().every((c) => !c.includes('cli-admin-token'))).toBe(true);
+  });
+
+  it('Matrix: CR level 1 + INVALID pasted token → 401', async () => {
+    mockCallHigressConsole.mockResolvedValue(failedConsoleLogin());
+    // The fetch router's default 401 also answers the /api/v1/teams check →
+    // token verification fails.
+    installFetchMock({
+      humans: { luo: { body: { name: 'luo', permissionLevel: 1 } } },
+      matrixLogin: {
+        body: { access_token: 'syt_l1_token', user_id: '@luo:sat.example', device_id: 'D2' },
+      },
+    });
+
+    const response = await POST(
+      request({ username: 'luo', password: 'matrix-password', controllerToken: 'wrong-token' }),
+    );
+    expect(response.status).toBe(401);
+    const data = await responseJson(response);
+    expect(String(data.error)).toContain('token');
+  });
+
   it('Matrix: CR level 1 + WRONG admin credentials → 401 管理员账号验证失败', async () => {
     // Both Console attempts fail (user + admin).
     mockCallHigressConsole.mockResolvedValue(failedConsoleLogin());

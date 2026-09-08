@@ -19,6 +19,7 @@ export function LoginPage({ onLoginSuccess, defaultUsername = '' }: LoginPagePro
   const [password, setPassword] = useState('');
   const [adminUsername, setAdminUsername] = useState('');
   const [adminPassword, setAdminPassword] = useState('');
+  const [controllerToken, setControllerToken] = useState('');
   const [adminVisible, setAdminVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -38,6 +39,7 @@ export function LoginPage({ onLoginSuccess, defaultUsername = '' }: LoginPagePro
           username,
           password,
           ...(adminUsername ? { adminUsername, adminPassword } : {}),
+          ...(controllerToken ? { controllerToken } : {}),
         }),
       });
 
@@ -103,7 +105,7 @@ export function LoginPage({ onLoginSuccess, defaultUsername = '' }: LoginPagePro
               onClick={() => setAdminVisible((v) => !v)}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
-              {adminVisible ? '收起管理员账号验证 ▲' : '管理员账号验证（仅最高权限账号需要）▼'}
+              {adminVisible ? '收起管理员账号验证 ▲' : '管理员账号验证（仅L1账号需要）▼'}
             </button>
             {adminVisible && (
               <div className="space-y-2">
@@ -123,9 +125,23 @@ export function LoginPage({ onLoginSuccess, defaultUsername = '' }: LoginPagePro
                   onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
                   disabled={isLoading}
                 />
+                <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                  <div className="h-px flex-1 bg-border" />
+                  或
+                  <div className="h-px flex-1 bg-border" />
+                </div>
+                <Input
+                  id="controller-token"
+                  type="password"
+                  placeholder="Controller 管理员 token（与上两种方式二选一）"
+                  value={controllerToken}
+                  onChange={(e) => setControllerToken(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
+                  disabled={isLoading}
+                />
                 <p className="text-xs text-muted-foreground">
-                  仅当你的账号是最高权限（Human CR level 1）且需要管理数据时填写，管理员账号与密码由部署管理员告知；
-                  普通账号（level 2/3）留空即可。
+                  仅 L1 账号（Human CR level 1，需管理数据时）填写：填管理员账号与密码（部署管理员告知），或直接填
+                  Controller 管理员 token，二选一。L2/L3 账号留空即可。
                 </p>
               </div>
             )}
