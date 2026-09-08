@@ -86,7 +86,7 @@ export function AgentTeamsDashboard() {
   const [isRefreshingAll, setIsRefreshingAll] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const { isConnected, openSettings, controllerUrl, connectionLatency, reconnectInterval,
-    taskBoardVisible, projectsVisible } = useAgentTeamsStore();
+    taskBoardVisible, projectsVisible, userLevel } = useAgentTeamsStore();
   const { isLoggedIn: matrixLoggedIn, isSyncing: matrixSyncing } = useMatrixStore();
   const notifications = useNotificationStore((s) => s.notifications);
   const { searchQuery, setSearchQuery } = useSearch();
@@ -111,13 +111,13 @@ export function AgentTeamsDashboard() {
   const isPluginSection = isPluginSectionId(activeSection);
 
   const visibleNavItems = useMemo(
-    () => navItems.filter((item) => isNavItemVisible(item, mode, taskBoardVisible, projectsVisible)),
-    [mode, taskBoardVisible, projectsVisible]
+    () => navItems.filter((item) => isNavItemVisible(item, mode, taskBoardVisible, projectsVisible, userLevel)),
+    [mode, taskBoardVisible, projectsVisible, userLevel]
   );
 
   const visibleCreateActions = useMemo(
-    () => createActions.filter((action) => isCreateActionVisible(action, mode, taskBoardVisible, projectsVisible)),
-    [mode, taskBoardVisible, projectsVisible]
+    () => createActions.filter((action) => isCreateActionVisible(action, mode, taskBoardVisible, projectsVisible, userLevel)),
+    [mode, taskBoardVisible, projectsVisible, userLevel]
   );
 
   const checkConnection = useAgentTeamsStore((s) => s.checkConnection);

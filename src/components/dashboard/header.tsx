@@ -3,6 +3,7 @@
 import { useRef, useEffect, useState, useMemo } from 'react';
 import type { RefObject } from 'react';
 import { useTheme } from '@/components/theme/theme-provider';
+import { useAgentTeamsStore } from '@/lib/agentteams-store';
 import {
   Search,
   Bot,
@@ -91,10 +92,11 @@ export function DashboardHeader({
   const [paletteOpen, setPaletteOpen] = useState(false);
 
   const searchResults = useGlobalSearch(debouncedQuery, workers, teams, managers, humans);
+  const userLevel = useAgentTeamsStore((s) => s.userLevel);
 
   const visibleActions = useMemo(
-    () => actions.filter((action) => isCreateActionVisible(action, mode)),
-    [actions, mode]
+    () => actions.filter((action) => isCreateActionVisible(action, mode, undefined, undefined, userLevel)),
+    [actions, mode, userLevel]
   );
 
   // Cycle through the built-in themes: light → dark → high-contrast → light.

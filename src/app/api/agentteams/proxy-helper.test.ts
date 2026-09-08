@@ -1,8 +1,14 @@
 // @vitest-environment node
-import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { NextRequest } from 'next/server';
 import { proxyToAgentTeams } from './proxy-helper';
+import {
+  SESSION_COOKIE_NAME,
+  __resetSessionStoreForTests,
+  createSession,
+  destroySession,
+} from '@/lib/dashboard-session';
 
 let server: Server;
 let controllerUrl: string;
@@ -123,5 +129,102 @@ describe('proxyToAgentTeams passthroughHeaders', () => {
     expect(res.headers.get('content-disposition')).toBe(
       "attachment; filename*=UTF-8''%E6%96%B9%E6%A1%88.pdf",
     );
+  });
+});
+
+describe('proxyToAgentTeams per-session credential (M19 dual track)', () => {
+  let authServer: Server;
+  let authUrl: string;
+  const captured: Array<{ authorization: string | null; user: string | null; level: string | null }> = [];
+
+  beforeAll(async () => {
+    authServer = createServer((req, res) => {
+      captured.push({
+        authorization: (req.headers['authorization'] as string) ?? null,
+        user: (req.headers['x-agentteams-user'] as string) ?? null,
+        level: (req.headers['x-agentteams-user-level'] as string) ?? null,
+      });
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end('{}');
+    });
+    await new Promise<void>((resolve) => authServer.listen(0, '127.0.0.1', resolve));
+    const address = authServer.address();
+    if (!address || typeof address === 'string') throw new Error('no server address');
+    authUrl = `http://127.0.0.1:${address.port}`;
+    process.env.DASHBOARD_SESSION_SECRET = 'e'.repeat(64);
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => authServer.close(() => resolve()));
+    delete process.env.DASHBOARD_SESSION_SECRET;
+  });
+
+  afterEach(() => {
+    captured.length = 0;
+    __resetSessionStoreForTests();
+    delete process.env.AGENTTEAMS_AUTH_TOKEN;
+    delete process.env.AGENTTEAMS_AUTH_TOKEN_FILE;
+  });
+
+  function requestWith(cookie: string | null, extra?: Record<string, string>) {
+    const headers = new Headers();
+    if (cookie) headers.set('cookie', cookie);
+    for (const [k, v] of Object.entries(extra ?? {})) headers.set(k, v);
+    return new NextRequest('http://localhost/api/agentteams/teams', { headers });
+  }
+
+  async function proxy(request: NextRequest) {
+    return proxyToAgentTeams(request, authUrl, '/api/v1/teams', { forwardBody: false, method: 'GET' });
+  }
+
+  it('L2 session → forwards the session Matrix token; browser Authorization is ignored', async () => {
+    process.env.AGENTTEAMS_AUTH_TOKEN = 'sa-admin-token';
+    const { cookieValue } = createSession({
+      user: 'sunzong',
+      crLevel: 2,
+      credential: { kind: 'matrix', token: 'syt_l2_token' },
+    });
+    await proxy(requestWith(`${SESSION_COOKIE_NAME}=${cookieValue}`, { authorization: 'Bearer browser-forged' }));
+    expect(captured[0].authorization).toBe('Bearer syt_l2_token');
+  });
+
+  it('L1 session (SA credential) → forwards the SA env token; browser Authorization is ignored', async () => {
+    process.env.AGENTTEAMS_AUTH_TOKEN = 'sa-admin-token';
+    const { cookieValue } = createSession({ user: 'luo', crLevel: 1, credential: { kind: 'sa' } });
+    await proxy(requestWith(`${SESSION_COOKIE_NAME}=${cookieValue}`, { authorization: 'Bearer browser-forged' }));
+    expect(captured[0].authorization).toBe('Bearer sa-admin-token');
+  });
+
+  it('no session (AUTH_DISABLED path) → falls back to the SA env token', async () => {
+    process.env.AGENTTEAMS_AUTH_TOKEN = 'sa-admin-token';
+    await proxy(requestWith(null));
+    expect(captured[0].authorization).toBe('Bearer sa-admin-token');
+  });
+
+  it('no server-side credential at all → legacy browser header fallback', async () => {
+    await proxy(requestWith(null, { authorization: 'Bearer legacy-header-token' }));
+    expect(captured[0].authorization).toBe('Bearer legacy-header-token');
+  });
+
+  it('forwards the server-resolved x-agentteams identity headers', async () => {
+    const { cookieValue } = createSession({ user: 'sunzong', crLevel: 2, credential: { kind: 'matrix', token: 't' } });
+    await proxy(requestWith(`${SESSION_COOKIE_NAME}=${cookieValue}`, {
+      'x-agentteams-user': 'sunzong',
+      'x-agentteams-user-level': '2',
+    }));
+    expect(captured[0].user).toBe('sunzong');
+    expect(captured[0].level).toBe('2');
+  });
+
+  it('a forged cookie for a destroyed session sends no session token (SA fallback only)', async () => {
+    process.env.AGENTTEAMS_AUTH_TOKEN = 'sa-admin-token';
+    const { sessionId, cookieValue } = createSession({
+      user: 'sunzong',
+      crLevel: 2,
+      credential: { kind: 'matrix', token: 'syt_l2_token' },
+    });
+    destroySession(sessionId);
+    await proxy(requestWith(`${SESSION_COOKIE_NAME}=${cookieValue}`, { authorization: 'Bearer browser-forged' }));
+    expect(captured[0].authorization).toBe('Bearer sa-admin-token');
   });
 });

@@ -1,44 +1,25 @@
-// GET /api/auth/session - Validate the browser's session via Higress Console
+// GET /api/auth/session - Resolve the browser's dashboard session (M19).
+//
+// The dashboard session cookie (at_dash_sess) is created by the dual-track
+// login. `username` is the Human CR name (never a Higress consumer name —
+// the old /v1/consumers probe reported the first consumer, which is why the
+// UI used to show "manager" for everyone). `level` is the dashboard
+// rbac-engine level (3 Admin / 2 Operator / 1 Observer) used by the UI
+// level gate; the security boundary remains server-side (middleware +
+// Controller A2).
 import { NextRequest, NextResponse } from 'next/server';
-import { callHigressConsole, getHigressConsoleURL } from '../../higress/proxy-helper';
+import { getSessionFromRequest } from '@/lib/dashboard-session';
 
 export async function GET(request: NextRequest) {
-  try {
-    const cookie = request.headers.get('cookie');
-    if (!cookie) {
-      return NextResponse.json({ authenticated: false }, { status: 200 });
-    }
-
-    return await validateViaHigress(cookie);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    return NextResponse.json({ authenticated: false, error: message }, { status: 200 });
-  }
-}
-
-/** Validate session by probing Higress Console (original behaviour). */
-async function validateViaHigress(cookie: string) {
-  const consoleUrl = getHigressConsoleURL();
-
-  const { response, body } = await callHigressConsole('/v1/consumers', {
-    method: 'GET',
-    cookie,
-    consoleUrl,
-  });
-
-  if (!response.ok) {
+  const session = getSessionFromRequest(request);
+  if (!session) {
     return NextResponse.json({ authenticated: false }, { status: 200 });
   }
 
-  // Try to extract a display name/username from the profile if available.
-  let username: string | undefined;
-  if (typeof body === 'object' && body !== null && 'data' in body) {
-    const data = (body as { data?: unknown }).data;
-    if (Array.isArray(data) && data.length > 0 && typeof data[0] === 'object' && data[0] !== null) {
-      const first = data[0] as { name?: string };
-      username = first.name;
-    }
-  }
-
-  return NextResponse.json({ authenticated: true, username, mode: 'higress' }, { status: 200 });
+  return NextResponse.json({
+    authenticated: true,
+    username: session.user,
+    level: session.level,
+    mode: session.credential.kind === 'sa' ? 'higress' : 'matrix',
+  }, { status: 200 });
 }
