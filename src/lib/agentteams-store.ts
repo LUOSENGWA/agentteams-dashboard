@@ -41,6 +41,14 @@ interface AgentTeamsState {
   userLevel: number;
 
   /**
+   * Current dashboard session username (from /api/auth/session on mount).
+   * Null when unauthenticated. Drives the header account chip.
+   * Deliberately NOT persisted (partialize) — identity must never survive
+   * a page reload without a fresh session check.
+   */
+  sessionUser: string | null;
+
+  /**
    * Whether the 项目 nav item is visible (beta feature). Defaults to true
    * so the section is on out of the box; users can opt out in Settings.
    * Hidden = the nav item is removed, the section route still works if
@@ -57,6 +65,7 @@ interface AgentTeamsState {
   setTaskBoardVisible: (_val: boolean) => void;
   setProjectsVisible: (_val: boolean) => void;
   setUserLevel: (_val: number) => void;
+  setSessionUser: (_val: string | null) => void;
   addConnectionAttempt: (_attempt: ConnectionAttempt) => void;
 }
 
@@ -81,6 +90,7 @@ export const useAgentTeamsStore = create<AgentTeamsState>()(
       taskBoardVisible: true,
       projectsVisible: true,
       userLevel: 3,
+      sessionUser: null,
 
       setControllerUrl: (url: string) => {
         set({ controllerUrl: url });
@@ -161,6 +171,10 @@ export const useAgentTeamsStore = create<AgentTeamsState>()(
 
       setUserLevel: (val: number) => {
         set({ userLevel: val });
+      },
+
+      setSessionUser: (val: string | null) => {
+        set({ sessionUser: val });
       },
 
       setProjectsVisible: (val: boolean) => {

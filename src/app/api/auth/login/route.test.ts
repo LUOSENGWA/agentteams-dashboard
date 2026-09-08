@@ -45,6 +45,13 @@ function successfulConsoleLogin() {
   };
 }
 
+function failedConsoleLogin() {
+  return {
+    response: new Response(null, { status: 401 }),
+    body: { error: 'bad' },
+  };
+}
+
 /** fetch mock router: SA human lookup + Matrix login, default 401. */
 function installFetchMock(opts: {
   humans?: Record<string, { status?: number; body?: Record<string, unknown> }>;
@@ -83,7 +90,6 @@ describe('POST /api/auth/login (dual track, M19)', () => {
     __resetSessionStoreForTests();
     vi.stubEnv('DASHBOARD_SESSION_SECRET', SECRET);
     vi.stubEnv('AGENTTEAMS_HIGRESS_ADAPTER_MODE', 'direct');
-    vi.stubEnv('DASHBOARD_L1_HUMAN', '');
     vi.stubEnv('DASHBOARD_COOKIE_SECURE', '');
     mockCallHigressConsole.mockReset();
     mockForwardCookies.mockReset();
@@ -98,79 +104,39 @@ describe('POST /api/auth/login (dual track, M19)', () => {
     vi.unstubAllGlobals();
   });
 
-  it('L1: Console login + Human CR level 1 → level-3 session, SA credential, both cookies', async () => {
+  it('L1: Console login → level-3 session, identity = the Console username (admin ≠ luo), SA credential, both cookies', async () => {
     mockCallHigressConsole.mockResolvedValue(successfulConsoleLogin());
-    installFetchMock({
-      humans: { luo: { body: { name: 'luo', permissionLevel: 1, accessibleTeams: ['a', 'b'] } } },
-      matrixLogin: { status: 401 },
-    });
+    const fetchMock = installFetchMock({ matrixLogin: { status: 401 } });
 
     const response = await POST(request({ username: 'admin', password: 'password' }));
     expect(response.status).toBe(200);
     const data = await responseJson(response);
     expect(data.success).toBe(true);
-    expect(data.user).toEqual({ username: 'luo', level: 3 });
+    // Identity is the Console account itself — NOT remapped to a Human CR.
+    expect(data.user).toEqual({ username: 'admin', level: 3 });
     expect(data.mode).toBe('higress');
     expect(data.matrix).toBeNull();
+
+    // No Human CR lookup on the Console track.
+    expect(fetchMock.mock.calls.every(([url]) => !String(url).includes('/api/v1/humans/'))).toBe(true);
 
     const cookies = response.headers.getSetCookie();
     expect(cookies.some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=`))).toBe(true);
     expect(cookies.some((c) => c.startsWith('_hi_sess='))).toBe(true);
   });
 
-  it('L1: honors DASHBOARD_L1_HUMAN for the CR lookup', async () => {
-    vi.stubEnv('DASHBOARD_L1_HUMAN', 'luo');
-    mockCallHigressConsole.mockResolvedValue(successfulConsoleLogin());
-    const fetchMock = installFetchMock({
-      humans: { luo: { body: { name: 'luo', permissionLevel: 1 } } },
-      matrixLogin: { status: 401 },
-    });
-
-    const response = await POST(request({ username: 'admin', password: 'password' }));
-    expect(response.status).toBe(200);
-    expect(fetchMock).toHaveBeenCalledWith(
-      'http://controller.test:8090/api/v1/humans/luo',
-      expect.objectContaining({ headers: { Authorization: 'Bearer sa-token' } }),
-    );
-  });
-
-  it('L1: Console ok but CR missing → 503 misconfigured (fail loudly)', async () => {
-    mockCallHigressConsole.mockResolvedValue(successfulConsoleLogin());
-    installFetchMock({ humans: {}, matrixLogin: { status: 401 } });
-
-    const response = await POST(request({ username: 'admin', password: 'password' }));
-    expect(response.status).toBe(503);
-  });
-
-  it('L1: Console ok but CR is level 2 → 503 (not silently demoted)', async () => {
-    mockCallHigressConsole.mockResolvedValue(successfulConsoleLogin());
-    installFetchMock({
-      humans: { luo: { body: { name: 'luo', permissionLevel: 2 } } },
-      matrixLogin: { status: 401 },
-    });
-
-    const response = await POST(request({ username: 'admin', password: 'password' }));
-    expect(response.status).toBe(503);
-  });
-
   it('L1: session secret missing → fail closed (503, no cookie)', async () => {
     vi.stubEnv('DASHBOARD_SESSION_SECRET', '');
     mockCallHigressConsole.mockResolvedValue(successfulConsoleLogin());
-    installFetchMock({
-      humans: { luo: { body: { name: 'luo', permissionLevel: 1 } } },
-      matrixLogin: { status: 401 },
-    });
+    installFetchMock({ matrixLogin: { status: 401 } });
 
     const response = await POST(request({ username: 'admin', password: 'password' }));
     expect(response.status).toBe(503);
     expect(response.headers.getSetCookie()).toEqual([]);
   });
 
-  it('L2: Console 401 + Matrix login + CR level 2 → level-2 session, matrix mode, no Console cookie', async () => {
-    mockCallHigressConsole.mockResolvedValue({
-      response: new Response(null, { status: 401 }),
-      body: { error: 'bad' },
-    });
+  it('Matrix: Console 401 + Matrix login + CR level 2 (sunzong) → level-2 session, scoped, matrix mode, no Console cookie', async () => {
+    mockCallHigressConsole.mockResolvedValue(failedConsoleLogin());
     installFetchMock({
       humans: { sunzong: { body: { name: 'sunzong', permissionLevel: 2, accessibleTeams: ['biz-team'] } } },
       matrixLogin: {
@@ -193,25 +159,61 @@ describe('POST /api/auth/login (dual track, M19)', () => {
     expect(cookies.every((c) => !c.includes('syt_l2_token'))).toBe(true);
   });
 
-  it('L2: CR level 1 (admin human) via Matrix → 401 (L1 must use the Console track)', async () => {
-    mockCallHigressConsole.mockResolvedValue({
-      response: new Response(null, { status: 401 }),
-      body: { error: 'bad' },
-    });
+  it('Matrix: CR level 1 (luo) → level-3 session, full access, NO team restriction', async () => {
+    mockCallHigressConsole.mockResolvedValue(failedConsoleLogin());
     installFetchMock({
-      humans: { luo: { body: { name: 'luo', permissionLevel: 1 } } },
-      matrixLogin: { body: { access_token: 't', user_id: '@luo:sat.example', device_id: 'D' } },
+      humans: {
+        luo: {
+          body: { name: 'luo', permissionLevel: 1, accessibleTeams: ['sysdev-team', 'embedded-team'] },
+        },
+      },
+      matrixLogin: {
+        body: { access_token: 'syt_l1_token', user_id: '@luo:sat.example', device_id: 'D2' },
+      },
     });
 
-    const response = await POST(request({ username: 'luo', password: 'x' }));
+    const response = await POST(request({ username: 'luo', password: 'matrix-password' }));
+    expect(response.status).toBe(200);
+    const data = await responseJson(response);
+    expect(data.success).toBe(true);
+    expect(data.user).toEqual({ username: 'luo', level: 3 });
+    expect(data.mode).toBe('matrix');
+    expect((data.matrix as { accessToken?: string }).accessToken).toBe('syt_l1_token');
+  });
+
+  it('Matrix: CR level 3 (observer) → level-1 session', async () => {
+    mockCallHigressConsole.mockResolvedValue(failedConsoleLogin());
+    installFetchMock({
+      humans: { watcher: { body: { name: 'watcher', permissionLevel: 3 } } },
+      matrixLogin: {
+        body: { access_token: 't3', user_id: '@watcher:sat.example', device_id: 'D3' },
+      },
+    });
+
+    const response = await POST(request({ username: 'watcher', password: 'x' }));
+    expect(response.status).toBe(200);
+    const data = await responseJson(response);
+    expect(data.user).toEqual({ username: 'watcher', level: 1 });
+    expect(data.mode).toBe('matrix');
+  });
+
+  it('Matrix: login ok but no Human CR (non-human account) → 401 (no level leak)', async () => {
+    mockCallHigressConsole.mockResolvedValue(failedConsoleLogin());
+    installFetchMock({
+      humans: {},
+      matrixLogin: {
+        body: { access_token: 't', user_id: '@randomuser:sat.example', device_id: 'D' },
+      },
+    });
+
+    const response = await POST(request({ username: 'randomuser', password: 'x' }));
     expect(response.status).toBe(401);
+    const data = await responseJson(response);
+    expect(data.success).toBe(false);
   });
 
   it('both tracks fail → 401', async () => {
-    mockCallHigressConsole.mockResolvedValue({
-      response: new Response(null, { status: 401 }),
-      body: { error: 'bad' },
-    });
+    mockCallHigressConsole.mockResolvedValue(failedConsoleLogin());
     installFetchMock({ humans: {}, matrixLogin: { status: 401 } });
 
     const response = await POST(request({ username: 'nobody', password: 'x' }));
@@ -222,25 +224,18 @@ describe('POST /api/auth/login (dual track, M19)', () => {
 
   it('never calls /system/init (auto-registration removed — fresh-Console privilege escalation)', async () => {
     mockCallHigressConsole.mockResolvedValue(successfulConsoleLogin());
-    installFetchMock({
-      humans: { luo: { body: { name: 'luo', permissionLevel: 1 } } },
-      matrixLogin: { status: 401 },
-    });
+    installFetchMock({ matrixLogin: { status: 401 } });
 
     await POST(request({ username: 'admin', password: 'password' }));
     expect(mockCallHigressConsole).toHaveBeenCalledTimes(1);
-    expect(mockCallHigressConsole).not.toHaveBeenCalledWith(
-      '/system/init',
-      expect.anything(),
-    );
+    expect(mockCallHigressConsole).not.toHaveBeenCalledWith('/system/init', expect.anything());
   });
 
   it('external mode: no init, no Matrix token returned, session still created for L1', async () => {
     vi.stubEnv('AGENTTEAMS_HIGRESS_ADAPTER_MODE', 'external');
     mockCallHigressConsole.mockResolvedValue(successfulConsoleLogin());
     installFetchMock({
-      humans: { luo: { body: { name: 'luo', permissionLevel: 1 } } },
-      matrixLogin: { body: { access_token: 'secret-matrix', user_id: '@luo:sat.example', device_id: 'D' } },
+      matrixLogin: { body: { access_token: 'secret-matrix', user_id: '@admin:sat.example', device_id: 'D' } },
     });
 
     const response = await POST(request({ username: 'admin', password: 'password' }));
