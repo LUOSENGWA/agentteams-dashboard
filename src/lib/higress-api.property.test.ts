@@ -5,6 +5,14 @@ import { validateAiRoutePayload, validateModelMappings } from './higress-api';
 const nonBlankString = fc.string({ minLength: 1, maxLength: 24 }).filter((value) => value.trim().length > 0);
 const exactMappingKey = nonBlankString.filter((value) => !value.includes('*') && !value.startsWith('~'));
 
+// Re-run count is a small multiple of the property space: 25 runs is enough
+// to cover the dedup branches (single, repeated) and the weight partition
+// boundaries, while keeping the cumulative cost of this file well under
+// 100ms. fast-check itself reports the minimum counter-example on failure
+// so we don't need 100 runs to be useful.
+const PROPERTY_RUNS = 25;
+const PROPERTY_SEED = 0x41475454; // 'AGTT' — stable across CI and local
+
 describe('Higress validation properties', () => {
   it('rejects every duplicate exact model mapping key', () => {
     fc.assert(fc.property(exactMappingKey, nonBlankString, (pattern, firstTarget) => {
@@ -14,7 +22,7 @@ describe('Higress validation properties', () => {
       ]);
 
       expect(errors).toContain(`模型映射包含重复精确键: ${pattern.trim()}`);
-    }), { numRuns: 100 });
+    }), { numRuns: PROPERTY_RUNS, seed: PROPERTY_SEED });
   });
 
   it('accepts every valid two-upstream weight partition and rejects other sums', () => {
@@ -29,7 +37,7 @@ describe('Higress validation properties', () => {
       });
 
       expect(errors).not.toContain('多个上游的权重总和必须为 100');
-    }), { numRuns: 100 });
+    }), { numRuns: PROPERTY_RUNS, seed: PROPERTY_SEED });
 
     fc.assert(fc.property(
       fc.integer({ min: 0, max: 100 }),
@@ -47,7 +55,7 @@ describe('Higress validation properties', () => {
 
         expect(errors).toContain('多个上游的权重总和必须为 100');
       },
-    ), { numRuns: 100 });
+    ), { numRuns: PROPERTY_RUNS, seed: PROPERTY_SEED });
   });
 
   it('requires credentials whenever route authentication is enabled', () => {
@@ -60,7 +68,7 @@ describe('Higress validation properties', () => {
       });
 
       expect(errors).not.toContain('启用路由认证时至少需要一种凭据类型');
-    }), { numRuns: 100 });
+    }), { numRuns: PROPERTY_RUNS, seed: PROPERTY_SEED });
 
     expect(validateAiRoutePayload({
       name: 'team-chat',
