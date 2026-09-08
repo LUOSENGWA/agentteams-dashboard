@@ -1,18 +1,21 @@
 // POST /api/auth/login - Dual-track multi-user authentication (M19 / batch M).
 //
 // Track L1 (Higress Console admin):
-//   Console /session/login with the admin account (deployment assumption:
-//   Console admin = the L1 human, env DASHBOARD_L1_HUMAN, default "luo").
-//   Identity is resolved server-side via the admin SA: GET /humans/{L1} must
-//   exist with permissionLevel 1. The session carries the SA credential —
-//   the browser never receives it. The Higress Console session cookie is
-//   still forwarded so the gateway tab (/api/higress/*) keeps working.
+//   Console /session/login. The Console is single-operator: whoever holds the
+//   admin password IS the deployment admin. Identity = the logged-in username
+//   itself (NO Human CR lookup — the Console "admin" account and the Human CR
+//   "luo" are different accounts, and luo logs in via the Matrix track below).
+//   The session carries the admin SA credential (server-side only, level 3).
+//   The Higress Console session cookie is still forwarded so the gateway tab
+//   (/api/higress/*) keeps working.
 //
-// Track L2 (Matrix login):
-//   Server-side Matrix password login → own access token → whoami localpart →
-//   SA GET /humans/{localpart} must exist with permissionLevel 2. The session
-//   carries the user's Matrix token (server-side only) as the Controller
-//   credential — A2 chain scopes reads to accessibleTeams (T4 field-tested).
+// Track Matrix (any Human account — luo/sunzong/maizong, …):
+//   Server-side Matrix password login → own access token → localpart →
+//   SA GET /humans/{localpart}; permissionLevel maps 1→3 (full, e.g. luo),
+//   2→2 (scoped to accessibleTeams, e.g. sunzong/maizong), 3→1 (observer).
+//   The session carries the user's Matrix token (server-side only) as the
+//   Controller credential — A2 chain scopes reads to accessibleTeams.
+//   Non-Human Matrix accounts (no CR) → generic 401.
 //
 // Both tracks fail → 401. Session secret missing → login fails closed
 // (dashboard-session throws, logged once).
@@ -170,28 +173,14 @@ async function attemptConsoleLogin(
     return { kind: 'failed' };
   }
 
-  // Resolve the L1 identity from the Human CRD via the admin SA.
-  const l1Name = process.env.DASHBOARD_L1_HUMAN || 'luo';
-  const human = await fetchHumanViaSa(request, l1Name);
-  if (!human || human.permissionLevel !== 1) {
-    return {
-      kind: 'misconfigured',
-      response: NextResponse.json(
-        {
-          success: false,
-          error: `Console login ok, but L1 identity "${l1Name}" could not be resolved from the Controller (missing SA token or Human CR / wrong permissionLevel). Check DASHBOARD_L1_HUMAN and AGENTTEAMS_AUTH_TOKEN.`,
-        },
-        { status: 503 },
-      ),
-    };
-  }
-
+  // Identity = the Console username itself. The Console admin account and the
+  // Human CRs are different accounts (admin ≠ luo): no CR lookup here.
   let cookieValue: string;
   try {
     ({ cookieValue } = createSession({
-      user: human.name || l1Name,
+      user: username,
       crLevel: 1,
-      teams: human.accessibleTeams ?? [],
+      teams: [],
       credential: { kind: 'sa' },
     }));
   } catch (err) {
@@ -221,7 +210,7 @@ async function attemptConsoleLogin(
     response: new NextResponse(
       JSON.stringify({
         success: true,
-        user: { username: human.name || l1Name, level: 3 },
+        user: { username, level: 3 },
         mode: 'higress',
         matrix,
       }),
@@ -230,9 +219,14 @@ async function attemptConsoleLogin(
   };
 }
 
+/** Human CRD permissionLevel → dashboard level (E5 inversion). */
+const MATRIX_CR_LEVEL_TO_DASH_LEVEL: Record<number, 1 | 2 | 3> = { 1: 3, 2: 2, 3: 1 };
+
 /**
- * L2 track: Matrix password login → own access token → Human CR must be
- * permissionLevel 2 → session carrying the user's Matrix token (server-side).
+ * Matrix track: password login for ANY Human account (luo L1 / sunzong,
+ * maizong L2 / observers L3) → session carrying the user's Matrix token
+ * (server-side). Level 3 (e.g. luo) gets full access, no team restriction;
+ * level 2 is scoped to accessibleTeams; level 1 is observer.
  */
 async function attemptMatrixLogin(request: NextRequest, username: string, password: string): Promise<NextResponse> {
   const matrix = await tryMatrixLogin(username, password);
@@ -243,7 +237,10 @@ async function attemptMatrixLogin(request: NextRequest, username: string, passwo
   const userId = typeof matrix.userId === 'string' ? matrix.userId : '';
   const localpart = userId.startsWith('@') ? userId.slice(1).split(':')[0] : username;
   const human = await fetchHumanViaSa(request, localpart);
-  if (!human || human.permissionLevel !== 2) {
+  const crLevel = human && typeof human.permissionLevel === 'number' ? human.permissionLevel : -1;
+  const dashLevel = MATRIX_CR_LEVEL_TO_DASH_LEVEL[crLevel];
+  if (!human || !dashLevel) {
+    // No Human CR (or unknown level) for this Matrix account → generic 401.
     return NextResponse.json({ success: false, error: 'Invalid username or password' }, { status: 401 });
   }
 
@@ -251,8 +248,9 @@ async function attemptMatrixLogin(request: NextRequest, username: string, passwo
   try {
     ({ cookieValue } = createSession({
       user: human.name || localpart,
-      crLevel: 2,
-      teams: human.accessibleTeams ?? [],
+      crLevel,
+      // Level 3 (full admin) is not team-restricted; L2/L3 users are scoped.
+      teams: dashLevel === 3 ? [] : (human.accessibleTeams ?? []),
       credential: { kind: 'matrix', token: String(matrix.accessToken) },
     }));
   } catch (err) {
@@ -270,7 +268,7 @@ async function attemptMatrixLogin(request: NextRequest, username: string, passwo
   return new NextResponse(
     JSON.stringify({
       success: true,
-      user: { username: human.name || localpart, level: 2 },
+      user: { username: human.name || localpart, level: dashLevel },
       mode: 'matrix',
       matrix,
     }),

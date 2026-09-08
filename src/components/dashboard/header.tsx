@@ -18,7 +18,10 @@ import {
   Contrast,
   Settings,
   Menu,
+  UserCircle,
+  LogOut,
 } from 'lucide-react';
+import { apiUrl } from '@/lib/api-base';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -93,6 +96,16 @@ export function DashboardHeader({
 
   const searchResults = useGlobalSearch(debouncedQuery, workers, teams, managers, humans);
   const userLevel = useAgentTeamsStore((s) => s.userLevel);
+  const sessionUser = useAgentTeamsStore((s) => s.sessionUser);
+
+  // 退出登录：清服务端 session（at_dash_sess + 残留 _hi_sess）→ 回登录页。
+  const handleLogout = () => {
+    void fetch(apiUrl('/api/auth/logout'), { method: 'POST', credentials: 'same-origin' }).finally(() => {
+      window.location.replace('/login');
+    });
+  };
+
+  const levelLabel = userLevel === 3 ? '管理员' : userLevel === 2 ? '操作者' : '观察者';
 
   const visibleActions = useMemo(
     () => actions.filter((action) => isCreateActionVisible(action, mode, undefined, undefined, userLevel)),
@@ -264,6 +277,40 @@ export function DashboardHeader({
         )}
 
         <NotificationPopover />
+
+        {sessionUser && (
+          <DropdownMenu>
+            <DropdownMenuTrigger asChild>
+              <Button variant="ghost" size="sm" className="h-9 gap-2 px-2 text-xs">
+                <UserCircle className="h-4 w-4" />
+                <span className="max-w-[120px] truncate">{sessionUser}</span>
+                <Badge
+                  variant="secondary"
+                  className={`text-[10px] ${
+                    userLevel === 3
+                      ? 'bg-red-500/10 text-red-600 dark:text-red-400'
+                      : userLevel === 2
+                        ? 'bg-blue-500/10 text-blue-600 dark:text-blue-400'
+                        : 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400'
+                  }`}
+                >
+                  {levelLabel}
+                </Badge>
+              </Button>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-52">
+              <DropdownMenuLabel>当前账号</DropdownMenuLabel>
+              <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                {sessionUser} · {levelLabel}
+              </div>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={handleLogout} className="text-red-600 dark:text-red-400 focus:text-red-600 dark:focus:text-red-400">
+                <LogOut className="mr-2 h-4 w-4" />
+                退出登录
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
 
         <Tooltip>
           <TooltipTrigger asChild>

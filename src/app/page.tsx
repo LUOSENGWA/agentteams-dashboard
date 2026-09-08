@@ -43,6 +43,10 @@ export default function Home() {
         // Falls back to 3 (full nav) when the session endpoint predates the
         // level field or in AUTH_DISABLED dev setups.
         useAgentTeamsStore.getState().setUserLevel(data.level ?? 3);
+        // Account chip in the header (identity = the session's own username).
+        if (data.username) {
+          useAgentTeamsStore.getState().setSessionUser(data.username);
+        }
         fetch(apiUrl('/api/agentteams/setup/status/'), { credentials: 'same-origin' })
           .then((res) => res.json().catch(() => ({})))
           .then((sdata) => {
