@@ -1,13 +1,22 @@
-# AgentTeams Integration Patches
+# AgentTeams Integration
 
-This document describes how to integrate agentteams-dashboard into the AgentTeams installation scripts.
+This document describes how agentteams-dashboard integrates with the AgentTeams installation scripts.
+
+> **Patch flow retired (2026-09)**: the Dashboard installer integration was
+> merged upstream via
+> [PR #1075](https://github.com/agentscope-ai/AgentTeams/pull/1075)
+> (follow-ups: #1081, #1118, #1162, #1195). The patch files formerly kept under
+> `install/patches/` have been removed because their content now lives
+> upstream. All future AgentTeams changes are contributed through pull
+> requests against `agentscope-ai/AgentTeams` `main`.
 
 ## Higress External Adapter Source Binding
 
-The external Higress adapter targets AgentTeams commit
-`785c2db56a02c0635a66bba490ad0f6f327c790a` from
-`agentscope-ai/AgentTeams` `main`. Future adapter patches must apply cleanly
-to this revision unless this section is updated with a replacement commit.
+The external Higress adapter reference implementation lives in this
+repository's `install/agentteams-install.sh` and `install/agentteams-dashboard.sh`
+working copies and is pending an upstream PR. Rebase the changes onto the
+current `agentscope-ai/AgentTeams` `main` when submitting; there is no pinned
+source revision anymore.
 
 ### Runtime Contract
 
@@ -42,9 +51,9 @@ separately from this wire-contract migration.
 3. In external adapter mode, neither Controller reconciliation nor Worker configuration generation replaces the configured data-plane URL with a Console URL or `aigw-local.agentteams.io`.
 4. A Higress AI Route and model mapping resolving `team-chat` accepts the Manager and Worker request model value.
 
-### Delivered Patch
+### Reference Implementation (pending upstream PR)
 
-`install/patches/0004-agentteams-external-higress.patch` persists
+The external Higress adapter persists
 `AGENTTEAMS_HIGRESS_ADAPTER_MODE` and `AGENTTEAMS_AI_GATEWAY_URL`, passes the
 configured data-plane URL to the embedded Controller, preserves it during
 embedded configuration normalization, and retains it when Docker Workers are
@@ -56,12 +65,12 @@ The Manager startup script also refreshes an existing OpenClaw configuration's
 Gateway base URL from `AGENTTEAMS_AI_GATEWAY_URL`, so Docker Managers retain an
 external data-plane URL across restarts and model-alias changes.
 
-The patch includes regression tests for embedded configuration normalization,
+The adapter includes regression tests for embedded configuration normalization,
 Manager deployment configuration, Worker environment generation, QwenPaw
 runtime configuration, and OpenClaw generation with an external Gateway URL
 and a legacy provider URL present.
 
-The fixed-upstream integration fixtures `tests/test-01-manager-boot.sh` and
+The integration fixtures `tests/test-01-manager-boot.sh` and
 `tests/test-17-worker-config-verify.sh` assert the generated OpenClaw Gateway
 URL and request model alias when the runtime reports `external` adapter mode.
 
@@ -81,50 +90,17 @@ bash install/agentteams-dashboard.sh uninstall
 .\install\agentteams-dashboard.ps1
 ```
 
-## Option B: Patch into AgentTeams Install Script
+## Upstream Integration (merged via PR #1075)
 
-Apply the patch in `install/patches/` to the AgentTeams repository.
-
-### Quick Apply (using the patch file)
-
-```bash
-cd /path/to/AgentTeams
-git apply /path/to/agentteams-dashboard/install/patches/0001-agentteams-install-dashboard.patch
-git apply /path/to/agentteams-dashboard/install/patches/0002-agentteams-verify-dashboard.patch
-git apply /path/to/agentteams-dashboard/install/patches/0003-Makefile-dashboard.patch
-git apply /path/to/agentteams-dashboard/install/patches/0004-agentteams-external-higress.patch
-```
-
-> **Note**: The integration is split into four patch files:
-> - `0001-agentteams-install-dashboard.patch` — `install/agentteams-install.sh` + new `install/agentteams-dashboard-tests.sh`
-> - `0002-agentteams-verify-dashboard.patch` — `install/agentteams-verify.sh`
-> - `0003-Makefile-dashboard.patch` — `Makefile`
-> - `0004-agentteams-external-higress.patch` — external Gateway URL propagation and Docker Worker preservation
-
-### Regenerate Patches
-
-The patch files are generated from a working AgentTeams checkout based on
-`upstream/main`. To update:
-
-```bash
-# 1. Edit the AgentTeams files directly (install/agentteams-install.sh,
-#    install/agentteams-dashboard-tests.sh, install/agentteams-verify.sh,
-#    Makefile) to add or modify Dashboard integration.
-# 2. Generate patches:
-git add -A
-git diff --cached -- install/agentteams-dashboard-tests.sh install/agentteams-install.sh \
-  > /path/to/agentteams-dashboard/install/patches/0001-agentteams-install-dashboard.patch
-git diff --cached -- install/agentteams-verify.sh \
-  > /path/to/agentteams-dashboard/install/patches/0002-agentteams-verify-dashboard.patch
-git diff --cached -- Makefile \
-  > /path/to/agentteams-dashboard/install/patches/0003-Makefile-dashboard.patch
-# 3. Verify (clean apply to upstream/main):
-git stash && for p in /path/to/agentteams-dashboard/install/patches/*.patch; do git apply --check "$p"; done && git stash pop
-```
+The Dashboard is an optional component of the upstream `agentteams-install.sh`.
+When contributing changes, work on a fork of `agentscope-ai/AgentTeams`, edit
+the integration files directly (`install/agentteams-install.sh`,
+`install/agentteams-dashboard-tests.sh`, `install/agentteams-verify.sh`,
+`Makefile`), and open a pull request against upstream `main`.
 
 ### Integration Features
 
-The patch adds the following capabilities:
+The upstream integration provides the following capabilities:
 
 #### 1. `install/agentteams-install.sh`
 
@@ -190,7 +166,7 @@ The patch adds the following capabilities:
 
 ### Legacy Cleanup
 
-The patch does **not** add broad `agentteams-*` container cleanup. It only removes the known legacy `agentteams-docker-proxy` container (exact name match). The Dashboard container is also matched exactly (`^agentteams-dashboard$`).
+The integration does **not** add broad `agentteams-*` container cleanup. It only removes the known legacy `agentteams-docker-proxy` container (exact name match). The Dashboard container is also matched exactly (`^agentteams-dashboard$`).
 
 ## Quick Reference
 

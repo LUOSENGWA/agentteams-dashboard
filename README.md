@@ -75,7 +75,7 @@ See [docs/plugin-development.md](docs/plugin-development.md) (English), [docs/pl
 
 ### Install as an AgentTeams component (recommended)
 
-The Dashboard integrates with the [AgentTeams](https://github.com/agentscope-ai/AgentTeams) installer via a patch file under `install/patches/`. When applied to the AgentTeams source tree, the Dashboard becomes an optional step in `agentteams-install.sh` — the interactive installer will prompt whether to install it, and the container is automatically started alongside the Controller/Manager.
+The Dashboard integrates with the [AgentTeams](https://github.com/agentscope-ai/AgentTeams) installer as an optional step in `agentteams-install.sh` (merged upstream via [PR #1075](https://github.com/agentscope-ai/AgentTeams/pull/1075)) — the interactive installer will prompt whether to install it, and the container is automatically started alongside the Controller/Manager. Further upstream changes are contributed through pull requests to the AgentTeams repository; the patch-based flow under `install/patches/` has been retired.
 
 - **Current Dashboard release**: `v1.2.3.1`
 - **Installer default**: `v1.2.2`; set `AGENTTEAMS_DASHBOARD_VERSION` to override

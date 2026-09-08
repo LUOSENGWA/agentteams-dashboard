@@ -69,10 +69,9 @@ npm run dev
 1. 参考 `.monkeycode/specs/higress-ai-gateway/` 的需求、设计和任务清单。
 2. Provider 与 Route 变更通过 `/api/higress/*`，浏览器不直接访问 Console。
 3. Gateway 数据平面地址与 Console 管理地址分别建模。
-4. 需要变更 AgentTeams 运行时合同时，使用 `install/AGENTTEAMS_PATCH.md` 记录的固定源提交和接口边界。
-5. 外部模式补丁为 `install/patches/0004-agentteams-external-higress.patch`；它要求部署环境提供 `AGENTTEAMS_AI_GATEWAY_URL`，并将 `AGENTTEAMS_DEFAULT_MODEL` 作为请求模型别名传给 Manager 与 Worker。
-6. 在固定 AgentTeams 提交检出中按顺序 clean-apply `0001`、`0002`、`0004` 补丁；`0003-Makefile-dashboard.patch` 当前为空补丁。
-7. 运行 `go -C agentteams-controller test ./internal/config` 和 `go -C agentteams-controller test ./internal/service -run TestWorkerEnvBuilderPreservesExternalGatewayAndModelAlias` 验证外部 Gateway 地址与模型别名透传。
+4. 需要变更 AgentTeams 运行时合同时，参考 `install/AGENTTEAMS_PATCH.md` 记录的接口边界，并通过 PR 将变更直接提交到 `agentscope-ai/AgentTeams`（基于补丁文件的流程已于 2026-09 废弃）。
+5. 外部模式要求部署环境提供 `AGENTTEAMS_AI_GATEWAY_URL`，并将 `AGENTTEAMS_DEFAULT_MODEL` 作为请求模型别名传给 Manager 与 Worker；参考实现保存在本仓库 `install/agentteams-install.sh` 与 `install/agentteams-dashboard.sh`，待通过 PR 合入上游。
+6. 在包含外部 Higress 改动的 AgentTeams 检出中运行 `go -C agentteams-controller test ./internal/config` 和 `go -C agentteams-controller test ./internal/service -run TestWorkerEnvBuilderPreservesExternalGatewayAndModelAlias` 验证外部 Gateway 地址与模型别名透传。
 8. 完成改动后执行 lint、typecheck 和测试。
 9. Manager 和 Worker 的 `model` 表示发送至 Gateway 的请求模型别名；现有非空值保持原样回显和提交，模型管理页根据 AI Route 的 `modelMapping`、`modelPredicates` 与 Provider Token 状态展示别名绑定的路由、目标提供商、目标模型和可用状态。
 10. 部署使用外部 Higress 时，设置 `AGENTTEAMS_HIGRESS_ADAPTER_MODE=external`、`AGENTTEAMS_AI_GATEWAY_URL`，并按需设置 `AGENTTEAMS_AI_GATEWAY_ADMIN_URL` 与 `AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS`；安装脚本会将这些配置注入 Dashboard，外部模式不会发现嵌入式 Console。

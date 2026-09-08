@@ -40,16 +40,6 @@ jobs:
       - name: Validate shell script syntax
         run: bash -n install/agentteams-dashboard.sh
 
-      - name: Validate patches apply cleanly to upstream
-        run: |
-          git clone --depth 1 https://github.com/agentscope-ai/AgentTeams.git /tmp/agentteams-upstream
-          cd /tmp/agentteams-upstream
-          for patch in ${{ github.workspace }}/install/patches/*.patch; do
-            echo "Applying $(basename "$patch")..."
-            git apply --check "$patch"
-          done
-          echo "All patches apply cleanly!"
-
       - name: Validate PowerShell script syntax
         shell: pwsh
         run: |
