@@ -107,7 +107,7 @@ export function DashboardHeader({
     });
   };
 
-  const levelLabel = userLevel === 3 ? '管理员' : userLevel === 2 ? '操作者' : '观察者';
+  const levelLabel = userLevel === 3 ? '管理员' : userLevel === 2 ? 'L2' : '观察者';
 
   const visibleActions = useMemo(
     () => actions.filter((action) => isCreateActionVisible(action, mode, undefined, undefined, userLevel)),

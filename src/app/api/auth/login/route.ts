@@ -106,16 +106,16 @@ export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { username, password } = body;
+    const controllerToken = typeof body.controllerToken === 'string' ? body.controllerToken.trim() : '';
 
     if (!username || !password) {
       return NextResponse.json({ success: false, error: 'Username and password are required' }, { status: 400 });
     }
 
     // Dual track: try the Console (L1) first; on failure fall through to
-    // Matrix (L2). A Console success with an unresolvable L1 identity is a
-    // deployment misconfiguration — fail loudly instead of guessing.
+    // Matrix (any Human level).
     // External mode (upstream #76): no init, no Matrix token/URL to the
-    // remote client; the server-side L1 CR lookup still applies.
+    // remote client.
     const l1 = await attemptConsoleLogin(request, username, password, { allowMatrix: !isExternal });
     if (l1.kind === 'session') {
       return l1.response;
@@ -124,7 +124,7 @@ export async function POST(request: NextRequest) {
       return l1.response;
     }
 
-    return await attemptMatrixLogin(request, username, password);
+    return await attemptMatrixLogin(request, username, password, controllerToken);
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     // Fail-closed: a missing session secret surfaces here (dashboard-session throws).
@@ -138,9 +138,8 @@ type ConsoleAttempt =
   | { kind: 'failed' };
 
 /**
- * L1 track: Console admin login → SA human lookup (must be permissionLevel 1)
- * → session with the SA credential. Forwards the Console session cookie so
- * the gateway tab keeps working for L1.
+ * Console track: admin login → level-3 session with the SA credential.
+ * Forwards the Console session cookie so the gateway tab keeps working.
  */
 async function attemptConsoleLogin(
   request: NextRequest,
@@ -223,12 +222,41 @@ async function attemptConsoleLogin(
 const MATRIX_CR_LEVEL_TO_DASH_LEVEL: Record<number, 1 | 2 | 3> = { 1: 3, 2: 2, 3: 1 };
 
 /**
- * Matrix track: password login for ANY Human account (luo L1 / sunzong,
- * maizong L2 / observers L3) → session carrying the user's Matrix token
- * (server-side). Level 3 (e.g. luo) gets full access, no team restriction;
- * level 2 is scoped to accessibleTeams; level 1 is observer.
+ * Verify a user-supplied Controller admin token by calling an admin endpoint.
+ * Returns true only when the Controller accepts it.
  */
-async function attemptMatrixLogin(request: NextRequest, username: string, password: string): Promise<NextResponse> {
+async function verifyControllerToken(request: NextRequest, token: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${getControllerUrl(request)}/api/v1/teams/`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Matrix track: password login for ANY Human account (luo L1 / sunzong,
+ * maizong L2 / observers L3) → session carrying server-side credentials.
+ *
+ * Credential selection (matches the workbench plugin's dual mode):
+ * - Level 3 via Matrix (e.g. luo, CR level 1): the Controller's Matrix auth
+ *   only accepts level-2 tokens, so luo's own Matrix token would 401 on every
+ *   data-plane call. A Controller admin token is REQUIRED and (after
+ *   verification) becomes the session's data-plane credential. The Matrix
+ *   token is still returned for the chat tab.
+ * - Level 2 (sunzong/maizong): the user's own Matrix token; A2 scopes reads
+ *   to accessibleTeams.
+ * - Level 1 (observer): the user's own Matrix token.
+ */
+async function attemptMatrixLogin(
+  request: NextRequest,
+  username: string,
+  password: string,
+  controllerToken: string,
+): Promise<NextResponse> {
   const matrix = await tryMatrixLogin(username, password);
   if (!matrix || !matrix.accessToken) {
     return NextResponse.json({ success: false, error: 'Invalid username or password' }, { status: 401 });
@@ -244,6 +272,29 @@ async function attemptMatrixLogin(request: NextRequest, username: string, passwo
     return NextResponse.json({ success: false, error: 'Invalid username or password' }, { status: 401 });
   }
 
+  // Level 3 via Matrix (e.g. luo): data plane needs a Controller admin token
+  // (the Controller's Matrix auth rejects level-1 tokens). Verify it.
+  let credential: { kind: 'matrix'; token: string } | { kind: 'controller-token'; token: string };
+  if (dashLevel === 3) {
+    if (!controllerToken) {
+      return NextResponse.json(
+        {
+          success: false,
+          error:
+            'L1 账号登录需要 Controller 管理员 token（登录页可选字段，由部署管理员提供；不提供则数据面无权限）',
+        },
+        { status: 400 },
+      );
+    }
+    const valid = await verifyControllerToken(request, controllerToken);
+    if (!valid) {
+      return NextResponse.json({ success: false, error: 'Controller 管理员 token 无效' }, { status: 401 });
+    }
+    credential = { kind: 'controller-token', token: controllerToken };
+  } else {
+    credential = { kind: 'matrix', token: String(matrix.accessToken) };
+  }
+
   let cookieValue: string;
   try {
     ({ cookieValue } = createSession({
@@ -251,7 +302,7 @@ async function attemptMatrixLogin(request: NextRequest, username: string, passwo
       crLevel,
       // Level 3 (full admin) is not team-restricted; L2/L3 users are scoped.
       teams: dashLevel === 3 ? [] : (human.accessibleTeams ?? []),
-      credential: { kind: 'matrix', token: String(matrix.accessToken) },
+      credential,
     }));
   } catch (err) {
     return NextResponse.json(
