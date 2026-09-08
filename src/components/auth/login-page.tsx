@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { apiUrl } from '@/lib/api-base';
 import { useMatrixStore } from '@/lib/matrix-store';
 import { Lock, LogIn, RefreshCw, AlertCircle } from 'lucide-react';
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
@@ -63,7 +63,6 @@ export function LoginPage({ onLoginSuccess, defaultUsername = '' }: LoginPagePro
             </div>
             <div>
               <CardTitle className="text-lg">AgentTeams Dashboard</CardTitle>
-              <CardDescription>账号登录（L1 管理员 / L2 Matrix 账号）</CardDescription>
             </div>
           </div>
         </CardHeader>
