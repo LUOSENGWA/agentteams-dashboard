@@ -50,10 +50,17 @@ interface SessionStore {
   insertionOrder: string[];
 }
 
-const store: SessionStore = {
-  sessions: new Map(),
-  insertionOrder: [],
-};
+// Store instance lives on globalThis, NOT at module level. Next.js bundles
+// the middleware chunk and the app-router chunk separately, so each would get
+// its own module instance — and with a module-level Map the middleware could
+// never see sessions created by the login route (every data request would
+// 401 with a perfectly valid cookie). All bundles run in the same standalone
+// node process, so globalThis is the one state they all share.
+// (Constraint: single process — container restart / multi-replica = everyone
+// re-logs in, which is the documented behavior.)
+const globalForSessions = globalThis as typeof globalThis & { __agentteamsSessions?: SessionStore };
+const store: SessionStore =
+  globalForSessions.__agentteamsSessions ??= { sessions: new Map(), insertionOrder: [] };
 
 function getSecret(): string | null {
   const secret = process.env.DASHBOARD_SESSION_SECRET || '';

@@ -98,6 +98,28 @@ describe('createSession / validateSessionToken', () => {
   });
 });
 
+describe('store identity across module instances (middleware vs route bundles)', () => {
+  // Next.js bundles the middleware chunk and the app-router chunk separately:
+  // each gets its own module instance of this file. If the session store were
+  // plain module-level state, the middleware could never see a session created
+  // by the login route (and every data request would 401 with a valid cookie).
+  // The store must live on globalThis so all bundles in the standalone node
+  // process share one instance.
+  it('a session created in one module instance validates in another', async () => {
+    const modA = await import('./dashboard-session');
+    // Vitest cache-bust suffix: forces a second module instance (simulates
+    // the middleware bundle vs the app-router bundle in the standalone server).
+    // @ts-expect-error query-suffixed specifier is not resolvable by tsc
+    const modB = await import('./dashboard-session?instance=2');
+    const { cookieValue } = modA.createSession({ user: 'luo', crLevel: 1, credential: { kind: 'sa' } });
+    expect(modB.validateSessionToken(cookieValue)).not.toBeNull();
+    // Logout in one bundle must be visible in the other.
+    const second = modA.createSession({ user: 'sunzong', crLevel: 2, credential: { kind: 'matrix', token: 't' } });
+    modA.destroySession(second.sessionId);
+    expect(modB.validateSessionToken(second.cookieValue)).toBeNull();
+  });
+});
+
 describe('secret handling (fail closed)', () => {
   it('refuses to create sessions without DASHBOARD_SESSION_SECRET', () => {
     delete process.env.DASHBOARD_SESSION_SECRET;
