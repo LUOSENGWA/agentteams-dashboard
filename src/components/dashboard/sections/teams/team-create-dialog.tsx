@@ -37,6 +37,7 @@ const RUNTIME_OPTIONS: { value: WorkerRuntime; label: string }[] = [
   { value: 'copaw', label: 'CoPaw' },
   { value: 'hermes', label: 'Hermes' },
   { value: 'qwenpaw', label: 'QwenPaw' },
+  { value: 'deepseek_harness', label: 'DeepSeek Harness（实验）' },
 ];
 
 export function TeamCreateDialog({
