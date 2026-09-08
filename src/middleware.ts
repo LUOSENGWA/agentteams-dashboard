@@ -61,8 +61,21 @@ export async function middleware(request: NextRequest) {
     // session to validate, so the gate would 401 every request including
     // data reads. Production deployments leave this unset to keep the gate.
     // Read per-request (not module-level) so env changes apply on reload.
+    // A synthetic identity is injected so server-side RBAC evaluation and
+    // audit read/write attribution keep working (the audit routes reject
+    // identity-less requests, which would permanently break the audit
+    // viewer in local mode). Defaults to platform-admin level 3 — local
+    // mode is a single-user trusted environment — and can be overridden.
     if (process.env.AGENTTEAMS_AUTH_DISABLED === 'true') {
-      const res = NextResponse.next();
+      const localUser = {
+        name: process.env.AGENTTEAMS_LOCAL_USER ?? 'local-admin',
+        level: Number(process.env.AGENTTEAMS_LOCAL_USER_LEVEL ?? 3),
+      };
+      const headers = withUserHeaders(request, {
+        name: localUser.name,
+        level: Number.isFinite(localUser.level) ? localUser.level : 3,
+      });
+      const res = NextResponse.next({ request: { headers } });
       res.headers.set('x-agentteams-auth-mode', 'disabled');
       return res;
     }

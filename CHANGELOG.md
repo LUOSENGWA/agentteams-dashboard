@@ -26,9 +26,10 @@
 - **新 hook `useAuditEvents`**：TanStack Query 包装 `/api/agentteams/audit`，封装 403 错误体不抛出
 
 ### Improvements
-- 新增测试：parser v1 路径 11 例、tool-call-counter 结构化 id 去重 7 例、audit-log 6 例、server-auth 5 + 5 例（enforceLevelOnlyRbac）、audit API route 5 例、worker route RBAC 3 例、usePersistedDraft 7 例、useFileUpload 5 例、useFileDropZone 4 例、DragDropOverlay 3 例。全量 1212 个用例通过
+- 新增测试：parser v1 路径 11 例、tool-call-counter 结构化 id 去重 7 例、audit-log 6 例、server-auth 5 + 5 例（enforceLevelOnlyRbac）、audit API route 5 例、worker route RBAC 3 例、usePersistedDraft 7 例、useFileUpload 5 例、useFileDropZone 4 例、DragDropOverlay 3 例。全量 1256 个用例通过
 
 ### Maintenance
+- **修复 AGENTTEAMS_AUTH_DISABLED 本地模式下审计不可用**：middleware 的 AUTH_DISABLED 分支此前裸放行、不注入身份头，导致审计视图永久 403（"服务端未收到身份头"）、mutation 的审计镜像被静默丢弃。现在该分支注入合成本地身份（默认 `local-admin` / L3，可用 `AGENTTEAMS_LOCAL_USER` / `AGENTTEAMS_LOCAL_USER_LEVEL` 覆盖），服务端 RBAC 与审计读写归因在本地模式下保持工作；`withUserHeaders` 的 set 语义确保客户端伪造的同名头会被覆盖
 - **废弃上游补丁流程**：删除 `install/patches/`（0001/0002/0004）与依赖补丁的 `install/submit-pr.sh`。Dashboard 安装器集成已通过 [AgentTeams PR #1075](https://github.com/agentscope-ai/AgentTeams/pull/1075) 合入上游（后续 #1081/#1118/#1162/#1195），补丁内容已全部存在于上游且不再能 clean-apply，导致 Install Test 工作流自 2026-07-26 起持续失败。`install-test.yml` 移除 "Validate patches apply cleanly to upstream" 步骤；后续上游变更一律通过 PR 提交。外部 Higress 适配的参考实现保留在本仓库 `install/agentteams-install.sh` / `install/agentteams-dashboard.sh`，待通过 PR 合入上游
 
 ### Contributors
