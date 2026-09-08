@@ -100,8 +100,10 @@ export function DashboardHeader({
 
   // 退出登录：清服务端 session（at_dash_sess + 残留 _hi_sess）→ 回登录页。
   const handleLogout = () => {
+    // The login UI is rendered at the ROOT path (page.tsx shows LoginPage when
+    // unauthenticated) — there is no /login route (404).
     void fetch(apiUrl('/api/auth/logout'), { method: 'POST', credentials: 'same-origin' }).finally(() => {
-      window.location.replace('/login');
+      window.location.replace('/');
     });
   };
 
