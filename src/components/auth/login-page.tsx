@@ -17,8 +17,9 @@ interface LoginPageProps {
 export function LoginPage({ onLoginSuccess, defaultUsername = '' }: LoginPageProps) {
   const [username, setUsername] = useState(defaultUsername);
   const [password, setPassword] = useState('');
-  const [controllerToken, setControllerToken] = useState('');
-  const [tokenVisible, setTokenVisible] = useState(false);
+  const [adminUsername, setAdminUsername] = useState('');
+  const [adminPassword, setAdminPassword] = useState('');
+  const [adminVisible, setAdminVisible] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const setMatrixAuth = useMatrixStore((s) => s.setMatrixAuth);
@@ -36,7 +37,7 @@ export function LoginPage({ onLoginSuccess, defaultUsername = '' }: LoginPagePro
         body: JSON.stringify({
           username,
           password,
-          ...(controllerToken ? { controllerToken } : {}),
+          ...(adminUsername ? { adminUsername, adminPassword } : {}),
         }),
       });
 
@@ -99,25 +100,32 @@ export function LoginPage({ onLoginSuccess, defaultUsername = '' }: LoginPagePro
           <div className="space-y-1.5">
             <button
               type="button"
-              onClick={() => setTokenVisible((v) => !v)}
+              onClick={() => setAdminVisible((v) => !v)}
               className="text-xs text-muted-foreground hover:text-foreground transition-colors"
             >
-              {tokenVisible ? '收起 Controller 管理员 token ▲' : 'L1 账号（luo）？展开 Controller 管理员 token ▼'}
+              {adminVisible ? '收起管理员账号验证 ▲' : '管理员账号验证（仅最高权限账号需要）▼'}
             </button>
-            {tokenVisible && (
+            {adminVisible && (
               <div className="space-y-2">
                 <Input
-                  id="controller-token"
+                  id="admin-username"
+                  placeholder="管理员账号"
+                  value={adminUsername}
+                  onChange={(e) => setAdminUsername(e.target.value)}
+                  disabled={isLoading}
+                />
+                <Input
+                  id="admin-password"
                   type="password"
-                  placeholder="Controller 管理员 token"
-                  value={controllerToken}
-                  onChange={(e) => setControllerToken(e.target.value)}
+                  placeholder="管理员密码"
+                  value={adminPassword}
+                  onChange={(e) => setAdminPassword(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && handleLogin()}
                   disabled={isLoading}
                 />
                 <p className="text-xs text-muted-foreground">
-                  由部署管理员提供（Node1: docker exec agentteams-controller cat /var/run/agentteams/cli-token）。
-                  L1 账号数据面必须填；L2 账号（sunzong/maizong）留空即可。
+                  仅当你的账号是最高权限（Human CR level 1）且需要管理数据时填写，管理员账号与密码由部署管理员告知；
+                  普通账号（level 2/3）留空即可。
                 </p>
               </div>
             )}
