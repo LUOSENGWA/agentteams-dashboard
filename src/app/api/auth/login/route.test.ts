@@ -56,7 +56,6 @@ function failedConsoleLogin() {
 function installFetchMock(opts: {
   humans?: Record<string, { status?: number; body?: Record<string, unknown> }>;
   matrixLogin?: { status?: number; body?: Record<string, unknown> };
-  teamsCheck?: { status?: number };
 }) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -68,10 +67,6 @@ function installFetchMock(opts: {
         status: spec.status ?? 200,
         headers: { 'content-type': 'application/json' },
       });
-    }
-    if (url.includes('/api/v1/teams')) {
-      const status = opts.teamsCheck?.status ?? 200;
-      return new Response(null, { status, headers: { 'content-type': 'application/json' } });
     }
     if (url.includes('/_matrix/client/v3/login')) {
       const spec = opts.matrixLogin ?? { status: 401 };
@@ -149,10 +144,15 @@ describe('POST /api/auth/login (dual track, M19)', () => {
       },
     });
 
-    // L2 users ignore a pasted controller token (their Matrix token is the
-    // data-plane credential) — passing one must not break the login.
+    // L2 users ignore admin credentials (their own Matrix token is the
+    // data-plane credential) — passing them must not break the login.
     const response = await POST(
-      request({ username: 'sunzong', password: 'matrix-password', controllerToken: 'should-be-ignored' }),
+      request({
+        username: 'sunzong',
+        password: 'matrix-password',
+        adminUsername: 'should-be-ignored',
+        adminPassword: 'x',
+      }),
     );
     expect(response.status).toBe(200);
     const data = await responseJson(response);
@@ -168,9 +168,13 @@ describe('POST /api/auth/login (dual track, M19)', () => {
     expect(cookies.every((c) => !c.includes('syt_l2_token'))).toBe(true);
   });
 
-  it('Matrix: CR level 1 (luo) + valid controller token → level-3 session, matrix chat token kept', async () => {
-    mockCallHigressConsole.mockResolvedValue(failedConsoleLogin());
-    const fetchMock = installFetchMock({
+  it('Matrix: CR level 1 + valid admin account credentials → level-3 session, SA data credential, matrix chat token kept', async () => {
+    // First Console call = the user's own (fails → fall through to Matrix);
+    // second = the admin account verification (succeeds).
+    mockCallHigressConsole
+      .mockResolvedValueOnce(failedConsoleLogin())
+      .mockResolvedValueOnce(successfulConsoleLogin());
+    installFetchMock({
       humans: {
         luo: {
           body: { name: 'luo', permissionLevel: 1, accessibleTeams: ['sysdev-team', 'embedded-team'] },
@@ -179,11 +183,15 @@ describe('POST /api/auth/login (dual track, M19)', () => {
       matrixLogin: {
         body: { access_token: 'syt_l1_token', user_id: '@luo:sat.example', device_id: 'D2' },
       },
-      teamsCheck: { status: 200 },
     });
 
     const response = await POST(
-      request({ username: 'luo', password: 'matrix-password', controllerToken: 'cli-admin-token' }),
+      request({
+        username: 'luo',
+        password: 'matrix-password',
+        adminUsername: 'admin',
+        adminPassword: 'admin-password',
+      }),
     );
     expect(response.status).toBe(200);
     const data = await responseJson(response);
@@ -192,13 +200,17 @@ describe('POST /api/auth/login (dual track, M19)', () => {
     expect(data.mode).toBe('matrix');
     // The Matrix token is still returned for the chat tab.
     expect((data.matrix as { accessToken?: string }).accessToken).toBe('syt_l1_token');
-    // The pasted token was verified against the Controller.
-    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/api/v1/teams'))).toBe(true);
-    // The pasted admin token must never leak into a cookie.
-    expect(response.headers.getSetCookie().every((c) => !c.includes('cli-admin-token'))).toBe(true);
+    // Console was hit twice: user login attempt + admin verification.
+    expect(mockCallHigressConsole).toHaveBeenCalledTimes(2);
+    expect(mockCallHigressConsole).toHaveBeenLastCalledWith(
+      '/session/login',
+      expect.objectContaining({ body: { username: 'admin', password: 'admin-password' } }),
+    );
+    // The admin verification's Console cookie must NOT be forwarded.
+    expect(response.headers.getSetCookie().every((c) => !c.startsWith('_hi_sess='))).toBe(true);
   });
 
-  it('Matrix: CR level 1 (luo) WITHOUT controller token → 400 with a clear hint', async () => {
+  it('Matrix: CR level 1 WITHOUT admin credentials → 400 with a clear hint', async () => {
     mockCallHigressConsole.mockResolvedValue(failedConsoleLogin());
     installFetchMock({
       humans: { luo: { body: { name: 'luo', permissionLevel: 1 } } },
@@ -211,23 +223,25 @@ describe('POST /api/auth/login (dual track, M19)', () => {
     expect(response.status).toBe(400);
     const data = await responseJson(response);
     expect(data.success).toBe(false);
-    expect(String(data.error)).toContain('Controller');
+    expect(String(data.error)).toContain('管理员账号');
   });
 
-  it('Matrix: CR level 1 (luo) + INVALID controller token → 401', async () => {
+  it('Matrix: CR level 1 + WRONG admin credentials → 401 管理员账号验证失败', async () => {
+    // Both Console attempts fail (user + admin).
     mockCallHigressConsole.mockResolvedValue(failedConsoleLogin());
     installFetchMock({
       humans: { luo: { body: { name: 'luo', permissionLevel: 1 } } },
       matrixLogin: {
         body: { access_token: 'syt_l1_token', user_id: '@luo:sat.example', device_id: 'D2' },
       },
-      teamsCheck: { status: 401 },
     });
 
     const response = await POST(
-      request({ username: 'luo', password: 'matrix-password', controllerToken: 'wrong-token' }),
+      request({ username: 'luo', password: 'matrix-password', adminUsername: 'admin', adminPassword: 'wrong' }),
     );
     expect(response.status).toBe(401);
+    const data = await responseJson(response);
+    expect(String(data.error)).toContain('管理员账号验证失败');
   });
 
   it('Matrix: CR level 3 (observer) → level-1 session', async () => {
