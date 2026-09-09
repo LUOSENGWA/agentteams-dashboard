@@ -30,6 +30,9 @@ export default function Home() {
   const [auth, setAuth] = useState<AuthState>({ status: 'loading' });
   const [setup, setSetup] = useState<SetupState>({ status: 'loading' });
   const [preSetup, setPreSetup] = useState<PreSetupState>({ status: 'loading' });
+  // F1e: the login screen can deep-link here (?setup=1) to re-configure
+  // backends when an existing deployment is broken or moved.
+  const [forceSetup, setForceSetup] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -42,18 +45,23 @@ export default function Home() {
         if (cancelled) return;
         if (!data.authenticated) {
           setAuth({ status: 'unauthenticated' });
+          // F1e: ?setup=1 forces the pre-login backend setup page from the
+          // login screen (escape hatch — broken/changed environments).
+          const forceSetup = new URLSearchParams(window.location.search).get('setup') === '1';
+          setForceSetup(forceSetup);
           // F1: before offering the login form, check whether the dashboard
           // has any usable backend addresses. Standalone installs without
-          // env config must configure backends FIRST (token-gated one-shot),
+          // env config must configure backends FIRST (token-gated),
           // so unconfigured -> setup page instead of login.
           fetch(apiUrl('/api/agentteams/setup/backends'), { credentials: 'same-origin' })
             .then((res) => res.json().catch(() => null))
             .then((sdata) => {
               if (cancelled) return;
-              setPreSetup({ status: sdata && sdata.configured === false ? 'required' : 'complete' });
+              const required = forceSetup || (sdata && sdata.configured === false);
+              setPreSetup({ status: required ? 'required' : 'complete' });
             })
             .catch(() => {
-              if (!cancelled) setPreSetup({ status: 'complete' });
+              if (!cancelled) setPreSetup({ status: forceSetup ? 'required' : 'complete' });
             });
           return;
         }
@@ -98,7 +106,7 @@ export default function Home() {
     return (
       <ThemeProvider>
         {preSetup.status === 'required' ? (
-          <BackendSetupPage onDone={handleLoginSuccess} />
+          <BackendSetupPage onDone={handleLoginSuccess} reconfigure={forceSetup} />
         ) : (
           <LoginPage onLoginSuccess={handleLoginSuccess} />
         )}

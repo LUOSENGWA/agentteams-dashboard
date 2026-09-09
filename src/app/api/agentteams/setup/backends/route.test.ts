@@ -163,21 +163,52 @@ describe('POST /api/agentteams/setup/backends', () => {
     expect(fs.existsSync(configFile())).toBe(false);
   });
 
-  it('accepts the right token once, then is permanently one-shot (403 already-configured)', async () => {
-    const payload = JSON.stringify({
-      token: 'test-token-123',
-      backends: { controller: { internal: 'http://a:8090' }, matrix: { external: 'http://mx:6167' } },
-    });
-    const first = await POST(makeRequest({ method: 'POST', body: payload }));
+  // F1e: pre-login writes are token-gated and REPEATABLE (broken/changed
+  // environment escape hatch — plugin config-first parity). The one-shot
+  // "already-configured" 403 is retired: after first launch the same
+  // token overwrites the config.
+  it('pre-login: first launch creates, later token writes overwrite (mode update)', async () => {
+    const first = await POST(
+      makeRequest({
+        method: 'POST',
+        body: JSON.stringify({
+          token: 'test-token-123',
+          backends: { controller: { internal: 'http://a:8090' }, matrix: { external: 'http://mx:6167' } },
+        }),
+      }),
+    );
     expect(first.status).toBe(200);
     const firstData = (await first.json()) as { ok: boolean; mode: string };
     expect(firstData.ok).toBe(true);
     expect(firstData.mode).toBe('first-launch');
     expect(fs.existsSync(configFile())).toBe(true);
 
-    const second = await POST(makeRequest({ method: 'POST', body: payload }));
-    expect(second.status).toBe(403);
-    expect(await second.json()).toEqual({ error: 'already-configured' });
+    const second = await POST(
+      makeRequest({
+        method: 'POST',
+        body: JSON.stringify({
+          token: 'test-token-123',
+          backends: { controller: { internal: 'http://c:8090' } },
+        }),
+      }),
+    );
+    expect(second.status).toBe(200);
+    const secondData = (await second.json()) as { ok: boolean; mode: string };
+    expect(secondData.ok).toBe(true);
+    expect(secondData.mode).toBe('update');
+    // overwrite semantics: the second write replaces the first
+    expect(readConfigSync()?.backends.controller).toEqual({ internal: 'http://c:8090' });
+    expect(readConfigSync()?.backends.matrix).toBeUndefined();
+
+    // without the token the pre-login path stays closed
+    const third = await POST(
+      makeRequest({
+        method: 'POST',
+        body: JSON.stringify({ backends: { controller: { internal: 'http://x:8090' } } }),
+      }),
+    );
+    expect(third.status).toBe(403);
+    expect(await third.json()).toEqual({ error: 'token-required' });
   });
 
   it('rejects malformed payloads with 400', async () => {

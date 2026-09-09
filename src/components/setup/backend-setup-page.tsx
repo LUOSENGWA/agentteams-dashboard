@@ -46,7 +46,7 @@ type TestState =
 
 const EMPTY_TEST: TestState = { status: 'idle' };
 
-export function BackendSetupPage({ onDone }: { onDone: () => void }) {
+export function BackendSetupPage({ onDone, reconfigure = false }: { onDone: () => void; reconfigure?: boolean }) {
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [addrs, setAddrs] = useState<Record<BackendName, { internal: string; external: string }>>(
@@ -239,12 +239,23 @@ export function BackendSetupPage({ onDone }: { onDone: () => void }) {
     <div className="flex min-h-screen items-start justify-center bg-muted/30 p-4 md:p-8">
       <Card className="w-full max-w-2xl">
         <CardHeader>
-          <CardTitle className="text-lg">后端配置（首次启动）</CardTitle>
+          <CardTitle className="text-lg">{reconfigure ? '后端配置' : '后端配置（首次启动）'}</CardTitle>
           <CardDescription>
-            Dashboard 还没有可用的后端地址。填写后保存即可登录；配置保存在挂载卷中，重启不丢失。
+            {reconfigure
+              ? '覆盖现有后端配置（登录前保存需要 setup token）。保存后回到登录页；配置在挂载卷中，重启不丢失。登录前看不到已保存的具体值，直接填写正确地址即可。'
+              : 'Dashboard 还没有可用的后端地址。填写后保存即可登录；配置保存在挂载卷中，重启不丢失。'}
             每个后端可只填一个地址；「内网」= 容器/集群网络，「外网」= 跨网段备用（自动切换）。
             「测试」一次验证该后端填写的全部地址（✅ 可用 / ⚠️ 已连通需鉴权 / ❌ 不可达，含原因分类）。
           </CardDescription>
+          {reconfigure && (
+            <button
+              type="button"
+              onClick={() => window.location.assign('/')}
+              className="self-start text-xs text-muted-foreground transition-colors hover:text-foreground"
+            >
+              ← 返回登录页
+            </button>
+          )}
         </CardHeader>
         <CardContent className="space-y-6">
           {embeddedHealthy && (
@@ -328,7 +339,7 @@ export function BackendSetupPage({ onDone }: { onDone: () => void }) {
           </div>
 
           <div className="space-y-1">
-            <div className="text-sm font-medium">首次启动 token</div>
+            <div className="text-sm font-medium">{reconfigure ? 'Setup token' : '首次启动 token'}</div>
             <Input
               value={token}
               onChange={(e) => setToken(e.target.value)}
@@ -336,8 +347,9 @@ export function BackendSetupPage({ onDone }: { onDone: () => void }) {
               spellCheck={false}
             />
             <p className="text-xs text-muted-foreground">
-              仅首次保存需要。token 在服务器日志里（docker logs &lt;容器&gt;，搜
-              setup token），也可用 env DASHBOARD_SETUP_TOKEN 预先指定；保存成功后不再需要。
+              {reconfigure
+                ? '登录前修改配置需要 setup token（与首启同一个）：docker logs &lt;容器&gt; 搜 setup token，或 env DASHBOARD_SETUP_TOKEN。找不到 token = docker volume rm 数据卷 出厂重置（配置与 token 一并重建）。'
+                : '仅首次保存需要。token 在服务器日志里（docker logs &lt;容器&gt;，搜 setup token），也可用 env DASHBOARD_SETUP_TOKEN 预先指定；保存成功后不再需要。'}
             </p>
           </div>
 

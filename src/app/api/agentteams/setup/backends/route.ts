@@ -15,13 +15,18 @@
 //     The SSRF surface of user-supplied addresses stays pinned by
 //     DASHBOARD_ALLOWED_HOSTS; config editing does not touch credentials
 //     (L1 SA token / L2 session tokens stay server-side).
-//   - pre-login one-shot: body.token must equal the setup token AND the
-//     config file must not exist yet. This is the only way a logged-out
-//     browser can write backend addresses (first launch on a standalone
-//     docker install — the plugin has no equivalent because the host is
-//     already authenticated; this is the dashboard's install-method
-//     difference, approved 9/9). After the file exists, this mode is
-//     permanently rejected — no config re-do from the login screen.
+//   - pre-login (token-gated, repeatable — F1e): body.token must equal the
+//     setup token. First launch creates the config; afterwards the same
+//     token remains the ONLY owner gate for re-configuring from a
+//     logged-out browser — the escape hatch for broken/changed
+//     environments (wrong addresses, network move), reachable from the
+//     login screen via ?setup=1. Plugin parity (config-first): the config
+//     surface stays reachable before login and login is downstream of it;
+//     the dashboard's install-method difference (a web login gate the
+//     host-embedded plugin lacks) keeps the token as the pre-login write
+//     authority — it plugs the auth-bypass threat (a logged-out attacker
+//     redirecting the controller to a fake backend to spoof L1 password
+//     verification). Losing the token = `docker volume rm` factory reset.
 //
 // Every successful save re-probes the saved backends (plugin put_config →
 // refresh_effective) and returns `effective` / `switched` for the UI banner.
@@ -158,24 +163,24 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, mode: 'update', effective, switched });
   }
 
-  // Pre-login one-shot: token-gated, only while no config exists.
+  // Pre-login: token-gated, repeatable (F1e). First launch creates the
+  // config; afterwards the same token overwrites it (broken/changed
+  // environment escape hatch — see header). No session, no other path.
   if (!token) {
     return NextResponse.json({ error: 'token-required' }, { status: 403 });
   }
   if (!(await verifySetupToken(token))) {
     return NextResponse.json({ error: 'invalid-token' }, { status: 403 });
   }
-  if (await configExists()) {
-    return NextResponse.json({ error: 'already-configured' }, { status: 403 });
-  }
-  const result = await saveConfigOneShot(parsed.backends);
+  const existed = await configExists();
+  const result = existed ? await updateConfig(parsed.backends) : await saveConfigOneShot(parsed.backends);
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
-  // Re-probe the fresh config so the effective cache is honest from the
-  // first request (replaces the old blind first-address seed).
+  // Re-probe the saved config so the effective cache is honest from the
+  // first request (plugin put_config → refresh_effective).
   const { effective, switched } = await refreshEffective(Object.keys(parsed.backends) as BackendName[]);
-  return NextResponse.json({ ok: true, mode: 'first-launch', effective, switched });
+  return NextResponse.json({ ok: true, mode: existed ? 'update' : 'first-launch', effective, switched });
 }
 
 async function verifySetupToken(token: string): Promise<boolean> {

@@ -170,6 +170,19 @@ export function LoginPage({ onLoginSuccess, defaultUsername = '' }: LoginPagePro
               </>
             )}
           </Button>
+          {/* F1e (plugin parity: the config surface is always one click away,
+              not a first-launch easter egg) — re-configure backends from a
+              logged-out browser when the environment changed or addresses
+              are wrong. Pre-login writes stay token-gated server-side. */}
+          <div className="pt-1 text-center">
+            <button
+              type="button"
+              onClick={() => window.location.assign('?setup=1')}
+              className="text-xs text-muted-foreground transition-colors hover:text-foreground"
+            >
+              无法登录？后端配置（地址 / 首启）
+            </button>
+          </div>
         </CardContent>
       </Card>
     </div>
