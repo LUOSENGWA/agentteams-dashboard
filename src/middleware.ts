@@ -11,6 +11,10 @@ export const runtime = 'nodejs';
 const PUBLIC_PATHS = [
   '/api/agentteams/setup/ensure-ai',
   '/api/agentteams/setup/status',
+  // F1 backend setup: the pre-login first-launch flow must be reachable
+  // before any session exists. Writes are token-gated (pre-login one-shot)
+  // or level-3 session-gated (post-login) inside the route itself.
+  '/api/agentteams/setup/backends',
 ];
 
 const USER_NAME_HEADER = 'x-agentteams-user';

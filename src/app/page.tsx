@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { AgentTeamsDashboard } from '@/components/dashboard/agent-teams-dashboard';
 import { LoginPage } from '@/components/auth/login-page';
+import { BackendSetupPage } from '@/components/setup/backend-setup-page';
 import { SetupWizard } from '@/components/setup/setup-wizard';
 import { QueryProvider } from '@/lib/query-provider';
 import { useAgentTeamsStore } from '@/lib/agentteams-store';
@@ -21,9 +22,14 @@ type SetupState =
   | { status: 'required' }
   | { status: 'complete' };
 
+// F1 pre-login backend setup gate: independent of the (post-login)
+// controller-side setup wizard above.
+type PreSetupState = { status: 'loading' } | { status: 'required' } | { status: 'complete' };
+
 export default function Home() {
   const [auth, setAuth] = useState<AuthState>({ status: 'loading' });
   const [setup, setSetup] = useState<SetupState>({ status: 'loading' });
+  const [preSetup, setPreSetup] = useState<PreSetupState>({ status: 'loading' });
 
   useEffect(() => {
     let cancelled = false;
@@ -36,6 +42,19 @@ export default function Home() {
         if (cancelled) return;
         if (!data.authenticated) {
           setAuth({ status: 'unauthenticated' });
+          // F1: before offering the login form, check whether the dashboard
+          // has any usable backend addresses. Standalone installs without
+          // env config must configure backends FIRST (token-gated one-shot),
+          // so unconfigured -> setup page instead of login.
+          fetch(apiUrl('/api/agentteams/setup/backends'), { credentials: 'same-origin' })
+            .then((res) => res.json().catch(() => null))
+            .then((sdata) => {
+              if (cancelled) return;
+              setPreSetup({ status: sdata && sdata.configured === false ? 'required' : 'complete' });
+            })
+            .catch(() => {
+              if (!cancelled) setPreSetup({ status: 'complete' });
+            });
           return;
         }
         setAuth({ status: 'authenticated', username: data.username });
@@ -75,9 +94,14 @@ export default function Home() {
   }
 
   if (auth.status === 'unauthenticated') {
+    if (preSetup.status === 'loading') return null;
     return (
       <ThemeProvider>
-        <LoginPage onLoginSuccess={handleLoginSuccess} />
+        {preSetup.status === 'required' ? (
+          <BackendSetupPage onDone={handleLoginSuccess} />
+        ) : (
+          <LoginPage onLoginSuccess={handleLoginSuccess} />
+        )}
         <Toaster position="top-right" richColors />
       </ThemeProvider>
     );

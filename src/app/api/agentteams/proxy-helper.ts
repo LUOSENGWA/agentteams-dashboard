@@ -1,6 +1,7 @@
 // Shared proxy helper for AgentTeams API routes
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest } from '@/lib/dashboard-session';
+import { pickBackendUrl } from '@/lib/backend-config';
 
 const TIMEOUT_MS = 10000;
 
@@ -39,13 +40,15 @@ export async function getAuthToken(): Promise<string | undefined> {
 }
 
 function getDefaultControllerUrl(): string {
+  // F1 resolution: first-launch config file (dual address + failover) >
+  // env vars > embedded in-cluster default. pickBackendUrl also returns the
+  // last-known-working address while its probe TTL is fresh, so a flaky
+  // primary automatically falls back to the secondary.
+  const configured = pickBackendUrl('controller');
+  if (configured) return configured;
   // Default to the in-cluster service name so a missing env var does not
   // cause the dashboard to proxy to itself on localhost.
-  return (
-    process.env.AGENTTEAMS_CONTROLLER_URL ||
-    process.env.AGENTTEAMS_API_URL ||
-    'http://agentteams-controller:8090'
-  );
+  return process.env.AGENTTEAMS_API_URL || 'http://agentteams-controller:8090';
 }
 
 export function getControllerUrl(request: NextRequest): string {

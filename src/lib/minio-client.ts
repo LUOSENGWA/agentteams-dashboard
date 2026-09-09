@@ -1,4 +1,5 @@
 import * as Minio from 'minio';
+import { pickBackendUrl } from '@/lib/backend-config';
 
 export interface MinioConfig {
   endPoint: string;
@@ -44,7 +45,12 @@ function resolveMinioHost(endpointHost: string): string {
 }
 
 export function getMinioConfigFromEnv(): MinioConfig | null {
-  const endpoint = process.env.AGENTTEAMS_FS_ENDPOINT || process.env.AGENTTEAMS_MINIO_ENDPOINT || '';
+  // F1: first-launch config file (dual address + failover) wins over env.
+  const endpoint =
+    pickBackendUrl('minio') ||
+    process.env.AGENTTEAMS_FS_ENDPOINT ||
+    process.env.AGENTTEAMS_MINIO_ENDPOINT ||
+    '';
   const accessKey =
     process.env.AGENTTEAMS_FS_ACCESS_KEY || process.env.AGENTTEAMS_MINIO_USER || '';
   const secretKey =
