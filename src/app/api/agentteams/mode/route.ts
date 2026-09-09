@@ -2,7 +2,7 @@
 // Returns 'embedded' or 'k8s'. This is used as a fallback when the Controller
 // API is unreachable at startup.
 import { NextResponse } from 'next/server';
-import fs from 'fs';
+import fs from 'node:fs';
 
 function isInKubernetesPod(): boolean {
   try {
