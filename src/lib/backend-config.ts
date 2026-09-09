@@ -185,7 +185,16 @@ export async function saveConfigOneShot(
 export async function updateConfig(
   backends: DashboardConfig['backends'],
 ): Promise<{ ok: boolean; error?: string }> {
-  const config = normalizeConfig({ version: 1, backends });
+  // F1f-E: per-backend MERGE, not full replacement. Sent backends replace
+  // their entry; unsent backends are preserved. A partial save (e.g. the
+  // admin fixing only the controller address on a shared instance) must
+  // never wipe the other backends — under the old replace semantics that
+  // one save made the whole instance unusable until re-configured.
+  // Explicit removal of a backend = `docker volume rm` factory reset
+  // (the UI form always sends all six, so merge === replace from the UI).
+  const existing = readConfigSync()?.backends ?? {};
+  const merged: DashboardConfig['backends'] = { ...existing, ...backends };
+  const config = normalizeConfig({ version: 1, backends: merged });
   if (!config) return { ok: false, error: 'invalid-config' };
   await writeConfigAtomic(config);
   return { ok: true };
@@ -298,12 +307,41 @@ export function orderedCandidates(name: BackendName): string[] {
 }
 
 // ---------------------------------------------------------------------------
-// First-launch setup token (gates the pre-auth one-shot write)
+// Shared (multi-user) deployment mode — F1f
+//
+// DASHBOARD_SHARED_MODE=1 marks an instance that MULTIPLE humans share
+// (e.g. Node1: admin L1 + team L2 on one container). The plugin's
+// "whoever uses this host edits this config" model assumes one instance per
+// human; on a shared instance that model is an attack surface (an L2
+// overwriting the backend config redirects EVERY user's data plane). In
+// shared mode the dashboard therefore:
+//   A: only level-3 (admin) sessions may save the backend config;
+//   B: the setup token comes ONLY from DASHBOARD_SETUP_TOKEN env and is
+//      NEVER generated or persisted to the volume (no owner credential on
+//      disk); with no env token the pre-login write path stays closed;
+//   C: every config write is audited with actor + level + changed fields;
+//   D: startup warns if AGENTTEAMS_AUTH_TOKEN (a cluster-level super
+//      credential) is in the env — shared deployments should drop it and
+//      use the per-login controller-token paste (C2) instead.
+// Standalone (one instance per user) deployments keep the F1c behavior:
+// any logged-in user saves, token auto-generated + persisted.
+// ---------------------------------------------------------------------------
+
+export function isSharedMode(): boolean {
+  return process.env.DASHBOARD_SHARED_MODE === '1';
+}
+
+// ---------------------------------------------------------------------------
+// First-launch setup token (gates the pre-auth write; repeatable — F1e)
 // ---------------------------------------------------------------------------
 
 export async function getSetupToken(): Promise<string> {
   const fromEnv = (process.env.DASHBOARD_SETUP_TOKEN || '').trim();
   if (fromEnv) return fromEnv;
+  // B: shared mode — env is the ONLY token source. Nothing is generated,
+  // printed or persisted; an empty result means the pre-login write path
+  // is closed (verifySetupToken fails closed on it).
+  if (isSharedMode()) return '';
   const fsp = (await loadFs()).promises;
   const path = await import('path');
   const tokenFile = await tokenFilePath();

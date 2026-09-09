@@ -140,11 +140,13 @@ describe('saveConfigOneShot / updateConfig', () => {
     expect(await configExists()).toBe(false);
   });
 
-  it('updateConfig creates and overwrites', async () => {
+  it('updateConfig creates and merges per-backend (F1f-E)', async () => {
     expect(await updateConfig({ controller: { internal: 'http://a:8090' } })).toEqual({ ok: true });
     expect(await updateConfig({ matrix: { internal: 'http://b:6167' } })).toEqual({ ok: true });
     const config = readConfigSync();
-    expect(config?.backends.controller).toBeUndefined(); // overwritten
+    // F1f-E merge semantics: the sent backend replaces its entry; unsent
+    // backends are preserved — a partial save must never wipe the config.
+    expect(config?.backends.controller).toEqual({ internal: 'http://a:8090' });
     expect(config?.backends.matrix).toEqual({ internal: 'http://b:6167' });
   });
 });
@@ -160,6 +162,15 @@ describe('getSetupToken', () => {
     expect(first).toMatch(/^[0-9a-f]{32}$/);
     expect(await getSetupToken()).toBe(first);
     expect(fs.existsSync(path.join(workDir, '.setup-token'))).toBe(true);
+  });
+
+  it('shared mode: env is the only source, empty when unset, never persisted (F1f-B)', async () => {
+    vi.stubEnv('DASHBOARD_SHARED_MODE', '1');
+    vi.stubEnv('DASHBOARD_SETUP_TOKEN', 'shared-env-token');
+    expect(await getSetupToken()).toBe('shared-env-token');
+    vi.stubEnv('DASHBOARD_SETUP_TOKEN', '');
+    expect(await getSetupToken()).toBe('');
+    expect(fs.existsSync(path.join(workDir, '.setup-token'))).toBe(false);
   });
 });
 

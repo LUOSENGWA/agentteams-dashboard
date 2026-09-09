@@ -10,6 +10,7 @@ import {
   sessionCookieHeader,
 } from '@/lib/dashboard-session';
 import { BACKEND_NAMES, forgetWorking, readConfigSync } from '@/lib/backend-config';
+import { listAuditEvents, resetAuditLogForTests } from '@/lib/audit-log';
 import { GET, POST } from './route';
 
 let workDir: string;
@@ -196,9 +197,10 @@ describe('POST /api/agentteams/setup/backends', () => {
     const secondData = (await second.json()) as { ok: boolean; mode: string };
     expect(secondData.ok).toBe(true);
     expect(secondData.mode).toBe('update');
-    // overwrite semantics: the second write replaces the first
+    // F1f-E merge semantics: the sent backend (controller) is replaced,
+    // the unsent backend (matrix) is preserved.
     expect(readConfigSync()?.backends.controller).toEqual({ internal: 'http://c:8090' });
-    expect(readConfigSync()?.backends.matrix).toBeUndefined();
+    expect(readConfigSync()?.backends.matrix).toEqual({ external: 'http://mx:6167' });
 
     // without the token the pre-login path stays closed
     const third = await POST(
@@ -238,8 +240,10 @@ describe('POST /api/agentteams/setup/backends', () => {
       makeRequest({ method: 'POST', body: JSON.stringify({ backends: { matrix: { internal: 'http://b:6167' } } }) }, cookie),
     );
     expect(second.status).toBe(200);
-    // overwrite semantics: the second write replaces the first
-    expect(readConfigSync()?.backends.controller).toBeUndefined();
+    // F1f-E merge semantics: the sent backend (matrix) replaces its
+    // entry; the unsent backend (controller) is preserved — a partial
+    // save must never wipe the rest of the config.
+    expect(readConfigSync()?.backends.controller).toEqual({ internal: 'http://a:8090' });
     expect(readConfigSync()?.backends.matrix).toEqual({ internal: 'http://b:6167' });
   });
 
@@ -284,5 +288,89 @@ describe('POST /api/agentteams/setup/backends', () => {
     expect(res.status).toBe(200);
     // the session (not the token) authorized the save
     expect(readConfigSync()?.backends.controller).toEqual({ internal: 'http://b:8090' });
+  });
+});
+
+describe('F1f shared mode (DASHBOARD_SHARED_MODE=1, e.g. Node1 multi-user)', () => {
+  beforeEach(async () => {
+    vi.stubEnv('DASHBOARD_SHARED_MODE', '1');
+    vi.stubEnv('AGENTTEAMS_AUDIT_LOG_PATH', path.join(workDir, 'audit-shared.jsonl'));
+    // audit log is append-only — reset per test so events don't leak across cases
+    await resetAuditLogForTests();
+  });
+
+  it('A: L2 save is rejected (403), L1 save works', async () => {
+    const l2 = await POST(
+      makeRequest(
+        { method: 'POST', body: JSON.stringify({ backends: { controller: { internal: 'http://a:8090' } } }) },
+        l2Cookie(),
+      ),
+    );
+    expect(l2.status).toBe(403);
+    expect(await l2.json()).toEqual({ error: 'shared-mode: only admin (L1) may save backend config' });
+
+    const l1 = await POST(
+      makeRequest(
+        { method: 'POST', body: JSON.stringify({ backends: { controller: { internal: 'http://a:8090' } } }) },
+        l1Cookie(),
+      ),
+    );
+    expect(l1.status).toBe(200);
+    expect(readConfigSync()?.backends.controller).toEqual({ internal: 'http://a:8090' });
+  });
+
+  it('B: pre-login uses the env token only and never persists a token file', async () => {
+    const res = await POST(
+      makeRequest({
+        method: 'POST',
+        body: JSON.stringify({
+          token: 'test-token-123',
+          backends: { controller: { internal: 'http://a:8090' }, matrix: { external: 'http://mx:6167' } },
+        }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { mode: string }).mode).toBe('first-launch');
+    expect(fs.existsSync(path.join(workDir, '.setup-token'))).toBe(false);
+  });
+
+  it('B: with no env token the pre-login path fails closed', async () => {
+    vi.stubEnv('DASHBOARD_SETUP_TOKEN', '');
+    const res = await POST(
+      makeRequest({
+        method: 'POST',
+        body: JSON.stringify({ token: 'test-token-123', backends: { controller: { internal: 'http://a:8090' } } }),
+      }),
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'invalid-token' });
+    expect(fs.existsSync(path.join(workDir, '.setup-token'))).toBe(false);
+  });
+
+  it('C: saves are audited with actor, level and changed fields', async () => {
+    await POST(
+      makeRequest(
+        { method: 'POST', body: JSON.stringify({ backends: { controller: { internal: 'http://a:8090' } } }) },
+        l1Cookie(),
+      ),
+    );
+    const write = (await listAuditEvents({})).find((e) => e.action === 'config.write');
+    expect(write).toBeDefined();
+    expect(write?.actor).toBe('admin');
+    expect(write?.actor_level).toBe(3);
+    expect(write?.details).toContain('controller');
+  });
+
+  it('A+C: a rejected L2 save leaves no config and no audit write', async () => {
+    const res = await POST(
+      makeRequest(
+        { method: 'POST', body: JSON.stringify({ backends: { controller: { internal: 'http://evil:8090' } } }) },
+        l2Cookie(),
+      ),
+    );
+    expect(res.status).toBe(403);
+    expect(readConfigSync()).toBeNull();
+    const writes = (await listAuditEvents({})).filter((e) => e.action === 'config.write');
+    expect(writes).toHaveLength(0);
   });
 });

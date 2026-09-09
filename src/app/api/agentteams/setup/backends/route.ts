@@ -6,12 +6,24 @@
 // instead of the login form. The embedded auto-detect probe only runs in the
 // unconfigured case so normal deployments pay zero extra latency.
 //
-// POST (two auth modes — plugin parity, F1c):
-//   - post-login (L1 or L2, any level): any logged-in user may create or
-//     overwrite the config. The deployment model is one instance per user
-//     (own docker, remote AgentTeams), so the instance's users ARE the
-//     plugin's "user of this host" — the plugin's config page is equally
-//     open to whoever is logged into the host, with no extra credential.
+// POST (auth modes — F1c + F1f shared-mode hardening):
+//   - post-login, standalone (default, one instance per user): any logged-in
+//     user (L1 or L2) may create or update the config — plugin parity, the
+//     instance's user IS the plugin's "user of this host".
+//   - post-login, shared (DASHBOARD_SHARED_MODE=1, e.g. Node1 multi-user):
+//     only level-3 (admin) sessions may save (A). An L2 overwriting the
+//     backend config on a shared instance would redirect EVERY user's data
+//     plane (config file > env, global) — that is attack surface ①.
+//     Every save is audited with actor + level + changed fields (C).
+//   - pre-login (token-gated, repeatable — F1e): body.token must equal the
+//     setup token. First launch creates the config; afterwards the same
+//     token remains the ONLY owner gate for re-configuring from a
+//     logged-out browser — the escape hatch for broken/changed
+//     environments (wrong addresses, network move), reachable from the
+//     login screen via ?setup=1. Plugin parity (config-first): the config
+//     surface stays reachable before login and login is downstream of it.
+//     Shared mode (B): the token comes ONLY from DASHBOARD_SETUP_TOKEN env
+//     and is never persisted; with no env token this path is closed.
 //     The SSRF surface of user-supplied addresses stays pinned by
 //     DASHBOARD_ALLOWED_HOSTS; config editing does not touch credentials
 //     (L1 SA token / L2 session tokens stay server-side).
@@ -42,6 +54,7 @@ import {
   effectiveUrl,
   getSetupToken,
   isHttpUrl,
+  isSharedMode,
   probeBackend,
   readConfigSync,
   refreshEffective,
@@ -50,6 +63,7 @@ import {
   type BackendAddrs,
   type BackendName,
 } from '@/lib/backend-config';
+import { appendAuditEvent } from '@/lib/audit-log';
 
 type BackendNameSet = Record<string, BackendName>;
 
@@ -149,13 +163,23 @@ export async function POST(request: NextRequest) {
 
   const session = getSessionFromRequest(request);
   const token = typeof body?.token === 'string' ? body.token : undefined;
+  const before = readConfigSync()?.backends ?? {};
 
   if (session) {
-    // Post-login (L1 or L2, plugin parity): repeatable create/overwrite.
+    // F1f-A: shared (multi-user) deployment — only an admin (level 3)
+    // session may save. Standalone keeps the F1c any-user behavior.
+    if (isSharedMode() && session.level < 3) {
+      return NextResponse.json(
+        { error: 'shared-mode: only admin (L1) may save backend config' },
+        { status: 403 },
+      );
+    }
     const result = await updateConfig(parsed.backends);
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
+    // F1f-C: every config write is audited with actor + level + diff.
+    await auditConfigWrite(before, parsed.backends, session.user, session.level, request);
     // Re-probe what was just saved (plugin put_config → refresh_effective):
     // the effective address is latency-elected from real probes, not seeded
     // blindly.
@@ -177,14 +201,71 @@ export async function POST(request: NextRequest) {
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
+  await auditConfigWrite(before, parsed.backends, 'pre-login', 0, request);
   // Re-probe the saved config so the effective cache is honest from the
   // first request (plugin put_config → refresh_effective).
   const { effective, switched } = await refreshEffective(Object.keys(parsed.backends) as BackendName[]);
   return NextResponse.json({ ok: true, mode: existed ? 'update' : 'first-launch', effective, switched });
 }
 
+/** F1f-C: audit a config write with actor, level and a per-backend diff.
+ * A failed audit must never break the save (log + continue). */
+async function auditConfigWrite(
+  before: Partial<Record<BackendName, BackendAddrs>>,
+  after: Partial<Record<BackendName, BackendAddrs>>,
+  actor: string,
+  level: number,
+  request: NextRequest,
+): Promise<void> {
+  try {
+    const changed = diffBackends(before, after);
+    await appendAuditEvent({
+      actor,
+      actor_level: level,
+      entity_type: 'system',
+      entity_name: 'backend-config',
+      action: 'config.write',
+      details: changed ? `changed: ${changed}` : 'no-op (identical)',
+      severity: 'warning',
+      source_ip: request.headers.get('x-forwarded-for')?.split(',')[0]?.trim(),
+    });
+  } catch (err) {
+    console.warn('[dashboard] backend-config audit write failed:', err);
+  }
+}
+
+/** Per-backend merge diff: sent backends replace, unsent are preserved
+ * (F1f-E merge semantics), so the diff lists exactly what changed. */
+function diffBackends(
+  before: Partial<Record<BackendName, BackendAddrs>>,
+  after: Partial<Record<BackendName, BackendAddrs>>,
+): string {
+  const names = new Set<string>([...Object.keys(before), ...Object.keys(after)]);
+  const changed: string[] = [];
+  for (const name of [...names].sort()) {
+    const b = before[name as BackendName];
+    const a = after[name as BackendName];
+    if (!a) continue; // merge keeps unsent backends — nothing to report
+    if (!b) {
+      changed.push(`${name}+(${Object.keys(a).join(',')})`);
+      continue;
+    }
+    const slots: string[] = [];
+    for (const slot of ['internal', 'external'] as const) {
+      if (b[slot] !== a[slot]) {
+        slots.push(`${slot}:${b[slot] ? 'set' : 'unset'}→${a[slot] ? 'set' : 'unset'}`);
+      }
+    }
+    if (slots.length > 0) changed.push(`${name}(${slots.join(' ')})`);
+  }
+  return changed.join('; ');
+}
+
 async function verifySetupToken(token: string): Promise<boolean> {
   const expected = await getSetupToken();
+  // B: shared mode without a DASHBOARD_SETUP_TOKEN env — the pre-login
+  // write path is closed (fails closed, no timing comparison on empty).
+  if (!expected) return false;
   const a = Buffer.from(token);
   const b = Buffer.from(expected);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
