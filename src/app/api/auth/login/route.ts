@@ -53,6 +53,13 @@ interface HumanRecord {
 async function fetchHumanViaSa(request: NextRequest, name: string): Promise<HumanRecord | null> {
   const token = await getAuthToken();
   if (!token) return null;
+  return fetchHumanWithToken(request, name, token);
+}
+
+/** CR lookup with an explicit admin-grade token (SA env or a validated
+ * Controller admin token pasted at login — one-person-per-instance
+ * deployments may hold no server-side SA credential at all). */
+async function fetchHumanWithToken(request: NextRequest, name: string, token: string): Promise<HumanRecord | null> {
   try {
     const res = await fetch(`${getControllerUrl(request)}/api/v1/humans/${encodeURIComponent(name)}`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -312,7 +319,25 @@ async function attemptMatrixLogin(
 
   const userId = typeof matrix.userId === 'string' ? matrix.userId : '';
   const localpart = userId.startsWith('@') ? userId.slice(1).split(':')[0] : username;
-  const human = await fetchHumanViaSa(request, localpart);
+  let human = await fetchHumanViaSa(request, localpart);
+  if (!human && controllerToken) {
+    // One-person-per-instance deployment: the server may hold no admin
+    // credential (no AGENTTEAMS_AUTH_TOKEN). The Controller admin token
+    // pasted at login (existing L1 field) can perform the same level
+    // lookup — validated against the Controller before use. The L2-only
+    // matrix token itself is denied on human reads (controller
+    // authorizeHuman has no "human" case), so without an admin-grade
+    // token here the lookup is impossible; the upstream GET /api/v1/me
+    // (self-scope) would close that gap for L2.
+    if (await verifyControllerToken(request, controllerToken)) {
+      human = await fetchHumanWithToken(request, localpart, controllerToken);
+    } else {
+      return NextResponse.json(
+        { success: false, error: 'Controller 管理员 token 无效' },
+        { status: 401 },
+      );
+    }
+  }
   const crLevel = human && typeof human.permissionLevel === 'number' ? human.permissionLevel : -1;
   const dashLevel = MATRIX_CR_LEVEL_TO_DASH_LEVEL[crLevel];
   if (!human || !dashLevel) {
