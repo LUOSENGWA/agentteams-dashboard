@@ -67,6 +67,15 @@ function l1Cookie(): string {
   return sessionCookieHeader(cookieValue);
 }
 
+function l2Cookie(): string {
+  const { cookieValue } = createSession({
+    user: 'sunzong',
+    crLevel: 2, // CRD 2 -> dashboard level 2 (own-scope L2)
+    credential: { kind: 'matrix', token: 'dummy-matrix-token' },
+  });
+  return sessionCookieHeader(cookieValue);
+}
+
 describe('GET /api/agentteams/setup/backends', () => {
   it('reports unconfigured standalone state with embedded auto-detect results', async () => {
     const res = await GET(makeRequest());
@@ -113,7 +122,7 @@ describe('GET /api/agentteams/setup/backends', () => {
     expect(readConfigSync()?.backends.controller).toEqual({ internal: 'http://in:8090' });
   });
 
-  it('exposes the structured file config only to a level-3 session (F1b settings tab)', async () => {
+  it('exposes the structured file config to L1 and L2 alike, never to pre-login', async () => {
     fs.writeFileSync(
       configFile(),
       JSON.stringify({
@@ -121,14 +130,18 @@ describe('GET /api/agentteams/setup/backends', () => {
         backends: { controller: { internal: 'http://in:8090', external: 'http://out:8090' } },
       }),
     );
+    const expected = { controller: { internal: 'http://in:8090', external: 'http://out:8090' } };
 
     const l1 = await GET(makeRequest(undefined, l1Cookie()));
-    const l1Data = (await l1.json()) as { config?: Record<string, { internal?: string; external?: string }> };
-    expect(l1Data.config).toEqual({ controller: { internal: 'http://in:8090', external: 'http://out:8090' } });
+    expect(((await l1.json()) as { config?: unknown }).config).toEqual(expected);
+
+    // L2 (standalone instance owner via the Matrix track) sees it too —
+    // the backend tab is visible to all logged-in users.
+    const l2 = await GET(makeRequest(undefined, l2Cookie()));
+    expect(((await l2.json()) as { config?: unknown }).config).toEqual(expected);
 
     const anon = await GET(makeRequest());
-    const anonData = (await anon.json()) as { config?: unknown };
-    expect(anonData.config).toBeUndefined();
+    expect(((await anon.json()) as { config?: unknown }).config).toBeUndefined();
   });
 });
 
@@ -195,18 +208,63 @@ describe('POST /api/agentteams/setup/backends', () => {
     expect(readConfigSync()?.backends.matrix).toEqual({ internal: 'http://b:6167' });
   });
 
-  it('L2 session (level 2) is rejected like an anonymous request', async () => {
-    const { cookieValue } = createSession({
-      user: 'worker-user',
-      crLevel: 2, // CRD 2 -> dashboard level 2
-      credential: { kind: 'matrix', token: 'dummy-matrix-token' },
-    });
+  it('L2 session (level 2) without a token is rejected (403 token-required)', async () => {
     const res = await POST(
       makeRequest(
         { method: 'POST', body: JSON.stringify({ backends: { controller: { internal: 'http://a:8090' } } }) },
-        sessionCookieHeader(cookieValue),
+        l2Cookie(),
       ),
     );
     expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'token-required' });
+  });
+
+  it('L2 session with a wrong token is rejected (403 invalid-token)', async () => {
+    fs.writeFileSync(
+      configFile(),
+      JSON.stringify({ version: 1, backends: { controller: { internal: 'http://old:8090' } } }),
+    );
+    const res = await POST(
+      makeRequest(
+        { method: 'POST', body: JSON.stringify({ token: 'nope', backends: { controller: { internal: 'http://b:8090' } } }) },
+        l2Cookie(),
+      ),
+    );
+    expect(res.status).toBe(403);
+    expect(await res.json()).toEqual({ error: 'invalid-token' });
+    // the wrong token must not have touched the config
+    expect(readConfigSync()?.backends.controller).toEqual({ internal: 'http://old:8090' });
+  });
+
+  it('L2 session with the setup token (owner) can update the config', async () => {
+    fs.writeFileSync(
+      configFile(),
+      JSON.stringify({ version: 1, backends: { controller: { internal: 'http://old:8090' } } }),
+    );
+    const res = await POST(
+      makeRequest(
+        {
+          method: 'POST',
+          body: JSON.stringify({ token: 'test-token-123', backends: { controller: { internal: 'http://new:8090' } } }),
+        },
+        l2Cookie(),
+      ),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ ok: true, mode: 'owner-update' });
+    expect(readConfigSync()?.backends.controller).toEqual({ internal: 'http://new:8090' });
+
+    // repeatable — the owner keeps editing rights (not one-shot like pre-login)
+    const again = await POST(
+      makeRequest(
+        {
+          method: 'POST',
+          body: JSON.stringify({ token: 'test-token-123', backends: { sglang: { internal: 'http://gpu:8000' } } }),
+        },
+        l2Cookie(),
+      ),
+    );
+    expect(again.status).toBe(200);
+    expect(readConfigSync()?.backends.sglang).toEqual({ internal: 'http://gpu:8000' });
   });
 });

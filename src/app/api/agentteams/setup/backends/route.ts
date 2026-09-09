@@ -6,14 +6,21 @@
 // instead of the login form. The embedded auto-detect probe only runs in the
 // unconfigured case so normal deployments pay zero extra latency.
 //
-// POST (two auth modes):
+// POST (three auth modes):
+//   - post-login L1: session at dashboard level 3 (admin) may create or
+//     overwrite the config at any time, no token needed.
+//   - post-login owner: session at level < 3 presenting the first-launch
+//     setup token (body.token). The standalone instance owner typically
+//     logs in via the Matrix track (level < 3); the one-time setup token
+//     shown at first launch is their owner credential for later edits.
+//     In a multi-user deployment only the owner (who ran first launch)
+//     holds it, so a peer L2 cannot shadow the deployment env config
+//     (config file > env).
 //   - pre-login one-shot: body.token must equal the setup token AND the
 //     config file must not exist yet. This is the only way a logged-out
 //     browser can write backend addresses (first launch on a standalone
 //     docker install). After the file exists, this mode is permanently
 //     rejected — no config re-do from the login screen.
-//   - post-login L1: session at dashboard level 3 (admin) may create or
-//     overwrite the config at any time.
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 import { getSessionFromRequest } from '@/lib/dashboard-session';
@@ -92,19 +99,19 @@ export async function GET(request: NextRequest) {
     healthy = Object.fromEntries(probed);
   }
 
-  // The structured file config (internal/external per backend) is only
-  // exposed to a level-3 (L1 admin) session — it feeds the settings dialog
-  // backend tab. Pre-login callers (the first-launch page) get candidates
+  // The structured file config (internal/external per backend) is exposed
+  // to any AUTHENTICATED session — the settings backend tab is visible to
+  // L1 and L2 alike (L2 = standalone instance owner who logged in via the
+  // Matrix track). Pre-login callers (the first-launch page) get candidates
   // and embedded defaults only.
   const session = getSessionFromRequest(request);
-  const l1Config =
-    session && session.level >= 3 ? { config: config?.backends ?? {} } : {};
+  const authedConfig = session ? { config: config?.backends ?? {} } : {};
 
   return NextResponse.json({
     configured,
     backends: perBackend,
     embedded: { defaults: EMBEDDED_DEFAULTS, healthy },
-    ...l1Config,
+    ...authedConfig,
   });
 }
 
@@ -123,6 +130,8 @@ export async function POST(request: NextRequest) {
   }
 
   const session = getSessionFromRequest(request);
+  const token = typeof body?.token === 'string' ? body.token : undefined;
+
   if (session && session.level >= 3) {
     // L1 admin (post-login): repeatable create/overwrite.
     const result = await updateConfig(parsed.backends);
@@ -132,16 +141,31 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, mode: 'l1-update' });
   }
 
+  if (session && session.level < 3) {
+    // Post-login owner path: the standalone instance owner who logged in
+    // via the Matrix track (level < 3) edits the config with the
+    // first-launch setup token (their owner credential). A peer L2 in a
+    // multi-user deployment does not hold it → cannot shadow env.
+    if (!(token && (await verifySetupToken(token)))) {
+      return NextResponse.json(
+        { error: token ? 'invalid-token' : 'token-required' },
+        { status: 403 },
+      );
+    }
+    const result = await updateConfig(parsed.backends);
+    if (!result.ok) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
+    }
+    // The owner just proved these addresses — seed the failover cache.
+    seedWorkingCache(parsed.backends);
+    return NextResponse.json({ ok: true, mode: 'owner-update' });
+  }
+
   // Pre-login one-shot: token-gated, only while no config exists.
-  const token = typeof body?.token === 'string' ? body.token : undefined;
   if (!token) {
     return NextResponse.json({ error: 'token-required' }, { status: 403 });
   }
-  const expected = await getSetupToken();
-  const a = Buffer.from(token);
-  const b = Buffer.from(expected);
-  const valid = a.length === b.length && crypto.timingSafeEqual(a, b);
-  if (!valid) {
+  if (!(await verifySetupToken(token))) {
     return NextResponse.json({ error: 'invalid-token' }, { status: 403 });
   }
   if (await configExists()) {
@@ -152,9 +176,20 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
   // The user just proved these addresses — seed the failover working cache.
-  for (const [name, addrs] of Object.entries(parsed.backends)) {
+  seedWorkingCache(parsed.backends);
+  return NextResponse.json({ ok: true, mode: 'first-launch' });
+}
+
+async function verifySetupToken(token: string): Promise<boolean> {
+  const expected = await getSetupToken();
+  const a = Buffer.from(token);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
+}
+
+function seedWorkingCache(backends: Partial<Record<BackendName, BackendAddrs>>): void {
+  for (const [name, addrs] of Object.entries(backends)) {
     const first = addrs?.internal || addrs?.external;
     if (first) markWorking(name as BackendName, first);
   }
-  return NextResponse.json({ ok: true, mode: 'first-launch' });
 }

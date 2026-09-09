@@ -1,15 +1,26 @@
 'use client';
 
-// Settings > 后端 tab (F1b): L1-only (level 3) editing of the server-side
-// backend address config that the first-launch setup page writes (F1a).
+// Settings > 后端 tab (F1b): the server-side backend address config that
+// the first-launch setup page writes (F1a), editable after login.
 //
-// - Reads GET /api/agentteams/setup/backends — the `config` field (structured
-//   internal/external per backend) is only returned to level-3 sessions.
+// Visible to ALL logged-in users; save permissions follow the server:
+//   - L1 (level 3, admin): save directly, no token.
+//   - L2 (level < 3): save requires the first-launch setup token — the
+//     standalone instance owner (who typically logs in via the Matrix
+//     track) keeps editing rights via that owner credential, while a peer
+//     L2 in a multi-user deployment cannot shadow the env config.
+//     The token is shown once at first launch (docker logs) and persists
+//     in the .setup-token file next to the config. It is never stored
+//     client-side — cleared from the input after each save.
+//
+// - Reads GET /api/agentteams/setup/backends — the `config` field
+//   (structured internal/external per backend) is returned to any
+//   authenticated session.
 // - Per-field "测试" button → POST /api/agentteams/setup/backends/test
 //   (server-side probe; a pass also seeds the failover working cache).
-// - 保存 → POST /api/agentteams/setup/backends (L1 session path; no token).
-//   Empty fields are omitted; the server rejects a payload with no address
-//   at all ("at least one address is required").
+// - 保存 → POST /api/agentteams/setup/backends (L1 path, or owner path
+//   with token). Empty fields are omitted; the server rejects a payload
+//   with no address at all ("at least one address is required").
 //
 // Resolution priority (documented for the user): config file > env vars >
 // embedded defaults; the last-known-working candidate (probe TTL) wins.
@@ -28,6 +39,7 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { apiUrl } from '@/lib/api-base';
 import { BACKEND_LABELS, BACKEND_NAMES, REQUIRED_BACKENDS } from '@/lib/backend-names';
+import { useAgentTeamsStore } from '@/lib/agentteams-store';
 
 interface BackendAddrs {
   internal?: string;
@@ -62,6 +74,8 @@ function initialFields(config: Record<string, BackendAddrs> | undefined) {
 
 export function BackendTab() {
   const queryClient = useQueryClient();
+  const { userLevel } = useAgentTeamsStore();
+  const isL1 = userLevel >= 3;
   const [state, setState] = useState<BackendsState | null>(null);
   const [loading, setLoading] = useState(true);
   const [fields, setFields] = useState<Record<string, { internal: string; external: string }>>({});
@@ -69,6 +83,9 @@ export function BackendTab() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  // L2-only: first-launch setup token (owner credential). Never persisted
+  // client-side; cleared after each save.
+  const [setupToken, setSetupToken] = useState('');
 
   const load = useCallback(async () => {
     try {
@@ -114,6 +131,11 @@ export function BackendTab() {
   };
 
   const handleSave = async () => {
+    const tokenValue = isL1 ? '' : setupToken.trim();
+    if (!isL1 && !tokenValue) {
+      setSaveError('非管理员保存需填写首次配置 token（首启时 docker logs 打印，或 .setup-token 文件）');
+      return;
+    }
     setSaving(true);
     setSaved(false);
     setSaveError(null);
@@ -129,17 +151,18 @@ export function BackendTab() {
       const res = await fetch(apiUrl('/api/agentteams/setup/backends/'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ backends }),
+        body: JSON.stringify(isL1 ? { backends } : { backends, token: tokenValue }),
       });
       const data = (await res.json()) as { ok?: boolean; error?: string };
       if (res.ok && data.ok) {
         setSaved(true);
+        if (!isL1) setSetupToken(''); // never keep the token in the input
         await load();
         // The overview infrastructure panel re-resolves per request; just
         // nudge it so the health tiles reflect the new addresses promptly.
         void queryClient.invalidateQueries({ queryKey: ['agentteams-infrastructure'] });
       } else {
-        setSaveError(data.error ?? `HTTP ${res.status}`);
+        setSaveError(data.error === 'invalid-token' ? 'token 不正确' : data.error ?? `HTTP ${res.status}`);
       }
     } catch {
       setSaveError('保存请求失败');
@@ -162,6 +185,11 @@ export function BackendTab() {
       <p className="text-xs text-muted-foreground leading-relaxed">
         地址保存在服务端配置文件（<code className="font-mono">DASHBOARD_CONFIG_FILE</code>，数据卷上），保存后立即生效。
         解析优先级：本配置 &gt; 环境变量 &gt; 内置默认；某地址探活失败后 60 秒内自动切到另一可用候选（内网/外网 failover）。
+        {!isL1 && (
+          <span className="block mt-1">
+            当前身份非管理员：查看/测试可用，<b>保存需首次配置 token</b>（首启时 <code className="font-mono">docker logs</code> 打印一次，或配置同目录 <code className="font-mono">.setup-token</code> 文件）。
+          </span>
+        )}
       </p>
 
       {BACKEND_NAMES.map((name) => {
@@ -232,6 +260,21 @@ export function BackendTab() {
           </div>
         );
       })}
+
+      {!isL1 && (
+        <div className="space-y-1">
+          <Label htmlFor="setup-token" className="text-xs">首次配置 token（保存用）</Label>
+          <Input
+            id="setup-token"
+            type="password"
+            value={setupToken}
+            onChange={(e) => { setSetupToken(e.target.value); setSaved(false); setSaveError(null); }}
+            placeholder="首启 setup 页用的那个 token"
+            className="h-8 text-xs max-w-sm"
+            autoComplete="off"
+          />
+        </div>
+      )}
 
       <div className="flex items-center gap-3">
         <Button onClick={handleSave} disabled={saving}>

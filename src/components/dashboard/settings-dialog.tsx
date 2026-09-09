@@ -147,14 +147,12 @@ export function SettingsDialog() {
         </DialogHeader>
 
         <Tabs defaultValue="connection" className="w-full">
-          <TabsList className={isL1 ? 'grid w-full grid-cols-5' : 'grid w-full grid-cols-4'}>
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="connection">连接</TabsTrigger>
-            {isL1 && (
-              <TabsTrigger value="backends">
-                <Server className="w-3.5 h-3.5 mr-1" />
-                后端
-              </TabsTrigger>
-            )}
+            <TabsTrigger value="backends">
+              <Server className="w-3.5 h-3.5 mr-1" />
+              后端
+            </TabsTrigger>
             <TabsTrigger value="theme">
               <Palette className="w-3.5 h-3.5 mr-1" />
               外观
@@ -398,11 +396,9 @@ export function SettingsDialog() {
             </div>
           </TabsContent>
 
-          {isL1 && (
-            <TabsContent value="backends" className="py-4">
-              <BackendTab />
-            </TabsContent>
-          )}
+          <TabsContent value="backends" className="py-4">
+            <BackendTab />
+          </TabsContent>
 
           <TabsContent value="theme" className="py-4">
             <ThemeTab />
