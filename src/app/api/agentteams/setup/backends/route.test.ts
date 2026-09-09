@@ -170,7 +170,9 @@ describe('POST /api/agentteams/setup/backends', () => {
     });
     const first = await POST(makeRequest({ method: 'POST', body: payload }));
     expect(first.status).toBe(200);
-    expect(await first.json()).toEqual({ ok: true, mode: 'first-launch' });
+    const firstData = (await first.json()) as { ok: boolean; mode: string };
+    expect(firstData.ok).toBe(true);
+    expect(firstData.mode).toBe('first-launch');
     expect(fs.existsSync(configFile())).toBe(true);
 
     const second = await POST(makeRequest({ method: 'POST', body: payload }));
@@ -197,7 +199,9 @@ describe('POST /api/agentteams/setup/backends', () => {
       makeRequest({ method: 'POST', body: JSON.stringify({ backends: { controller: { internal: 'http://a:8090' } } }) }, cookie),
     );
     expect(first.status).toBe(200);
-    expect(await first.json()).toEqual({ ok: true, mode: 'l1-update' });
+    const firstData = (await first.json()) as { ok: boolean; mode: string };
+    expect(firstData.ok).toBe(true);
+    expect(firstData.mode).toBe('update');
 
     const second = await POST(
       makeRequest({ method: 'POST', body: JSON.stringify({ backends: { matrix: { internal: 'http://b:6167' } } }) }, cookie),
@@ -208,18 +212,34 @@ describe('POST /api/agentteams/setup/backends', () => {
     expect(readConfigSync()?.backends.matrix).toEqual({ internal: 'http://b:6167' });
   });
 
-  it('L2 session (level 2) without a token is rejected (403 token-required)', async () => {
+  // F1c (plugin parity, decided 9/9 — one instance per user, no shared
+  // instances): an L2 session saves WITHOUT any token, exactly like the
+  // plugin's config page is open to the user of this host.
+  it('L2 session (level 2) can update the config directly, no token needed', async () => {
     const res = await POST(
       makeRequest(
         { method: 'POST', body: JSON.stringify({ backends: { controller: { internal: 'http://a:8090' } } }) },
         l2Cookie(),
       ),
     );
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: 'token-required' });
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { ok: boolean; mode: string };
+    expect(data.ok).toBe(true);
+    expect(data.mode).toBe('update');
+    expect(readConfigSync()?.backends.controller).toEqual({ internal: 'http://a:8090' });
+
+    // repeatable — not one-shot like pre-login
+    const again = await POST(
+      makeRequest(
+        { method: 'POST', body: JSON.stringify({ backends: { sglang: { internal: 'http://gpu:8000' } } }) },
+        l2Cookie(),
+      ),
+    );
+    expect(again.status).toBe(200);
+    expect(readConfigSync()?.backends.sglang).toEqual({ internal: 'http://gpu:8000' });
   });
 
-  it('L2 session with a wrong token is rejected (403 invalid-token)', async () => {
+  it('a stale token in the body is ignored for logged-in sessions (no owner-credential path anymore)', async () => {
     fs.writeFileSync(
       configFile(),
       JSON.stringify({ version: 1, backends: { controller: { internal: 'http://old:8090' } } }),
@@ -230,41 +250,8 @@ describe('POST /api/agentteams/setup/backends', () => {
         l2Cookie(),
       ),
     );
-    expect(res.status).toBe(403);
-    expect(await res.json()).toEqual({ error: 'invalid-token' });
-    // the wrong token must not have touched the config
-    expect(readConfigSync()?.backends.controller).toEqual({ internal: 'http://old:8090' });
-  });
-
-  it('L2 session with the setup token (owner) can update the config', async () => {
-    fs.writeFileSync(
-      configFile(),
-      JSON.stringify({ version: 1, backends: { controller: { internal: 'http://old:8090' } } }),
-    );
-    const res = await POST(
-      makeRequest(
-        {
-          method: 'POST',
-          body: JSON.stringify({ token: 'test-token-123', backends: { controller: { internal: 'http://new:8090' } } }),
-        },
-        l2Cookie(),
-      ),
-    );
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ ok: true, mode: 'owner-update' });
-    expect(readConfigSync()?.backends.controller).toEqual({ internal: 'http://new:8090' });
-
-    // repeatable — the owner keeps editing rights (not one-shot like pre-login)
-    const again = await POST(
-      makeRequest(
-        {
-          method: 'POST',
-          body: JSON.stringify({ token: 'test-token-123', backends: { sglang: { internal: 'http://gpu:8000' } } }),
-        },
-        l2Cookie(),
-      ),
-    );
-    expect(again.status).toBe(200);
-    expect(readConfigSync()?.backends.sglang).toEqual({ internal: 'http://gpu:8000' });
+    // the session (not the token) authorized the save
+    expect(readConfigSync()?.backends.controller).toEqual({ internal: 'http://b:8090' });
   });
 });

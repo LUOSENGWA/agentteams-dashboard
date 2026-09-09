@@ -167,8 +167,10 @@ async function checkSglang(url: string | undefined): Promise<InfrastructureInfo[
     return { healthy: false, endpoint: '' };
   }
   const result = await probeBackend('sglang', url, TIMEOUT_MS);
-  if (result.ok) markWorking('sglang', url);
-  return { healthy: result.ok, endpoint: url };
+  // httpOk (status < 400), not ok (network connected): a 401/5xx probe must
+  // not mark the address working or report a healthy inference backend.
+  if (result.httpOk) markWorking('sglang', url, result.latencyMs);
+  return { healthy: result.httpOk, endpoint: url };
 }
 
 async function checkExternalService(endpoint: string | undefined) {

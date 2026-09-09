@@ -6,21 +6,25 @@
 // instead of the login form. The embedded auto-detect probe only runs in the
 // unconfigured case so normal deployments pay zero extra latency.
 //
-// POST (three auth modes):
-//   - post-login L1: session at dashboard level 3 (admin) may create or
-//     overwrite the config at any time, no token needed.
-//   - post-login owner: session at level < 3 presenting the first-launch
-//     setup token (body.token). The standalone instance owner typically
-//     logs in via the Matrix track (level < 3); the one-time setup token
-//     shown at first launch is their owner credential for later edits.
-//     In a multi-user deployment only the owner (who ran first launch)
-//     holds it, so a peer L2 cannot shadow the deployment env config
-//     (config file > env).
+// POST (two auth modes — plugin parity, F1c):
+//   - post-login (L1 or L2, any level): any logged-in user may create or
+//     overwrite the config. The deployment model is one instance per user
+//     (own docker, remote AgentTeams), so the instance's users ARE the
+//     plugin's "user of this host" — the plugin's config page is equally
+//     open to whoever is logged into the host, with no extra credential.
+//     The SSRF surface of user-supplied addresses stays pinned by
+//     DASHBOARD_ALLOWED_HOSTS; config editing does not touch credentials
+//     (L1 SA token / L2 session tokens stay server-side).
 //   - pre-login one-shot: body.token must equal the setup token AND the
 //     config file must not exist yet. This is the only way a logged-out
 //     browser can write backend addresses (first launch on a standalone
-//     docker install). After the file exists, this mode is permanently
-//     rejected — no config re-do from the login screen.
+//     docker install — the plugin has no equivalent because the host is
+//     already authenticated; this is the dashboard's install-method
+//     difference, approved 9/9). After the file exists, this mode is
+//     permanently rejected — no config re-do from the login screen.
+//
+// Every successful save re-probes the saved backends (plugin put_config →
+// refresh_effective) and returns `effective` / `switched` for the UI banner.
 import { NextRequest, NextResponse } from 'next/server';
 import crypto from 'node:crypto';
 import { getSessionFromRequest } from '@/lib/dashboard-session';
@@ -30,11 +34,12 @@ import {
   REQUIRED_BACKENDS,
   backendCandidates,
   configExists,
+  effectiveUrl,
   getSetupToken,
   isHttpUrl,
-  markWorking,
   probeBackend,
   readConfigSync,
+  refreshEffective,
   saveConfigOneShot,
   updateConfig,
   type BackendAddrs,
@@ -93,25 +98,33 @@ export async function GET(request: NextRequest) {
     const probed = await Promise.all(
       BACKEND_NAMES.filter((name) => EMBEDDED_DEFAULTS[name]).map(async (name) => {
         const result = await probeBackend(name, EMBEDDED_DEFAULTS[name] as string, 2000);
-        return [name, result.ok] as const;
+        return [name, result.httpOk] as const;
       }),
     );
     healthy = Object.fromEntries(probed);
   }
 
   // The structured file config (internal/external per backend) is exposed
-  // to any AUTHENTICATED session — the settings backend tab is visible to
-  // L1 and L2 alike (L2 = standalone instance owner who logged in via the
-  // Matrix track). Pre-login callers (the first-launch page) get candidates
-  // and embedded defaults only.
+  // to any AUTHENTICATED session — the settings backend tab is visible and
+  // editable to L1 and L2 alike (plugin parity: whoever uses this instance
+  // edits this instance's config). Pre-login callers (the first-launch
+  // page) get candidates and embedded defaults only.
   const session = getSessionFromRequest(request);
   const authedConfig = session ? { config: config?.backends ?? {} } : {};
+
+  // Effective (working-cache) address per backend — the "在生效" badge data.
+  const effective: Partial<Record<BackendName, string>> = {};
+  for (const name of BACKEND_NAMES) {
+    const url = effectiveUrl(name);
+    if (url) effective[name] = url;
+  }
 
   return NextResponse.json({
     configured,
     backends: perBackend,
     embedded: { defaults: EMBEDDED_DEFAULTS, healthy },
     ...authedConfig,
+    effective,
   });
 }
 
@@ -132,33 +145,17 @@ export async function POST(request: NextRequest) {
   const session = getSessionFromRequest(request);
   const token = typeof body?.token === 'string' ? body.token : undefined;
 
-  if (session && session.level >= 3) {
-    // L1 admin (post-login): repeatable create/overwrite.
+  if (session) {
+    // Post-login (L1 or L2, plugin parity): repeatable create/overwrite.
     const result = await updateConfig(parsed.backends);
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
-    return NextResponse.json({ ok: true, mode: 'l1-update' });
-  }
-
-  if (session && session.level < 3) {
-    // Post-login owner path: the standalone instance owner who logged in
-    // via the Matrix track (level < 3) edits the config with the
-    // first-launch setup token (their owner credential). A peer L2 in a
-    // multi-user deployment does not hold it → cannot shadow env.
-    if (!(token && (await verifySetupToken(token)))) {
-      return NextResponse.json(
-        { error: token ? 'invalid-token' : 'token-required' },
-        { status: 403 },
-      );
-    }
-    const result = await updateConfig(parsed.backends);
-    if (!result.ok) {
-      return NextResponse.json({ error: result.error }, { status: 400 });
-    }
-    // The owner just proved these addresses — seed the failover cache.
-    seedWorkingCache(parsed.backends);
-    return NextResponse.json({ ok: true, mode: 'owner-update' });
+    // Re-probe what was just saved (plugin put_config → refresh_effective):
+    // the effective address is latency-elected from real probes, not seeded
+    // blindly.
+    const { effective, switched } = await refreshEffective(Object.keys(parsed.backends) as BackendName[]);
+    return NextResponse.json({ ok: true, mode: 'update', effective, switched });
   }
 
   // Pre-login one-shot: token-gated, only while no config exists.
@@ -175,9 +172,10 @@ export async function POST(request: NextRequest) {
   if (!result.ok) {
     return NextResponse.json({ error: result.error }, { status: 400 });
   }
-  // The user just proved these addresses — seed the failover working cache.
-  seedWorkingCache(parsed.backends);
-  return NextResponse.json({ ok: true, mode: 'first-launch' });
+  // Re-probe the fresh config so the effective cache is honest from the
+  // first request (replaces the old blind first-address seed).
+  const { effective, switched } = await refreshEffective(Object.keys(parsed.backends) as BackendName[]);
+  return NextResponse.json({ ok: true, mode: 'first-launch', effective, switched });
 }
 
 async function verifySetupToken(token: string): Promise<boolean> {
@@ -185,11 +183,4 @@ async function verifySetupToken(token: string): Promise<boolean> {
   const a = Buffer.from(token);
   const b = Buffer.from(expected);
   return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
-
-function seedWorkingCache(backends: Partial<Record<BackendName, BackendAddrs>>): void {
-  for (const [name, addrs] of Object.entries(backends)) {
-    const first = addrs?.internal || addrs?.external;
-    if (first) markWorking(name as BackendName, first);
-  }
 }

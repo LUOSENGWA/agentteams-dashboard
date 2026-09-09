@@ -10,7 +10,7 @@
 // can never be reached again from a logged-out browser (level-3 session
 // updates go through the settings dialog, F1b).
 import { useCallback, useEffect, useState } from 'react';
-import { CheckCircle2, Loader2, RefreshCw, XCircle } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, XCircle } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -41,6 +41,7 @@ type TestState =
   | { status: 'idle' }
   | { status: 'testing' }
   | { status: 'ok'; detail: string }
+  | { status: 'auth'; detail: string }
   | { status: 'fail'; detail: string };
 
 const EMPTY_TEST: TestState = { status: 'idle' };
@@ -101,37 +102,65 @@ export function BackendSetupPage({ onDone }: { onDone: () => void }) {
     setTests((prev) => ({ ...prev, [`${name}:${slot}`]: EMPTY_TEST }));
   };
 
-  const runTest = useCallback(async (name: BackendName, slot: 'internal' | 'external') => {
-    const url = addrs[name][slot].trim();
-    if (!url) return;
-    const key = `${name}:${slot}`;
-    setTests((prev) => ({ ...prev, [key]: { status: 'testing' } }));
-    try {
-      const res = await fetch(apiUrl('/api/agentteams/setup/backends/test'), {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ backend: name, url }),
-      });
-      const data = (await res.json().catch(() => ({}))) as {
-        ok?: boolean;
-        status?: number;
-        latencyMs?: number;
-        error?: string;
-      };
+  // F1c: one test per backend — probes the filled slots together (plugin
+  // config_test parity): per-address rows in the two-layer model (✅ usable /
+  // ⚠️ connected but needs auth / ❌ classified error).
+  const runTest = useCallback(
+    async (name: BackendName) => {
+      const internal = addrs[name].internal.trim();
+      const external = addrs[name].external.trim();
+      if (!internal && !external) return;
+      const filled = [
+        { slot: 'internal' as const, url: internal },
+        { slot: 'external' as const, url: external },
+      ].filter((e) => e.url !== '');
       setTests((prev) => ({
         ...prev,
-        [key]: data.ok
-          ? { status: 'ok', detail: `HTTP ${data.status} · ${data.latencyMs}ms` }
-          : { status: 'fail', detail: data.error || `HTTP ${data.status}` },
+        ...Object.fromEntries(filled.map((e) => [`${name}:${e.slot}`, { status: 'testing' as const }])),
       }));
-    } catch (err) {
-      setTests((prev) => ({
-        ...prev,
-        [key]: { status: 'fail', detail: err instanceof Error ? err.message : '测试请求失败' },
-      }));
-    }
-  }, [addrs]);
+      try {
+        const res = await fetch(apiUrl('/api/agentteams/setup/backends/test'), {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            backends: { [name]: { internal: internal || undefined, external: external || undefined } },
+          }),
+        });
+        const data = (await res.json().catch(() => null)) as {
+          results?: Record<string, Array<{ url: string; ok: boolean; httpOk: boolean; ms: number | null; detail: string }>>;
+        } | null;
+        const rows = data?.results?.[name] ?? [];
+        setTests((prev) => {
+          const next = { ...prev };
+          for (const { slot, url } of filled) {
+            const row = rows.find((r) => r.url === url);
+            if (!row) {
+              next[`${name}:${slot}`] = { status: 'fail', detail: '无测试结果' };
+              continue;
+            }
+            if (row.ok && row.httpOk) {
+              next[`${name}:${slot}`] = { status: 'ok', detail: `${row.ms ?? '-'}ms · ${row.detail}` };
+            } else if (row.ok) {
+              next[`${name}:${slot}`] = {
+                status: row.detail.includes('需鉴权') ? 'auth' : 'fail',
+                detail: row.detail,
+              };
+            } else {
+              next[`${name}:${slot}`] = { status: 'fail', detail: row.detail };
+            }
+          }
+          return next;
+        });
+      } catch (err) {
+        setTests((prev) => ({
+          ...prev,
+          ...Object.fromEntries(filled.map((e) => [`${name}:${e.slot}`, { status: 'fail' as const, detail: err instanceof Error ? err.message : '测试请求失败' }])),
+        }));
+      }
+    },
+    [addrs],
+  );
 
   const applyEmbeddedDefaults = () => {
     setAddrs(
@@ -214,6 +243,7 @@ export function BackendSetupPage({ onDone }: { onDone: () => void }) {
           <CardDescription>
             Dashboard 还没有可用的后端地址。填写后保存即可登录；配置保存在挂载卷中，重启不丢失。
             每个后端可只填一个地址；「内网」= 容器/集群网络，「外网」= 跨网段备用（自动切换）。
+            「测试」一次验证该后端填写的全部地址（✅ 可用 / ⚠️ 已连通需鉴权 / ❌ 不可达，含原因分类）。
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
@@ -227,65 +257,74 @@ export function BackendSetupPage({ onDone }: { onDone: () => void }) {
           )}
 
           <div className="space-y-4">
-            {BACKEND_NAMES.map((name) => (
-              <div key={name} className="rounded-md border p-3">
-                <div className="mb-2 flex items-center gap-2 text-sm font-medium">
-                  {BACKEND_LABELS[name]}
-                  {REQUIRED_BACKENDS.includes(name) && (
-                    <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
-                      必需
-                    </span>
-                  )}
-                </div>
-                <div className="grid gap-3 md:grid-cols-2">
-                  {(['internal', 'external'] as const).map((slot) => {
-                    const key = `${name}:${slot}`;
-                    const test = tests[key] ?? EMPTY_TEST;
-                    return (
-                      <div key={slot} className="space-y-1">
-                        <div className="flex items-center justify-between text-xs text-muted-foreground">
-                          <span>{slot === 'internal' ? '内网地址' : '外网地址（备用）'}</span>
-                          <span className="inline-flex items-center gap-1">
-                            {test.status === 'ok' && (
-                              <>
-                                <CheckCircle2 className="size-3.5 text-green-600" />
-                                {test.detail}
-                              </>
-                            )}
-                            {test.status === 'fail' && (
-                              <>
-                                <XCircle className="size-3.5 text-red-600" />
-                                {test.detail}
-                              </>
-                            )}
-                          </span>
-                        </div>
-                        <div className="flex gap-2">
+            {BACKEND_NAMES.map((name) => {
+              const hasAny = !!(addrs[name].internal.trim() || addrs[name].external.trim());
+              const isTesting = ['internal', 'external'].some(
+                (slot) => (tests[`${name}:${slot}`] ?? EMPTY_TEST).status === 'testing',
+              );
+              return (
+                <div key={name} className="rounded-md border p-3">
+                  <div className="mb-2 flex items-center gap-2 text-sm font-medium">
+                    {BACKEND_LABELS[name]}
+                    {REQUIRED_BACKENDS.includes(name) && (
+                      <span className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground">
+                        必需
+                      </span>
+                    )}
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      className="ml-auto h-7 text-xs"
+                      disabled={!hasAny || isTesting}
+                      onClick={() => runTest(name)}
+                    >
+                      {isTesting ? <Loader2 className="size-3.5 animate-spin" /> : '测试'}
+                    </Button>
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    {(['internal', 'external'] as const).map((slot) => {
+                      const key = `${name}:${slot}`;
+                      const test = tests[key] ?? EMPTY_TEST;
+                      return (
+                        <div key={slot} className="space-y-1">
+                          <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                            <span className="shrink-0">{slot === 'internal' ? '内网地址' : '外网地址（备用）'}</span>
+                            <span className="inline-flex items-center gap-1 min-w-0">
+                              {test.status === 'ok' && (
+                                <>
+                                  <CheckCircle2 className="size-3.5 text-green-600 shrink-0" />
+                                  <span className="truncate">{test.detail}</span>
+                                </>
+                              )}
+                              {test.status === 'auth' && (
+                                <>
+                                  <AlertTriangle className="size-3.5 text-amber-500 shrink-0" />
+                                  <span className="truncate">{test.detail}</span>
+                                </>
+                              )}
+                              {test.status === 'fail' && (
+                                <>
+                                  <XCircle className="size-3.5 text-red-600 shrink-0" />
+                                  <span className="truncate max-w-56" title={test.detail}>
+                                    {test.detail}
+                                  </span>
+                                </>
+                              )}
+                            </span>
+                          </div>
                           <Input
                             value={addrs[name][slot]}
                             onChange={(e) => setSlot(name, slot, e.target.value)}
                             placeholder="http://host:port"
                             spellCheck={false}
                           />
-                          <Button
-                            size="sm"
-                            variant="outline"
-                            disabled={!addrs[name][slot].trim() || test.status === 'testing'}
-                            onClick={() => runTest(name, slot)}
-                          >
-                            {test.status === 'testing' ? (
-                              <Loader2 className="size-4 animate-spin" />
-                            ) : (
-                              '测试'
-                            )}
-                          </Button>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
 
           <div className="space-y-1">

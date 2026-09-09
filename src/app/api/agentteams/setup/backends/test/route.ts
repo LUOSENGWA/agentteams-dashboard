@@ -1,53 +1,112 @@
-// POST /api/agentteams/setup/backends/test — server-side probe of a
-// user-supplied backend URL from the setup UI ("test connection" button).
-//
-// Public (pre-login) by design: this is the first-launch self-configuration
-// flow. SSRF filter = DASHBOARD_ALLOWED_HOSTS (comma-separated hosts; empty
-// = allow, which is fine for a local self-config tool — set it to pin
-// targets in hardened deployments).
 import { NextRequest, NextResponse } from 'next/server';
 import {
   BACKEND_NAMES,
-  forgetWorking,
+  backendCandidatesSync,
+  effectiveUrl,
   isHttpUrl,
   isTestTargetAllowed,
-  markWorking,
+  listMatchesSaved,
   probeBackend,
+  selectAndMark,
+  toProbeRow,
   type BackendName,
+  type ProbeRow,
 } from '@/lib/backend-config';
 
+// POST /api/agentteams/setup/backends/test — server-side connectivity test.
+//
+// Plugin /config_test semantics (F1c parity):
+// - body { backends: { [name]: { internal?, external? } } } = test the DRAFT
+//   (unsaved form values) for the given backends; omit/empty = test the
+//   currently configured candidate list.
+// - A draft test NEVER touches the effective cache; only when the tested
+//   list equals the SAVED config list (applied) does selectAndMark re-elect.
+// - A failed test NEVER clears the current effective address.
+// - Rows carry the two-layer model: ok = network connected (401/403 count),
+//   httpOk = status < 400 (only these are election-eligible).
+//
+// Public (pre-login) by design — the first-launch setup page tests before
+// any session exists. SSRF surface pinned by DASHBOARD_ALLOWED_HOSTS.
+
+type DraftAddrs = { internal?: string; external?: string };
+
+function parseDrafts(body: unknown): Partial<Record<BackendName, DraftAddrs>> | null {
+  if (body == null) return {};
+  if (typeof body !== 'object') return null;
+  const raw = (body as { backends?: unknown }).backends;
+  if (raw == null) return {};
+  if (typeof raw !== 'object') return null;
+  const out: Partial<Record<BackendName, DraftAddrs>> = {};
+  for (const name of BACKEND_NAMES) {
+    const entry = (raw as Record<string, unknown>)[name];
+    if (!entry || typeof entry !== 'object') continue;
+    const addrs: DraftAddrs = {};
+    if (isHttpUrl((entry as DraftAddrs).internal)) addrs.internal = (entry as DraftAddrs).internal!.trim();
+    if (isHttpUrl((entry as DraftAddrs).external)) addrs.external = (entry as DraftAddrs).external!.trim();
+    if (addrs.internal || addrs.external) out[name] = addrs;
+  }
+  return out;
+}
+
 export async function POST(request: NextRequest) {
-  const body = (await request.json().catch(() => null)) as {
-    backend?: unknown;
-    url?: unknown;
-  } | null;
-
-  const backend = body?.backend;
-  const url = body?.url;
-  if (
-    typeof backend !== 'string' ||
-    !BACKEND_NAMES.includes(backend as BackendName) ||
-    typeof url !== 'string' ||
-    !isHttpUrl(url)
-  ) {
-    return NextResponse.json({ error: 'invalid-request' }, { status: 400 });
-  }
-  const name = backend as BackendName;
-  const target = url.trim();
-
-  if (!isTestTargetAllowed(target)) {
-    return NextResponse.json({ error: 'host-not-allowed' }, { status: 403 });
+  const body = (await request.json().catch(() => null)) as unknown;
+  const drafts = parseDrafts(body);
+  if (drafts === null) {
+    return NextResponse.json({ ok: false, error: 'invalid-request' }, { status: 400 });
   }
 
-  const result = await probeBackend(name, target);
-  // A successful explicit test records the address as working (user intent);
-  // a failed test does NOT clear an existing working entry — the user may
-  // have been testing an alternative that is down while the current one is
-  // fine.
-  if (result.ok) {
-    markWorking(name, target);
-  } else if (result.error === 'timeout' || result.error === 'fetch failed') {
-    forgetWorking(name);
+  // Targets: draft values where provided, otherwise the configured list.
+  const targets: Partial<Record<BackendName, string[]>> = {};
+  for (const name of BACKEND_NAMES) {
+    const draft = drafts[name];
+    const fromDraft = draft ? [draft.internal, draft.external].filter((v): v is string => !!v) : [];
+    const urls = fromDraft.length > 0 ? fromDraft : backendCandidatesSync(name);
+    if (urls.length > 0) targets[name] = urls;
   }
-  return NextResponse.json(result);
+  if (Object.keys(targets).length === 0) {
+    return NextResponse.json(
+      { ok: false, error: 'nothing-to-test', message: 'no addresses provided or configured' },
+      { status: 400 },
+    );
+  }
+
+  // SSRF filter: reject the whole request if any target is disallowed.
+  for (const name of Object.keys(targets) as BackendName[]) {
+    for (const url of targets[name]!) {
+      if (!isTestTargetAllowed(url)) {
+        return NextResponse.json({ ok: false, error: 'host-not-allowed', url }, { status: 403 });
+      }
+    }
+  }
+
+  const results: Partial<Record<BackendName, ProbeRow[]>> = {};
+  const switched: Partial<Record<BackendName, boolean>> = {};
+  let applied = false;
+
+  await Promise.all(
+    (Object.keys(targets) as BackendName[]).map(async (name) => {
+      const urls = targets[name]!;
+      const probeResults = await Promise.all(urls.map((url) => probeBackend(name, url, 6000)));
+      const rows = urls.map((url, i) => toProbeRow(url, probeResults[i]));
+      results[name] = rows;
+
+      // Effective-cache update is APPLIED-ONLY (plugin config_test): a draft
+      // test must never rewrite the working address; a failed probe never
+      // clears it (selectAndMark returns null when nobody is eligible).
+      if (listMatchesSaved(name, urls)) {
+        const prev = effectiveUrl(name);
+        const picked = selectAndMark(name, rows);
+        applied = true;
+        if (picked && prev && prev !== picked) switched[name] = true;
+      }
+    }),
+  );
+
+  const effective: Partial<Record<BackendName, string>> = {};
+  for (const name of Object.keys(targets) as BackendName[]) {
+    const url = effectiveUrl(name);
+    if (url) effective[name] = url;
+  }
+
+  return NextResponse.json({ ok: true, results, effective, applied, switched });
 }

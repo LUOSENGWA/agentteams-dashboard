@@ -1,9 +1,15 @@
 // Shared proxy helper for AgentTeams API routes
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest } from '@/lib/dashboard-session';
-import { pickBackendUrl } from '@/lib/backend-config';
+import { markWorking, orderedCandidates, pickBackendUrl } from '@/lib/backend-config';
 
 const TIMEOUT_MS = 10000;
+// Request-layer failover (plugin catch-all parity): a transport error retries
+// the SAME address once after this backoff before walking to the next
+// candidate. An HTTP response — including 4xx/5xx — means the address is up
+// and is returned as-is (never retried); only status < 400 marks it working.
+const SAME_ADDRESS_RETRY_MS = 300;
+const SAME_ADDRESS_RETRIES = 1;
 
 // Allowed controller URL hosts to prevent SSRF (only applies to user-supplied ?controllerUrl=)
 // In production/k3s mode the env var AGENTTEAMS_CONTROLLER_URL is authoritative.
@@ -51,43 +57,58 @@ function getDefaultControllerUrl(): string {
   return process.env.AGENTTEAMS_API_URL || 'http://agentteams-controller:8090';
 }
 
-export function getControllerUrl(request: NextRequest): string {
-  const defaultUrl = getDefaultControllerUrl();
+/** A valid ?controllerUrl= override for this request (L1 / pre-login,
+ * SSRF-checked), or null when absent / invalid / not allowed.
+ *
+ * F1b: the per-request override is L1-only. An L2 (own-scope, Matrix
+ * credential) session must always hit the deployment-configured controller so
+ * the A2 self-scope chain and audit attribution stay intact — a redirected
+ * request would land on a controller that has no notion of this user's scope.
+ * Pre-login requests (login flow, public setup endpoints) keep the override
+ * behind the SSRF allowlist as before. Level 3 sessions are exactly the
+ * admin-credential sessions ('sa' / 'controller-token' — see the login
+ * route's credential selection).
+ */
+export function getControllerOverride(request: NextRequest): string | null {
   const url = request.nextUrl.searchParams.get('controllerUrl');
-  if (url) {
-    // F1b: the per-request override is L1-only. An L2 (own-scope, Matrix
-    // credential) session must always hit the deployment-configured
-    // controller so the A2 self-scope chain and audit attribution stay
-    // intact — a redirected request would land on a controller that has no
-    // notion of this user's scope. Pre-login requests (login flow, public
-    // setup endpoints) keep the override behind the SSRF allowlist as before.
-    // Level 3 sessions are exactly the admin-credential sessions ('sa' /
-    // 'controller-token' — see the login route's credential selection).
-    const session = getSessionFromRequest(request);
-    if (session && session.level < 3) {
-      return defaultUrl;
-    }
-    try {
-      const parsed = new URL(url);
-      if (!['http:', 'https:'].includes(parsed.protocol)) {
-        throw new Error('Invalid protocol');
-      }
-      if (
-        !ALLOWED_HOSTS.includes(parsed.hostname) &&
-        !parsed.hostname.endsWith('.svc') &&
-        !parsed.hostname.endsWith('.svc.cluster.local') &&
-        !parsed.hostname.endsWith('.cluster.local') &&
-        !parsed.hostname.endsWith('.local')
-      ) {
-        throw new Error('Host not allowed');
-      }
-    } catch {
-      // If validation fails, fall back to default
-      return defaultUrl;
+  if (!url) return null;
+  const session = getSessionFromRequest(request);
+  if (session && session.level < 3) return null;
+  try {
+    const parsed = new URL(url);
+    if (!['http:', 'https:'].includes(parsed.protocol)) return null;
+    if (
+      !ALLOWED_HOSTS.includes(parsed.hostname) &&
+      !parsed.hostname.endsWith('.svc') &&
+      !parsed.hostname.endsWith('.svc.cluster.local') &&
+      !parsed.hostname.endsWith('.cluster.local') &&
+      !parsed.hostname.endsWith('.local')
+    ) {
+      return null;
     }
     return url;
+  } catch {
+    return null;
   }
-  return defaultUrl;
+}
+
+export function getControllerUrl(request: NextRequest): string {
+  const override = getControllerOverride(request);
+  if (override) return override;
+  return getDefaultControllerUrl();
+}
+
+/**
+ * Failover target set for the proxy fetch loop (plugin catch-all parity):
+ * an explicit override pins a single address; otherwise the working-first
+ * candidate order (fresh working address → config internal → external → env).
+ */
+export function proxyTargets(request: NextRequest, primary: string): string[] {
+  const override = getControllerOverride(request);
+  if (override) return [override];
+  const candidates = orderedCandidates('controller');
+  if (primary && !candidates.includes(primary)) candidates.unshift(primary);
+  return candidates.length > 0 ? candidates : [primary];
 }
 
 export async function proxyToAgentTeams(
@@ -108,48 +129,46 @@ export async function proxyToAgentTeams(
   } = {}
 ): Promise<NextResponse> {
   const { method = request.method, forwardBody = true, contentType } = options;
-  const targetUrl = new URL(path, controllerUrl).toString();
+  // F1c: walk the candidate set instead of a single URL — a dead first
+  // candidate must never 502 the data plane (plugin catch-all parity).
+  const targets = proxyTargets(request, controllerUrl);
 
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+  const fetchOptions: RequestInit = {
+    method,
+    headers: {},
+  };
+
+  // Per-session Controller credential (M19 dual-track):
+  // - L2 session → the user's own Matrix access token, held in the
+  //   server-side session store (A2 chain scopes the request to the user's
+  //   teams; token never touches the browser).
+  // - L1 session / AUTH_DISABLED → the admin SA token.
+  // When a server-side credential exists, NEVER trust the browser-supplied
+  // Authorization header (token-injection protection, upstream #89). The
+  // browser header is only a fallback when no server-side credential exists
+  // at all (legacy dev setups).
+  const session = getSessionFromRequest(request);
+  const sessionToken =
+    session?.credential.kind === 'matrix' || session?.credential.kind === 'controller-token'
+      ? session.credential.token
+      : undefined;
+  const saToken = await getAuthToken();
+  const authToken = sessionToken || saToken || (
+    request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') || undefined
+  );
+  if (authToken) {
+    (fetchOptions.headers as Record<string, string>)['authorization'] = `Bearer ${authToken}`;
+  }
+
+  // Forward the server-resolved identity (set by middleware from the
+  // dashboard session) so the controller can attribute write actions to the
+  // right user without trusting browser-supplied headers.
+  for (const name of ['x-agentteams-user', 'x-agentteams-user-level']) {
+    const value = request.headers.get(name);
+    if (value) (fetchOptions.headers as Record<string, string>)[name] = value;
+  }
 
   try {
-    const fetchOptions: RequestInit = {
-      method,
-      signal: controller.signal,
-      headers: {},
-    };
-
-    // Per-session Controller credential (M19 dual-track):
-    // - L2 session → the user's own Matrix access token, held in the
-    //   server-side session store (A2 chain scopes the request to the user's
-    //   teams; token never touches the browser).
-    // - L1 session / AUTH_DISABLED → the admin SA token.
-    // When a server-side credential exists, NEVER trust the browser-supplied
-    // Authorization header (token-injection protection, upstream #89). The
-    // browser header is only a fallback when no server-side credential exists
-    // at all (legacy dev setups).
-    const session = getSessionFromRequest(request);
-    const sessionToken =
-      session?.credential.kind === 'matrix' || session?.credential.kind === 'controller-token'
-        ? session.credential.token
-        : undefined;
-    const saToken = await getAuthToken();
-    const authToken = sessionToken || saToken || (
-      request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') || undefined
-    );
-    if (authToken) {
-      (fetchOptions.headers as Record<string, string>)['authorization'] = `Bearer ${authToken}`;
-    }
-
-    // Forward the server-resolved identity (set by middleware from the
-    // dashboard session) so the controller can attribute write actions to the
-    // right user without trusting browser-supplied headers.
-    for (const name of ['x-agentteams-user', 'x-agentteams-user-level']) {
-      const value = request.headers.get(name);
-      if (value) (fetchOptions.headers as Record<string, string>)[name] = value;
-    }
-
     if (forwardBody && ['POST', 'PUT', 'PATCH'].includes(method)) {
       if (contentType === 'multipart/form-data') {
         // Forward multipart as-is (don't set Content-Type, let fetch handle boundary)
@@ -165,58 +184,103 @@ export async function proxyToAgentTeams(
         (fetchOptions.headers as Record<string, string>)['content-type'] = 'application/json';
       }
     }
-
-    const res = await fetch(targetUrl, fetchOptions);
-    clearTimeout(timeout);
-
-    // For 204 No Content
-    if (res.status === 204) {
-      return new NextResponse(null, { status: 204 });
-    }
-
-    if (options.stream && res.body) {
-      // Stream the binary body through without buffering (D15).
-      const responseHeaders = new Headers();
-      const resCT = res.headers.get('content-type');
-      if (resCT) responseHeaders.set('content-type', resCT);
-      for (const name of options.passthroughHeaders ?? []) {
-        const value = res.headers.get(name);
-        if (value) responseHeaders.set(name, value);
-      }
-      responseHeaders.set('cache-control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-      return new NextResponse(res.body, {
-        status: res.status,
-        headers: responseHeaders,
-      });
-    }
-
-    const data = await res.arrayBuffer();
-    const responseHeaders = new Headers();
-    const resCT = res.headers.get('content-type');
-    if (resCT) responseHeaders.set('content-type', resCT);
-    // Pass through any explicitly requested headers (e.g. content-disposition
-    // for artifact downloads so RFC 5987 filenames survive the proxy).
-    for (const name of options.passthroughHeaders ?? []) {
-      const value = res.headers.get(name);
-      if (value) responseHeaders.set(name, value);
-    }
-    // API responses should never be cached by the browser; stale cached JSON
-    // causes the dashboard to show outdated or empty data after restarts.
-    responseHeaders.set('cache-control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
-    responseHeaders.set('pragma', 'no-cache');
-    responseHeaders.set('expires', '0');
-
-    return new NextResponse(data, {
-      status: res.status,
-      headers: responseHeaders,
-    });
   } catch (err: unknown) {
-    clearTimeout(timeout);
-    const message = err instanceof Error && err.name === 'AbortError'
-      ? 'Request timeout'
-      : err instanceof Error
-        ? err.message
-        : 'Unknown error';
+    const message = err instanceof Error ? err.message : 'Failed to read request body';
     return NextResponse.json({ error: message }, { status: 502 });
   }
+
+  // Failover loop: for each candidate address, try up to SAME_ADDRESS_RETRIES
+  // extra times on the SAME address (300ms backoff) before walking on. An HTTP
+  // response — any status — means the address is up: return it as-is.
+  const failures: Array<{ url: string; error: string }> = [];
+  for (const target of targets) {
+    let targetUrl: string;
+    try {
+      targetUrl = new URL(path, target).toString();
+    } catch {
+      failures.push({ url: target, error: 'invalid controller URL' });
+      continue;
+    }
+    for (let attempt = 0; attempt <= SAME_ADDRESS_RETRIES; attempt++) {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), TIMEOUT_MS);
+      try {
+        const res = await fetch(targetUrl, { ...fetchOptions, signal: controller.signal });
+        clearTimeout(timeout);
+        if (res.status < 400) markWorking('controller', target);
+
+        // For 204 No Content
+        if (res.status === 204) {
+          return new NextResponse(null, { status: 204 });
+        }
+
+        if (options.stream && res.body) {
+          // Stream the binary body through without buffering (D15).
+          const responseHeaders = new Headers();
+          const resCT = res.headers.get('content-type');
+          if (resCT) responseHeaders.set('content-type', resCT);
+          for (const name of options.passthroughHeaders ?? []) {
+            const value = res.headers.get(name);
+            if (value) responseHeaders.set(name, value);
+          }
+          responseHeaders.set('cache-control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+          return new NextResponse(res.body, {
+            status: res.status,
+            headers: responseHeaders,
+          });
+        }
+
+        const data = await res.arrayBuffer();
+        const responseHeaders = new Headers();
+        const resCT = res.headers.get('content-type');
+        if (resCT) responseHeaders.set('content-type', resCT);
+        // Pass through any explicitly requested headers (e.g. content-disposition
+        // for artifact downloads so RFC 5987 filenames survive the proxy).
+        for (const name of options.passthroughHeaders ?? []) {
+          const value = res.headers.get(name);
+          if (value) responseHeaders.set(name, value);
+        }
+        // API responses should never be cached by the browser; stale cached
+        // JSON causes the dashboard to show outdated or empty data.
+        responseHeaders.set('cache-control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
+        responseHeaders.set('pragma', 'no-cache');
+        responseHeaders.set('expires', '0');
+
+        return new NextResponse(data, {
+          status: res.status,
+          headers: responseHeaders,
+        });
+      } catch (err: unknown) {
+        clearTimeout(timeout);
+        if (attempt < SAME_ADDRESS_RETRIES) {
+          // Same-address retry first (plugin catch-all): a one-off blip on
+          // this address should not force a switch to the other network.
+          await new Promise((resolve) => setTimeout(resolve, SAME_ADDRESS_RETRY_MS));
+          continue;
+        }
+        failures.push({
+          url: target,
+          error:
+            err instanceof Error && err.name === 'AbortError'
+              ? `timeout after ${TIMEOUT_MS}ms`
+              : err instanceof Error
+                ? err.message
+                : 'unknown error',
+        });
+        break;
+      }
+    }
+  }
+
+  console.error(
+    `[dashboard] controller failover exhausted (${targets.length} address(es))`,
+    JSON.stringify(failures),
+  );
+  return NextResponse.json(
+    {
+      error: `后端地址全部不可达 (all ${targets.length} backend address(es) unreachable)`,
+      details: failures,
+    },
+    { status: 502 },
+  );
 }

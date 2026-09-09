@@ -1,34 +1,40 @@
 'use client';
 
-// Settings > 后端 tab (F1b): the server-side backend address config that
-// the first-launch setup page writes (F1a), editable after login.
+// Settings > 后端 tab (F1b + F1c): the server-side backend address config.
 //
-// Visible to ALL logged-in users; save permissions follow the server:
-//   - L1 (level 3, admin): save directly, no token.
-//   - L2 (level < 3): save requires the first-launch setup token — the
-//     standalone instance owner (who typically logs in via the Matrix
-//     track) keeps editing rights via that owner credential, while a peer
-//     L2 in a multi-user deployment cannot shadow the env config.
-//     The token is shown once at first launch (docker logs) and persists
-//     in the .setup-token file next to the config. It is never stored
-//     client-side — cleared from the input after each save.
+// Plugin parity (F1c, decided 9/9 — deployment model is one instance per
+// user, no shared instances): ANY logged-in user (L1 or L2) can view, test
+// and SAVE the backend config — exactly like the plugin's config page, which
+// is open to whoever uses the host. There is no owner token for saving; the
+// first-launch token only gates the PRE-LOGIN setup page (the dashboard's
+// install-method difference). SSRF surface of user-supplied addresses stays
+// pinned server-side by DASHBOARD_ALLOWED_HOSTS.
 //
-// - Reads GET /api/agentteams/setup/backends — the `config` field
-//   (structured internal/external per backend) is returned to any
-//   authenticated session.
-// - Per-field "测试" button → POST /api/agentteams/setup/backends/test
-//   (server-side probe; a pass also seeds the failover working cache).
-// - 保存 → POST /api/agentteams/setup/backends (L1 path, or owner path
-//   with token). Empty fields are omitted; the server rejects a payload
-//   with no address at all ("at least one address is required").
+// - GET /api/agentteams/setup/backends → config (internal/external per
+//   backend) + effective (working cache) for the "在生效" badge.
+// - Per-backend "测试" → POST .../backends/test with the FORM values (draft):
+//   the server probes each address (parallel, one retry) and returns rows in
+//   the plugin's two-layer model — ✅ connected & usable (ms) / ⚠️ connected
+//   but needs auth (401/403) / ❌ classified error (DNS / refused / timeout /
+//   TLS 握手 / TLS 证书 / 连接失败). Draft tests never touch the effective
+//   cache; a failed test never clears it.
+// - 保存 → POST .../backends (no token). The server re-probes what was saved
+//   and returns effective/switched; the tab then auto-runs a test on the
+//   saved list (plugin "保存后自动测一次") and shows the switch banner.
 //
 // Resolution priority (documented for the user): config file > env vars >
-// embedded defaults; the last-known-working candidate (probe TTL) wins.
+// embedded defaults. The background re-rank loop re-probes backends with
+// >= 2 addresses every 30s/120s/300s (adaptive) and latency-elected the
+// fastest reachable one (debounce: must be > 100ms AND > 30% faster); the
+// request layer additionally walks the candidates with a same-address retry,
+// so switching between internal/external networks is automatic.
 import { useCallback, useEffect, useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import {
+  AlertTriangle,
   CheckCircle2,
   Loader2,
+  RefreshCw,
   Save,
   Server,
   XCircle,
@@ -39,7 +45,6 @@ import { Label } from '@/components/ui/label';
 import { Badge } from '@/components/ui/badge';
 import { apiUrl } from '@/lib/api-base';
 import { BACKEND_LABELS, BACKEND_NAMES, REQUIRED_BACKENDS } from '@/lib/backend-names';
-import { useAgentTeamsStore } from '@/lib/agentteams-store';
 
 interface BackendAddrs {
   internal?: string;
@@ -50,16 +55,16 @@ interface BackendsState {
   configured: boolean;
   backends: Record<string, { configured: boolean; candidates: string[] }>;
   config?: Record<string, BackendAddrs>;
+  effective?: Record<string, string>;
 }
 
-interface TestOutcome {
+interface TestRow {
+  url: string;
   ok: boolean;
-  latencyMs?: number;
-  status?: number;
-  error?: string;
+  httpOk: boolean;
+  ms: number | null;
+  detail: string;
 }
-
-type TestKey = string; // `${backend}:${slot}`
 
 function initialFields(config: Record<string, BackendAddrs> | undefined) {
   const out: Record<string, { internal: string; external: string }> = {};
@@ -72,20 +77,23 @@ function initialFields(config: Record<string, BackendAddrs> | undefined) {
   return out;
 }
 
+function RowIcon({ row }: { row: TestRow }) {
+  if (row.ok && row.httpOk) return <CheckCircle2 className="w-3 h-3 text-emerald-600 shrink-0" />;
+  if (row.ok) return <AlertTriangle className="w-3 h-3 text-amber-500 shrink-0" />;
+  return <XCircle className="w-3 h-3 text-red-600 shrink-0" />;
+}
+
 export function BackendTab() {
   const queryClient = useQueryClient();
-  const { userLevel } = useAgentTeamsStore();
-  const isL1 = userLevel >= 3;
   const [state, setState] = useState<BackendsState | null>(null);
   const [loading, setLoading] = useState(true);
   const [fields, setFields] = useState<Record<string, { internal: string; external: string }>>({});
-  const [tests, setTests] = useState<Record<TestKey, TestOutcome | 'running'>>({});
+  const [rows, setRows] = useState<Record<string, TestRow[]>>({});
+  const [testing, setTesting] = useState<Record<string, boolean>>({});
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  // L2-only: first-launch setup token (owner credential). Never persisted
-  // client-side; cleared after each save.
-  const [setupToken, setSetupToken] = useState('');
+  const [banner, setBanner] = useState<{ switched: string[]; unchanged: string[] } | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -93,7 +101,7 @@ export function BackendTab() {
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as BackendsState;
       setState(data);
-      setFields(initialFields(data.config));
+      setFields((prev) => (Object.keys(prev).length > 0 ? prev : initialFields(data.config)));
     } finally {
       setLoading(false);
     }
@@ -107,62 +115,96 @@ export function BackendTab() {
     setFields((prev) => ({ ...prev, [backend]: { ...prev[backend], [slot]: value } }));
     setSaved(false);
     setSaveError(null);
+    setBanner(null);
+    setRows((prev) => {
+      const rest = { ...prev };
+      delete rest[backend];
+      return rest;
+    });
   };
 
-  const handleTest = async (backend: string, slot: 'internal' | 'external') => {
-    const url = (fields[backend]?.[slot] ?? '').trim();
-    const key: TestKey = `${backend}:${slot}`;
-    if (!url) {
-      setTests((prev) => ({ ...prev, [key]: { ok: false, error: '请先填写地址' } }));
-      return;
-    }
-    setTests((prev) => ({ ...prev, [key]: 'running' }));
-    try {
-      const res = await fetch(apiUrl('/api/agentteams/setup/backends/test/'), {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ backend, url }),
-      });
-      const data = (await res.json()) as TestOutcome & { error?: string };
-      setTests((prev) => ({ ...prev, [key]: { ok: res.ok && data.ok, latencyMs: data.latencyMs, status: data.status, error: res.ok ? data.error : `HTTP ${res.status}` } }));
-    } catch {
-      setTests((prev) => ({ ...prev, [key]: { ok: false, error: '测试请求失败' } }));
-    }
+  const runTest = useCallback(
+    async (backends: Record<string, { internal: string; external: string }>) => {
+      const payload: Record<string, BackendAddrs> = {};
+      for (const [name, addrs] of Object.entries(backends)) {
+        const internal = addrs.internal?.trim() ?? '';
+        const external = addrs.external?.trim() ?? '';
+        if (internal || external) {
+          payload[name] = { ...(internal ? { internal } : {}), ...(external ? { external } : {}) };
+        }
+      }
+      if (Object.keys(payload).length === 0) return;
+      setTesting(Object.fromEntries(Object.keys(payload).map((n) => [n, true])));
+      try {
+        const res = await fetch(apiUrl('/api/agentteams/setup/backends/test/'), {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ backends: payload }),
+        });
+        const data = (await res.json().catch(() => null)) as {
+          results?: Record<string, TestRow[]>;
+        } | null;
+        if (data?.results) {
+          setRows((prev) => ({ ...prev, ...data.results }));
+          setSaved(true);
+          setSaveError(null);
+        }
+      } finally {
+        setTesting((prev) => {
+          const next = { ...prev };
+          for (const n of Object.keys(payload)) next[n] = false;
+          return next;
+        });
+      }
+    },
+    [],
+  );
+
+  const handleTestBackend = (name: string) => {
+    if (!fields[name]) return;
+    void runTest({ [name]: fields[name] });
   };
 
   const handleSave = async () => {
-    const tokenValue = isL1 ? '' : setupToken.trim();
-    if (!isL1 && !tokenValue) {
-      setSaveError('非管理员保存需填写首次配置 token（首启时 docker logs 打印，或 .setup-token 文件）');
-      return;
-    }
     setSaving(true);
     setSaved(false);
     setSaveError(null);
+    setBanner(null);
     try {
-      const backends: Record<string, BackendAddrs> = {};
+      const backends: Record<string, { internal: string; external: string }> = {};
       for (const name of BACKEND_NAMES) {
         const internal = (fields[name]?.internal ?? '').trim();
         const external = (fields[name]?.external ?? '').trim();
-        if (internal || external) {
-          backends[name] = { ...(internal ? { internal } : {}), ...(external ? { external } : {}) };
-        }
+        if (internal || external) backends[name] = { internal, external };
       }
       const res = await fetch(apiUrl('/api/agentteams/setup/backends/'), {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(isL1 ? { backends } : { backends, token: tokenValue }),
+        body: JSON.stringify({ backends }),
       });
-      const data = (await res.json()) as { ok?: boolean; error?: string };
-      if (res.ok && data.ok) {
+      const data = (await res.json().catch(() => null)) as {
+        ok?: boolean;
+        error?: string;
+        effective?: Record<string, string>;
+        switched?: Record<string, boolean>;
+      } | null;
+      if (res.ok && data?.ok) {
         setSaved(true);
-        if (!isL1) setSetupToken(''); // never keep the token in the input
         await load();
-        // The overview infrastructure panel re-resolves per request; just
-        // nudge it so the health tiles reflect the new addresses promptly.
+        // The overview infrastructure panel re-resolves per request; nudge it
+        // so the health tiles reflect the new addresses promptly.
         void queryClient.invalidateQueries({ queryKey: ['agentteams-infrastructure'] });
+        // Plugin parity: auto-test the saved list once after saving.
+        void runTest(backends);
+        const switchedNames: string[] = [];
+        const unchangedNames: string[] = [];
+        for (const name of Object.keys(backends)) {
+          if (data.switched?.[name]) switchedNames.push(BACKEND_LABELS[name]);
+          else if (data.effective?.[name]) unchangedNames.push(BACKEND_LABELS[name]);
+        }
+        setBanner({ switched: switchedNames, unchanged: unchangedNames });
       } else {
-        setSaveError(data.error === 'invalid-token' ? 'token 不正确' : data.error ?? `HTTP ${res.status}`);
+        setSaveError(data?.error ?? `保存失败（HTTP ${res.status}）`);
       }
     } catch {
       setSaveError('保存请求失败');
@@ -180,22 +222,42 @@ export function BackendTab() {
     );
   }
 
+  const effective = state.effective ?? {};
+
   return (
     <div className="space-y-5">
       <p className="text-xs text-muted-foreground leading-relaxed">
         地址保存在服务端配置文件（<code className="font-mono">DASHBOARD_CONFIG_FILE</code>，数据卷上），保存后立即生效。
-        解析优先级：本配置 &gt; 环境变量 &gt; 内置默认；某地址探活失败后 60 秒内自动切到另一可用候选（内网/外网 failover）。
-        {!isL1 && (
-          <span className="block mt-1">
-            当前身份非管理员：查看/测试可用，<b>保存需首次配置 token</b>（首启时 <code className="font-mono">docker logs</code> 打印一次，或配置同目录 <code className="font-mono">.setup-token</code> 文件）。
-          </span>
-        )}
+        解析优先级：本配置 &gt; 环境变量 &gt; 内置默认。
+        <span className="block mt-1">
+          有 ≥2 个地址的后端每 2 分钟自动重测、切到最快可达的（防抖：需快 100ms 且快 30% 以上才切）；
+          切换内/外网期间请求自动逐候选重试，不会掉。测试未保存的草稿不影响生效地址，测试失败也不会清掉当前生效地址。
+        </span>
       </p>
+
+      {banner && (
+        <div className="space-y-1 rounded-lg border px-3 py-2 text-xs">
+          {banner.switched.map((label) => (
+            <div key={`s-${label}`} className="flex items-center gap-1.5 text-emerald-600">
+              <RefreshCw className="w-3 h-3" />
+              {label}：已切换到最快可达地址
+            </div>
+          ))}
+          {banner.unchanged.map((label) => (
+            <div key={`u-${label}`} className="flex items-center gap-1.5 text-muted-foreground">
+              <CheckCircle2 className="w-3 h-3" />
+              {label}：当前生效地址已是最快，保持不变
+            </div>
+          ))}
+        </div>
+      )}
 
       {BACKEND_NAMES.map((name) => {
         const candidates = state.backends[name]?.candidates ?? [];
         const required = REQUIRED_BACKENDS.includes(name);
         const missingRequired = required && candidates.length === 0;
+        const isTesting = !!testing[name];
+        const hasAny = !!(fields[name]?.internal?.trim() || fields[name]?.external?.trim());
         return (
           <div key={name} className="space-y-1.5 rounded-lg border p-3">
             <div className="flex items-center gap-2">
@@ -206,75 +268,56 @@ export function BackendTab() {
                   无可用地址（影响登录/数据面）
                 </Badge>
               )}
+              <Button
+                variant="outline"
+                size="sm"
+                className="ml-auto h-7 text-xs"
+                onClick={() => handleTestBackend(name)}
+                disabled={isTesting || !hasAny}
+              >
+                {isTesting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : '测试'}
+              </Button>
             </div>
-            {(['internal', 'external'] as const).map((slot) => {
-              const key: TestKey = `${name}:${slot}`;
-              const test = tests[key];
-              return (
-                <div key={slot} className="flex items-center gap-2 pl-5">
-                  <span className="w-14 text-xs text-muted-foreground shrink-0">
-                    {slot === 'internal' ? '内网' : '外网'}
-                  </span>
-                  <Input
-                    value={fields[name]?.[slot] ?? ''}
-                    onChange={(e) => setField(name, slot, e.target.value)}
-                    placeholder="http://host:port（可选，留空=用 env/内置）"
-                    className="h-8 text-xs flex-1"
-                  />
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8 shrink-0"
-                    onClick={() => handleTest(name, slot)}
-                    disabled={test === 'running'}
-                  >
-                    {test === 'running' ? (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                    ) : (
-                      '测试'
-                    )}
-                  </Button>
-                  {test && test !== 'running' && (
-                    <span className="shrink-0">
-                      {test.ok ? (
-                        <Badge variant="outline" className="text-[10px] h-4 px-1.5 gap-1 border-emerald-500/50 text-emerald-600">
-                          <CheckCircle2 className="w-3 h-3" />
-                          {test.latencyMs !== undefined ? `${test.latencyMs}ms` : 'OK'}
-                        </Badge>
-                      ) : (
-                        <Badge variant="outline" className="text-[10px] h-4 px-1.5 gap-1 border-red-500/50 text-red-600 max-w-44" title={test.error}>
-                          <XCircle className="w-3 h-3 shrink-0" />
-                          <span className="truncate">{test.error ?? '失败'}</span>
-                        </Badge>
-                      )}
-                    </span>
-                  )}
-                </div>
-              );
-            })}
+            {(['internal', 'external'] as const).map((slot) => (
+              <div key={slot} className="flex items-center gap-2 pl-5">
+                <span className="w-14 text-xs text-muted-foreground shrink-0">
+                  {slot === 'internal' ? '内网' : '外网'}
+                </span>
+                <Input
+                  value={fields[name]?.[slot] ?? ''}
+                  onChange={(e) => setField(name, slot, e.target.value)}
+                  placeholder="http://host:port（可选，留空=用 env/内置）"
+                  className="h-8 text-xs flex-1"
+                  spellCheck={false}
+                />
+              </div>
+            ))}
+            {rows[name]?.map((row) => (
+              <div key={row.url} className="flex items-center gap-1.5 pl-5 text-[11px]">
+                <RowIcon row={row} />
+                <span className="text-muted-foreground shrink-0">
+                  {row.ok && row.httpOk && row.ms != null ? `${row.ms}ms · ` : ''}
+                  {row.detail}
+                </span>
+                <span className="truncate text-muted-foreground/70 max-w-52" title={row.url}>
+                  {row.url}
+                </span>
+                {effective[name] === row.url && (
+                  <Badge variant="secondary" className="text-[9px] h-4 px-1 shrink-0">
+                    在生效
+                  </Badge>
+                )}
+              </div>
+            ))}
             {candidates.length > 0 && (
               <p className="pl-5 text-[10px] text-muted-foreground truncate">
                 当前候选顺序：{candidates.join(' → ')}
+                {effective[name] ? ` · 生效：${effective[name]}` : ''}
               </p>
             )}
           </div>
         );
       })}
-
-      {!isL1 && (
-        <div className="space-y-1">
-          <Label htmlFor="setup-token" className="text-xs">首次配置 token（保存用）</Label>
-          <Input
-            id="setup-token"
-            type="password"
-            value={setupToken}
-            onChange={(e) => { setSetupToken(e.target.value); setSaved(false); setSaveError(null); }}
-            placeholder="首启 setup 页用的那个 token"
-            className="h-8 text-xs max-w-sm"
-            autoComplete="off"
-          />
-        </div>
-      )}
 
       <div className="flex items-center gap-3">
         <Button onClick={handleSave} disabled={saving}>

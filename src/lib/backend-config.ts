@@ -6,8 +6,12 @@
 // dashboard server resolves which address to use at request time:
 //
 //   resolution:  config file > env vars
-//   failover:    last-known-working address (probed, TTL-cached) wins,
-//                then config internal, config external, env — in that order.
+//   failover:    last-known-working address (latency-probed; kept fresh by the
+//                background re-rank loop and the post-save re-probe) wins, then
+//                config internal, config external, env — in that order. The
+//                request layer (proxy-helper) additionally walks the remaining
+//                candidates with a same-address retry, so a dead first candidate
+//                never 502s the data plane (plugin catch-all parity).
 //
 // Persistence: a small JSON file (DASHBOARD_CONFIG_FILE) on a mounted
 // volume. It is written ONCE at first launch by the pre-login setup page
@@ -226,10 +230,15 @@ export function backendCandidatesSync(name: BackendName): string[] {
   return backendCandidates(name, readConfigSync());
 }
 
-const WORKING_TTL_MS = 60_000;
+// TTL safety valve: the plugin's working cache has no TTL (only the background
+// re-rank loop and the save re-probe update it). We keep a cap so a hand-edited
+// config file cannot pin a stale address forever; 10 min covers the 30/120/300s
+// loop intervals with margin.
+const WORKING_TTL_MS = 600_000;
 interface WorkingEntry {
   url: string;
   at: number;
+  ms?: number;
 }
 
 // globalThis-scoped on purpose (same lesson as the session store, 87cb478):
@@ -241,23 +250,51 @@ function workingMap(): Map<BackendName, WorkingEntry> {
   return g.__dashboardBackendWorking;
 }
 
-export function markWorking(name: BackendName, url: string): void {
-  workingMap().set(name, { url: url.trim(), at: Date.now() });
+export function markWorking(name: BackendName, url: string, ms?: number): void {
+  const entry = workingMap().get(name);
+  workingMap().set(name, { url: url.trim(), at: Date.now(), ms: ms ?? entry?.ms });
 }
 
 export function forgetWorking(name: BackendName): void {
   workingMap().delete(name);
 }
 
+/** Fresh (within TTL) working entry, or undefined. */
+export function workingEntry(name: BackendName): WorkingEntry | undefined {
+  const entry = workingMap().get(name);
+  if (entry && Date.now() - entry.at < WORKING_TTL_MS) return entry;
+  return undefined;
+}
+
+/** Currently effective address (working cache), or null. */
+export function effectiveUrl(name: BackendName): string | null {
+  return workingEntry(name)?.url ?? null;
+}
+
 /** Best address for a backend right now: the recently-probed working one if
  * it is still a candidate, else the first candidate. */
 export function pickBackendUrl(name: BackendName): string | undefined {
   const candidates = backendCandidatesSync(name);
-  const entry = workingMap().get(name);
-  if (entry && Date.now() - entry.at < WORKING_TTL_MS && candidates.includes(entry.url)) {
+  const entry = workingEntry(name);
+  if (entry && candidates.includes(entry.url)) {
     return entry.url;
   }
   return candidates[0];
+}
+
+/** Candidate order used by request-layer failover: fresh working address
+ * first (only while it is still a candidate — same guard as pickBackendUrl),
+ * then config internal → external → env (deduped). */
+export function orderedCandidates(name: BackendName): string[] {
+  const candidates = backendCandidatesSync(name);
+  const out: string[] = [];
+  const add = (v: string | undefined) => {
+    if (v && !out.includes(v)) out.push(v);
+  };
+  const working = workingEntry(name)?.url;
+  if (working && candidates.includes(working)) add(working);
+  for (const c of candidates) add(c);
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -312,17 +349,119 @@ const PROBE_PATHS: Record<BackendName, { path: string; method?: 'POST'; body?: s
 };
 
 export interface ProbeResult {
+  /** Network-layer connectivity: any HTTP response received (401/403/5xx
+   * count as connected too) — plugin v0.4.93 two-layer model. */
   ok: boolean;
+  /** Status code < 400 — only httpOk results are eligible for the effective
+   * election (401/403 = "connected but needs auth"). */
+  httpOk: boolean;
   status?: number;
   latencyMs: number;
+  /** Classified error (only when !ok); network-layer failures may carry a
+   * DNS segment diagnostic appended. */
   error?: string;
 }
 
-export async function probeBackend(
-  name: BackendName,
-  url: string,
-  timeoutMs = 5000,
-): Promise<ProbeResult> {
+/** Per-address probe row for the UI / test endpoints (plugin config_test rows). */
+export interface ProbeRow {
+  url: string;
+  ok: boolean;
+  httpOk: boolean;
+  ms: number | null;
+  detail: string;
+}
+
+// ---------------------------------------------------------------------------
+// Error classification (port of plugin selfcheck._classify_error)
+//
+// Three-layer semantics: "TLS 证书错误" is reserved for certificate
+// verification failures; a handshake interruption is NOT a certificate error
+// (often a middlebox / fake-ip).
+// ---------------------------------------------------------------------------
+
+export function classifyProbeError(err: unknown, timedOut: boolean): string {
+  if (timedOut) return '连接超时（网络慢或地址不可达）';
+  // undici wraps the real error in `TypeError: fetch failed` — walk the cause
+  // chain collecting codes and messages.
+  const codes: string[] = [];
+  const messages: string[] = [];
+  let cur: unknown = err;
+  for (let i = 0; i < 5 && cur && typeof cur === 'object'; i++) {
+    const e = cur as { code?: unknown; message?: unknown };
+    if (typeof e.code === 'string' && e.code) codes.push(e.code);
+    if (typeof e.message === 'string' && e.message) messages.push(e.message);
+    cur = (cur as { cause?: unknown }).cause;
+  }
+  const msg = messages.join(' | ');
+  if (codes.includes('ENOTFOUND') || codes.includes('EAI_AGAIN') || /getaddrinfo|ENOTFOUND/i.test(msg)) {
+    return 'DNS 解析失败 — 检查域名拼写或内网 IP';
+  }
+  if (codes.includes('ECONNREFUSED')) return '连接被拒绝 — 端口未开放或服务未启动';
+  if (codes.includes('ETIMEDOUT')) return '连接超时（网络慢或地址不可达）';
+  if (
+    /CERTIFICATE_VERIFY_FAILED|certificate verify failed|certificate has expired|certificate is not yet valid|self[- ]signed|unable to verify the first certificate|unable to get local issuer|UNABLE_TO_VERIFY_LEAF_SIGNATURE/i.test(msg)
+  ) {
+    return 'TLS 证书校验失败 — 证书不受信任（自签/过期/链不完整）';
+  }
+  if (codes.includes('EPROTO') || /TLS|SSL|wrong version number|unexpected eof|handshake/i.test(msg)) {
+    return `TLS 握手失败（加密协商被中断）— 常见于：部署机代理/中间盒拦截、DNS 解析到非公网 IP（fake-ip）、服务端协议不匹配｜detail: ${msg.slice(0, 220)}`;
+  }
+  if (codes.includes('ECONNRESET') || codes.includes('EPIPE') || /socket hang up/i.test(msg)) {
+    return '连接被重置 — 网络不稳定或服务端主动断开';
+  }
+  return `连接失败: ${msg.slice(0, 120) || 'unknown error'}`;
+}
+
+// Non-public address segments (port of plugin _FAKE_IP_HINTS): when DNS is
+// hijacked by a proxy, resolution lands in these ranges and the visible error
+// looks like a TLS failure while the root cause is on the deployment host.
+const IP_SEGMENT_HINTS = [
+  { match: (ip) => ip.startsWith('198.18.') || ip.startsWith('198.19.'), label: 'fake-ip 段（代理/Clash 常用，非公网）' },
+  {
+    match: (ip) => ip.startsWith('::ffff:198.18.') || ip.startsWith('::ffff:198.19.'),
+    label: 'fake-ip 段（v4 映射，代理 DNS 劫持典型）',
+  },
+  { match: (ip) => ip.startsWith('fdfe:') || ip.startsWith('fc') || ip.startsWith('fd'), label: 'IPv6 ULA 私有段（非公网）' },
+  {
+    match: (ip) => /^(10\.|192\.168\.|172\.(1[6-9]|2\d|3[01])\.|127\.|169\.254\.)/.test(ip),
+    label: '内网/保留段（非公网）',
+  },
+];
+
+/** Resolve the hostname and diagnose non-public segments (fake-ip / ULA /
+ * private) — the classic "proxy DNS hijack" fingerprint. IP literals get a
+ * plain segment note (no DNS was involved); domains get the full
+ * "DNS may be hijacked by the proxy" diagnosis. Returns '' when public or
+ * when the lookup itself fails (the base error already covers that). */
+export async function resolveIpHint(url: string): Promise<string> {
+  try {
+    const host = new URL(url).hostname;
+    if (!host) return '';
+    const { default: net } = await import('node:net');
+    const describe = (ips: string[]) => {
+      const labels = [
+        ...new Set(ips.map((ip) => IP_SEGMENT_HINTS.find((h) => h.match(ip))?.label).filter((l): l is string => !!l)),
+      ];
+      return labels.length > 0 ? labels.join('；') : '';
+    };
+    // IP literal: no DNS involved — only state the segment.
+    if (net.isIP(host) !== 0) {
+      const note = describe([host]);
+      return note ? `该 IP 属于${note}` : '';
+    }
+    const dns = await import('node:dns');
+    const infos = await dns.promises.lookup(host, { all: true });
+    const ips = infos.slice(0, 3).map((i) => i.address);
+    if (ips.length === 0) return '';
+    const note = describe(ips);
+    if (!note) return '';
+    return `解析到 ${ips.join('/')} — ${note}：域名部署机的 DNS 可能被代理劫持，检查系统代理/DNS 设置（服务端证书本身可能没问题）`;
+  } catch {
+    return '';
+  }
+}
+
+async function probeOnce(name: BackendName, url: string, timeoutMs: number): Promise<ProbeResult> {
   const spec = PROBE_PATHS[name];
   const target = new URL(spec.path, url.replace(/\/+$/, '')).toString();
   const controller = new AbortController();
@@ -336,27 +475,125 @@ export async function probeBackend(
       body: spec.body,
     });
     const latencyMs = Date.now() - startedAt;
-    if (name === 'higress-gateway') {
-      // 404 means the AI route is missing, not that the gateway is down.
-      if (res.status === 404) {
-        return { ok: false, status: 404, latencyMs, error: 'AI route not found (gateway up, route missing)' };
-      }
-      return { ok: true, status: res.status, latencyMs };
+    if (name === 'higress-gateway' && res.status === 404) {
+      // 404 = the gateway answered, but the AI route is missing.
+      return { ok: true, httpOk: false, status: 404, latencyMs, error: '网关在线，AI 路由缺失（HTTP 404）' };
     }
-    if (name === 'higress-console') {
-      return { ok: true, status: res.status, latencyMs };
-    }
-    if (!res.ok) {
-      return { ok: false, status: res.status, latencyMs, error: `HTTP ${res.status}` };
-    }
-    return { ok: true, status: res.status, latencyMs };
+    return { ok: true, httpOk: res.status < 400, status: res.status, latencyMs };
   } catch (err) {
-    return {
-      ok: false,
-      latencyMs: Date.now() - startedAt,
-      error: err instanceof Error && err.name === 'AbortError' ? 'timeout' : err instanceof Error ? err.message : 'Unknown error',
-    };
+    const timedOut = err instanceof Error && err.name === 'AbortError';
+    let error = classifyProbeError(err, timedOut);
+    const hint = await resolveIpHint(url);
+    if (hint) error = `${error}｜${hint}`;
+    return { ok: false, httpOk: false, latencyMs: Date.now() - startedAt, error };
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function probeBackend(
+  name: BackendName,
+  url: string,
+  timeoutMs = 5000,
+): Promise<ProbeResult> {
+  const first = await probeOnce(name, url, timeoutMs);
+  if (first.ok) return first;
+  // v0.4.92 port: a one-off network-layer blip should not fail a row — retry
+  // once after 500ms. Connected results (including 401/403) are never retried.
+  await new Promise((resolve) => setTimeout(resolve, 500));
+  return probeOnce(name, url, timeoutMs);
+}
+
+/** Convert a probe result into a UI row (plugin config_test row semantics). */
+export function toProbeRow(url: string, r: ProbeResult): ProbeRow {
+  if (r.ok) {
+    const detail =
+      r.error ??
+      (r.httpOk
+        ? `HTTP ${r.status}，正常`
+        : r.status === 401 || r.status === 403
+          ? `已连通，HTTP ${r.status}（需鉴权）`
+          : `已连通，HTTP ${r.status}（状态异常）`);
+    return { url, ok: true, httpOk: r.httpOk, ms: r.latencyMs, detail };
+  }
+  return { url, ok: false, httpOk: false, ms: null, detail: r.error ?? '不可达' };
+}
+
+// ---------------------------------------------------------------------------
+// Effective-address election (port of plugin selfcheck._select_and_mark)
+// ---------------------------------------------------------------------------
+
+const HYSTERESIS_MIN_MS = 100;
+const HYSTERESIS_RATIO = 0.3;
+
+/** Latency-based fastest-wins + debounce hysteresis: the challenger must be
+ * faster by max(100ms, 30% of the current) before switching; a dead current
+ * switches immediately; nobody reachable → cache untouched. Returns the
+ * effective url (null when nothing is eligible). */
+export function selectAndMark(name: BackendName, rows: ProbeRow[]): string | null {
+  const eligible = rows.filter((r) => r.ok && r.httpOk && r.ms != null);
+  if (eligible.length === 0) return null;
+  const best = eligible.reduce((a, b) => ((a.ms ?? 0) <= (b.ms ?? 0) ? a : b));
+  const current = workingEntry(name)?.url;
+  const curRow = current ? eligible.find((r) => r.url === current) : undefined;
+  if (curRow && best.url !== curRow.url) {
+    const gap = (curRow.ms ?? 0) - (best.ms ?? 0);
+    if (gap <= Math.max(HYSTERESIS_MIN_MS, HYSTERESIS_RATIO * (curRow.ms ?? 0))) {
+      // Keep the current one (touched: it was verified reachable this round).
+      markWorking(name, curRow.url, curRow.ms ?? undefined);
+      return curRow.url;
+    }
+  }
+  markWorking(name, best.url, best.ms ?? undefined);
+  return best.url;
+}
+
+/** True when `tested` equals the SAVED config-file list for the backend
+ * (plugin config_test "applied" comparison). An empty saved list never
+ * applies — draft testing must never rewrite the effective cache. */
+export function listMatchesSaved(name: BackendName, tested: string[]): boolean {
+  const cfg = readConfigSync()?.backends[name];
+  if (!cfg) return false;
+  const saved = [cfg.internal, cfg.external]
+    .filter((v): v is string => !!v && v.trim() !== '')
+    .map((v) => v.trim());
+  if (saved.length === 0) return false;
+  const t = tested.map((u) => u.trim()).filter(Boolean);
+  if (t.length !== saved.length) return false;
+  return saved.every((u) => t.includes(u));
+}
+
+// ---------------------------------------------------------------------------
+// Re-probe + re-elect (port of plugin refresh_effective)
+// ---------------------------------------------------------------------------
+
+export interface RefreshResult {
+  effective: Partial<Record<BackendName, string>>;
+  switched: Partial<Record<BackendName, boolean>>;
+}
+
+/** Probe every candidate of the given backends and re-elect the effective
+ * address. Used by the background re-rank loop (address-probe.ts) and the
+ * post-save re-probe. */
+export async function refreshEffective(
+  names: BackendName[] = BACKEND_NAMES,
+  timeoutMs = 4000,
+): Promise<RefreshResult> {
+  const effective: RefreshResult['effective'] = {};
+  const switched: RefreshResult['switched'] = {};
+  await Promise.all(
+    names.map(async (name) => {
+      const candidates = backendCandidatesSync(name);
+      if (candidates.length === 0) return;
+      const prev = workingEntry(name)?.url ?? null;
+      const results = await Promise.all(candidates.map((url) => probeBackend(name, url, timeoutMs)));
+      const rows = candidates.map((url, i) => toProbeRow(url, results[i]));
+      const picked = selectAndMark(name, rows);
+      if (picked) {
+        effective[name] = picked;
+        if (prev && prev !== picked) switched[name] = true;
+      }
+    }),
+  );
+  return { effective, switched };
 }
