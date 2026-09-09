@@ -396,7 +396,7 @@ export function classifyProbeError(err: unknown, timedOut: boolean): string {
   if (codes.includes('ENOTFOUND') || codes.includes('EAI_AGAIN') || /getaddrinfo|ENOTFOUND/i.test(msg)) {
     return 'DNS 解析失败 — 检查域名拼写或内网 IP';
   }
-  if (codes.includes('ECONNREFUSED')) return '连接被拒绝 — 端口未开放或服务未启动';
+  if (codes.includes('ECONNREFUSED')) return '连接被拒绝 — 端口未开放或服务未启动（公网地址若确认端口开放，亦可能为中间盒/DPI RST 拦截）';
   if (codes.includes('ETIMEDOUT')) return '连接超时（网络慢或地址不可达）';
   if (
     /CERTIFICATE_VERIFY_FAILED|certificate verify failed|certificate has expired|certificate is not yet valid|self[- ]signed|unable to verify the first certificate|unable to get local issuer|UNABLE_TO_VERIFY_LEAF_SIGNATURE/i.test(msg)
@@ -407,7 +407,7 @@ export function classifyProbeError(err: unknown, timedOut: boolean): string {
     return `TLS 握手失败（加密协商被中断）— 常见于：部署机代理/中间盒拦截、DNS 解析到非公网 IP（fake-ip）、服务端协议不匹配｜detail: ${msg.slice(0, 220)}`;
   }
   if (codes.includes('ECONNRESET') || codes.includes('EPIPE') || /socket hang up/i.test(msg)) {
-    return '连接被重置 — 网络不稳定或服务端主动断开';
+    return '连接被重置(RST) — 常见于：中间盒/DPI 拦截（SNI+TLS 栈指纹）、服务端主动断开、网络不稳定';
   }
   return `连接失败: ${msg.slice(0, 120) || 'unknown error'}`;
 }

@@ -381,6 +381,12 @@ describe('classifyProbeError (port of plugin _classify_error)', () => {
     );
   });
 
+  it('ECONNRESET → 提示语含中间盒/DPI 嫌疑（sat 外网归因 2026-09-09）', () => {
+    const out = classifyProbeError(wrapped(withCode('ECONNRESET', 'socket hang up')), false);
+    expect(out).toContain('连接被重置');
+    expect(out).toContain('中间盒/DPI');
+  });
+
   it('certificate verification failure stays a certificate error', () => {
     expect(classifyProbeError(wrapped(new Error('unable to verify the first certificate')), false)).toContain('证书');
   });
