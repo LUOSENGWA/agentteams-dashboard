@@ -4,11 +4,13 @@
 // the dashboard has no usable backend addresses yet (standalone docker
 // install without env configuration).
 //
-// Pre-login writes are one-shot and token-gated: the token comes from the
-// server log ("one-time backend setup token") or the DASHBOARD_SETUP_TOKEN
-// env var. After the config is saved the login page appears and this screen
-// can never be reached again from a logged-out browser (level-3 session
-// updates go through the settings dialog, F1b).
+// Pre-login writes are token-gated and repeatable (F1e): the token comes
+// from the server log ("one-time backend setup token") or the
+// DASHBOARD_SETUP_TOKEN env var — unless the installer disabled the gate
+// (DASHBOARD_SETUP_TOKEN_ENFORCE=0, F1f3), in which case the token field
+// is hidden and saving is plain. After the config is saved the login page
+// appears and this screen can never be reached again from a logged-out
+// browser (level-3 session updates go through the settings dialog, F1b).
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, CheckCircle2, Loader2, RefreshCw, XCircle } from 'lucide-react';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
@@ -30,6 +32,9 @@ interface BackendStatus {
 
 interface SetupStatusResponse {
   configured: boolean;
+  /** F1f3: false when the installer disabled the pre-login token gate
+   * (DASHBOARD_SETUP_TOKEN_ENFORCE=0) — the token field is hidden. */
+  setupTokenRequired?: boolean;
   backends: Record<BackendName, BackendStatus>;
   embedded: {
     defaults: Record<BackendName, string | undefined>;
@@ -57,6 +62,7 @@ export function BackendSetupPage({ onDone, reconfigure = false }: { onDone: () =
   );
   const [embeddedHealthy, setEmbeddedHealthy] = useState(false);
   const [token, setToken] = useState('');
+  const [tokenRequired, setTokenRequired] = useState(true);
   const [tests, setTests] = useState<Record<string, TestState>>({});
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -84,6 +90,7 @@ export function BackendSetupPage({ onDone, reconfigure = false }: { onDone: () =
           !!data.embedded?.healthy &&
             REQUIRED_BACKENDS.every((name) => data.embedded.healthy?.[name] === true),
         );
+        setTokenRequired(data.setupTokenRequired ?? true);
         setLoading(false);
       })
       .catch(() => {
@@ -242,7 +249,7 @@ export function BackendSetupPage({ onDone, reconfigure = false }: { onDone: () =
           <CardTitle className="text-lg">{reconfigure ? '后端配置' : '后端配置（首次启动）'}</CardTitle>
           <CardDescription>
             {reconfigure
-              ? '覆盖现有后端配置（登录前保存需要 setup token）。保存后回到登录页；配置在挂载卷中，重启不丢失。登录前看不到已保存的具体值，直接填写正确地址即可。'
+              ? `覆盖现有后端配置${tokenRequired ? '（登录前保存需要 setup token）' : '（本实例已关闭登录前 token 验证，直接保存即可）'}。保存后回到登录页；配置在挂载卷中，重启不丢失。登录前看不到已保存的具体值，直接填写正确地址即可。`
               : 'Dashboard 还没有可用的后端地址。填写后保存即可登录；配置保存在挂载卷中，重启不丢失。'}
             每个后端可只填一个地址；「内网」= 容器/集群网络，「外网」= 跨网段备用（自动切换）。
             「测试」一次验证该后端填写的全部地址（✅ 可用 / ⚠️ 已连通需鉴权 / ❌ 不可达，含原因分类）。
@@ -338,20 +345,22 @@ export function BackendSetupPage({ onDone, reconfigure = false }: { onDone: () =
             })}
           </div>
 
-          <div className="space-y-1">
-            <div className="text-sm font-medium">{reconfigure ? 'Setup token' : '首次启动 token'}</div>
-            <Input
-              value={token}
-              onChange={(e) => setToken(e.target.value)}
-              placeholder="见服务器日志或 DASHBOARD_SETUP_TOKEN"
-              spellCheck={false}
-            />
-            <p className="text-xs text-muted-foreground">
-              {reconfigure
-                ? '登录前修改配置需要 setup token（与首启同一个）：docker logs &lt;容器&gt; 搜 setup token，或 env DASHBOARD_SETUP_TOKEN。找不到 token = docker volume rm 数据卷 出厂重置（配置与 token 一并重建）。'
-                : '仅首次保存需要。token 在服务器日志里（docker logs &lt;容器&gt;，搜 setup token），也可用 env DASHBOARD_SETUP_TOKEN 预先指定；保存成功后不再需要。'}
-            </p>
-          </div>
+          {tokenRequired && (
+            <div className="space-y-1">
+              <div className="text-sm font-medium">{reconfigure ? 'Setup token' : '首次启动 token'}</div>
+              <Input
+                value={token}
+                onChange={(e) => setToken(e.target.value)}
+                placeholder="见服务器日志或 DASHBOARD_SETUP_TOKEN"
+                spellCheck={false}
+              />
+              <p className="text-xs text-muted-foreground">
+                {reconfigure
+                  ? '登录前修改配置需要 setup token（与首启同一个）：docker logs &lt;容器&gt; 搜 setup token，或 env DASHBOARD_SETUP_TOKEN。找不到 token = docker volume rm 数据卷 出厂重置（配置与 token 一并重建）。'
+                  : '仅首次保存需要。token 在服务器日志里（docker logs &lt;容器&gt;，搜 setup token），也可用 env DASHBOARD_SETUP_TOKEN 预先指定；保存成功后不再需要。'}
+              </p>
+            </div>
+          )}
 
           {saveError && <p className="text-sm text-red-600">{saveError}</p>}
 

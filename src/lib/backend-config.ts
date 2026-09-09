@@ -319,6 +319,8 @@ export function orderedCandidates(name: BackendName): string[] {
 //   B: the setup token comes ONLY from DASHBOARD_SETUP_TOKEN env and is
 //      NEVER generated or persisted to the volume (no owner credential on
 //      disk); with no env token the pre-login write path stays closed;
+//      F1f3: DASHBOARD_SETUP_TOKEN_ENFORCE=0 disables the whole gate
+//      (installer opt-out — pre-login writes open, no token at all);
 //   C: every config write is audited with actor + level + changed fields;
 //   D: startup warns if AGENTTEAMS_AUTH_TOKEN (a cluster-level super
 //      credential) is in the env — shared deployments should drop it and
@@ -331,11 +333,25 @@ export function isSharedMode(): boolean {
   return process.env.DASHBOARD_SHARED_MODE === '1';
 }
 
+/** F1f3: the installer (deployer) chooses whether the pre-login setup
+ * token gate is enforced. `DASHBOARD_SETUP_TOKEN_ENFORCE=0` disables the
+ * gate entirely — pre-login config saves need no token, and no token is
+ * generated, printed or persisted (authoritative over DASHBOARD_SETUP_TOKEN).
+ * Default (unset or '1') = enforced: all F1e/F1f behavior. Documented risk
+ * of opting out: anyone who can reach the dashboard can rewrite the
+ * backend addresses — trusted-LAN deployments only (the startup log
+ * records the open state, instrumentation.ts). */
+export function isSetupTokenEnforced(): boolean {
+  return (process.env.DASHBOARD_SETUP_TOKEN_ENFORCE || '').trim() !== '0';
+}
+
 // ---------------------------------------------------------------------------
 // First-launch setup token (gates the pre-auth write; repeatable — F1e)
 // ---------------------------------------------------------------------------
 
 export async function getSetupToken(): Promise<string> {
+  // F1f3: the installer disabled the gate — no token exists at all.
+  if (!isSetupTokenEnforced()) return '';
   const fromEnv = (process.env.DASHBOARD_SETUP_TOKEN || '').trim();
   if (fromEnv) return fromEnv;
   // B: shared mode — env is the ONLY token source. Nothing is generated,

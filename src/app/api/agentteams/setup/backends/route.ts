@@ -54,6 +54,7 @@ import {
   effectiveUrl,
   getSetupToken,
   isHttpUrl,
+  isSetupTokenEnforced,
   isSharedMode,
   probeBackend,
   readConfigSync,
@@ -140,6 +141,9 @@ export async function GET(request: NextRequest) {
 
   return NextResponse.json({
     configured,
+    // F1f3: lets the setup page hide the token field when the installer
+    // disabled the pre-login gate (DASHBOARD_SETUP_TOKEN_ENFORCE=0).
+    setupTokenRequired: isSetupTokenEnforced(),
     backends: perBackend,
     embedded: { defaults: EMBEDDED_DEFAULTS, healthy },
     ...authedConfig,
@@ -187,14 +191,18 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, mode: 'update', effective, switched });
   }
 
-  // Pre-login: token-gated, repeatable (F1e). First launch creates the
-  // config; afterwards the same token overwrites it (broken/changed
-  // environment escape hatch — see header). No session, no other path.
-  if (!token) {
-    return NextResponse.json({ error: 'token-required' }, { status: 403 });
-  }
-  if (!(await verifySetupToken(token))) {
-    return NextResponse.json({ error: 'invalid-token' }, { status: 403 });
+  // Pre-login: token-gated, repeatable (F1e) — unless the installer
+  // disabled the gate with DASHBOARD_SETUP_TOKEN_ENFORCE=0 (F1f3).
+  // First launch creates the config; afterwards the token overwrites it
+  // (broken/changed environment escape hatch — see header). No session,
+  // no other path.
+  if (isSetupTokenEnforced()) {
+    if (!token) {
+      return NextResponse.json({ error: 'token-required' }, { status: 403 });
+    }
+    if (!(await verifySetupToken(token))) {
+      return NextResponse.json({ error: 'invalid-token' }, { status: 403 });
+    }
   }
   const existed = await configExists();
   const result = existed ? await updateConfig(parsed.backends) : await saveConfigOneShot(parsed.backends);

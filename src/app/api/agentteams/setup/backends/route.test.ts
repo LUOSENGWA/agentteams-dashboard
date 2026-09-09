@@ -374,3 +374,71 @@ describe('F1f shared mode (DASHBOARD_SHARED_MODE=1, e.g. Node1 multi-user)', () 
     expect(writes).toHaveLength(0);
   });
 });
+
+// F1f3: the installer may disable the pre-login setup token gate with
+// DASHBOARD_SETUP_TOKEN_ENFORCE=0 (trusted-LAN deployments): pre-login
+// saves are plain, no token is generated/persisted, the UI field hides.
+describe('F1f3: DASHBOARD_SETUP_TOKEN_ENFORCE=0 (installer opt-out)', () => {
+  it('pre-login save without token succeeds (standalone)', async () => {
+    vi.stubEnv('DASHBOARD_SETUP_TOKEN_ENFORCE', '0');
+    const res = await POST(
+      makeRequest({
+        method: 'POST',
+        body: JSON.stringify({ backends: { controller: { internal: 'http://a:8090' } } }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { ok: boolean; mode: string };
+    expect(data.ok).toBe(true);
+    expect(data.mode).toBe('first-launch');
+    expect(fs.existsSync(configFile())).toBe(true);
+  });
+
+  it('pre-login save without token succeeds in shared mode too', async () => {
+    vi.stubEnv('DASHBOARD_SHARED_MODE', '1');
+    vi.stubEnv('DASHBOARD_SETUP_TOKEN', '');
+    vi.stubEnv('DASHBOARD_SETUP_TOKEN_ENFORCE', '0');
+    const res = await POST(
+      makeRequest({
+        method: 'POST',
+        body: JSON.stringify({ backends: { controller: { internal: 'http://a:8090' } } }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as { ok: boolean };
+    expect(data.ok).toBe(true);
+  });
+
+  it('ENFORCE=0 overrides a set DASHBOARD_SETUP_TOKEN (gate stays off)', async () => {
+    vi.stubEnv('DASHBOARD_SETUP_TOKEN_ENFORCE', '0');
+    // DASHBOARD_SETUP_TOKEN is still 'test-token-123' from beforeEach.
+    const res = await POST(
+      makeRequest({
+        method: 'POST',
+        body: JSON.stringify({ backends: { controller: { internal: 'http://a:8090' } } }),
+      }),
+    );
+    expect(res.status).toBe(200);
+  });
+
+  it('no token is generated or persisted (standalone)', async () => {
+    vi.stubEnv('DASHBOARD_SETUP_TOKEN', '');
+    vi.stubEnv('DASHBOARD_SETUP_TOKEN_ENFORCE', '0');
+    const { getSetupToken } = await import('@/lib/backend-config');
+    expect(await getSetupToken()).toBe('');
+    expect(fs.existsSync(path.join(workDir, '.setup-token'))).toBe(false);
+  });
+
+  it('GET reports setupTokenRequired=false (UI hides the token field)', async () => {
+    vi.stubEnv('DASHBOARD_SETUP_TOKEN_ENFORCE', '0');
+    const res = await GET(makeRequest());
+    const data = (await res.json()) as { setupTokenRequired: boolean };
+    expect(data.setupTokenRequired).toBe(false);
+  });
+
+  it('default (env unset) keeps the gate: GET reports required', async () => {
+    const res = await GET(makeRequest());
+    const data = (await res.json()) as { setupTokenRequired: boolean };
+    expect(data.setupTokenRequired).toBe(true);
+  });
+});

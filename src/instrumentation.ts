@@ -8,7 +8,7 @@ export async function register(): Promise<void> {
   if (process.env.NEXT_RUNTIME !== 'nodejs') return;
   if (process.env.NEXT_PHASE) return;
   if (process.env.VITEST) return;
-  const { isSharedMode } = await import('./lib/backend-config');
+  const { isSharedMode, isSetupTokenEnforced } = await import('./lib/backend-config');
   // F1f-D: a shared (multi-user) deployment should NOT carry the cluster
   // super-credential in the env. L1 logs in via the per-login
   // controller-token paste (C2); L2 via pure Matrix (C3). The env token
@@ -18,6 +18,14 @@ export async function register(): Promise<void> {
       '[dashboard] DASHBOARD_SHARED_MODE=1 but AGENTTEAMS_AUTH_TOKEN is set — ' +
         'a cluster-level super credential in the env. Drop it; L1 should use ' +
         'the controller-token paste at login instead.',
+    );
+  }
+  // F1f3: the installer disabled the pre-login setup token gate — record
+  // the open state in the startup log (docker logs).
+  if (!isSetupTokenEnforced()) {
+    console.warn(
+      '[dashboard] DASHBOARD_SETUP_TOKEN_ENFORCE=0 — pre-login backend-config saves are OPEN (no token). ' +
+        'Anyone who can reach this dashboard can rewrite the backend addresses. Trusted-LAN deployments only.',
     );
   }
   const { startAddressProbe } = await import('./lib/address-probe');
