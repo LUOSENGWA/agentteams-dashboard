@@ -2,13 +2,15 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { createServer, type Server } from 'node:http';
 import { NextRequest } from 'next/server';
-import { proxyToAgentTeams } from './proxy-helper';
+import { getControllerUrl, proxyToAgentTeams } from './proxy-helper';
 import {
   SESSION_COOKIE_NAME,
   __resetSessionStoreForTests,
   createSession,
   destroySession,
+  sessionCookieHeader,
 } from '@/lib/dashboard-session';
+import { forgetWorking } from '@/lib/backend-config';
 
 let server: Server;
 let controllerUrl: string;
@@ -226,5 +228,76 @@ describe('proxyToAgentTeams per-session credential (M19 dual track)', () => {
     destroySession(sessionId);
     await proxy(requestWith(`${SESSION_COOKIE_NAME}=${cookieValue}`, { authorization: 'Bearer browser-forged' }));
     expect(captured[0].authorization).toBe('Bearer sa-admin-token');
+  });
+});
+
+describe('getControllerUrl ?controllerUrl= override gating (F1b)', () => {
+  const OVERRIDE = 'http://127.0.0.1:9999'; // allowed by the SSRF host list
+  const DEFAULT_URL = 'http://ctl-default:8090';
+  const saved = {
+    secret: process.env.DASHBOARD_SESSION_SECRET,
+    controller: process.env.AGENTTEAMS_CONTROLLER_URL,
+    api: process.env.AGENTTEAMS_API_URL,
+    configFile: process.env.DASHBOARD_CONFIG_FILE,
+  };
+
+  beforeAll(() => {
+    process.env.DASHBOARD_SESSION_SECRET = 'f'.repeat(64);
+    process.env.AGENTTEAMS_CONTROLLER_URL = DEFAULT_URL;
+    process.env.AGENTTEAMS_API_URL = '';
+    process.env.DASHBOARD_CONFIG_FILE = '/nonexistent-dir-for-tests/config.json';
+    forgetWorking('controller');
+  });
+
+  afterAll(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    __resetSessionStoreForTests();
+  });
+
+  function withCookie(cookie: string | null, query: string): NextRequest {
+    const headers = new Headers();
+    if (cookie) headers.set('cookie', cookie);
+    return new NextRequest(`http://localhost/api/agentteams/healthz/${query}`, { headers });
+  }
+
+  function cookieFor(
+    user: string,
+    crLevel: number,
+    credential: { kind: 'sa' } | { kind: 'matrix'; token: string } | { kind: 'controller-token'; token: string },
+  ): string {
+    const { cookieValue } = createSession({ user, crLevel, credential });
+    return sessionCookieHeader(cookieValue);
+  }
+
+  it('L1 (level 3, sa credential): allowed-host override is honored', () => {
+    const cookie = cookieFor('luo', 1, { kind: 'sa' });
+    expect(getControllerUrl(withCookie(cookie, `?controllerUrl=${encodeURIComponent(OVERRIDE)}`))).toBe(OVERRIDE);
+  });
+
+  it('L2 (level 2, matrix credential): override is dropped, default used', () => {
+    const cookie = cookieFor('sunzong', 2, { kind: 'matrix', token: 'syt_l2_token' });
+    expect(getControllerUrl(withCookie(cookie, `?controllerUrl=${encodeURIComponent(OVERRIDE)}`))).toBe(DEFAULT_URL);
+  });
+
+  it('observer (level 1, matrix credential): override is dropped, default used', () => {
+    const cookie = cookieFor('viewer', 3, { kind: 'matrix', token: 'viewer_token' });
+    expect(getControllerUrl(withCookie(cookie, `?controllerUrl=${encodeURIComponent(OVERRIDE)}`))).toBe(DEFAULT_URL);
+  });
+
+  it('pre-login (no session): override still honored behind the SSRF list', () => {
+    expect(getControllerUrl(withCookie(null, `?controllerUrl=${encodeURIComponent(OVERRIDE)}`))).toBe(OVERRIDE);
+  });
+
+  it('L1 session: non-allowed host is still rejected by the SSRF list', () => {
+    const cookie = cookieFor('luo', 1, { kind: 'sa' });
+    expect(getControllerUrl(withCookie(cookie, '?controllerUrl=http%3A%2F%2Fevil.example.com'))).toBe(DEFAULT_URL);
+  });
+
+  it('L2 session: no override parameter → default (unchanged behavior)', () => {
+    const cookie = cookieFor('sunzong', 2, { kind: 'matrix', token: 'syt_l2_token' });
+    expect(getControllerUrl(withCookie(cookie, ''))).toBe(DEFAULT_URL);
   });
 });

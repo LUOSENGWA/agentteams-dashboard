@@ -55,6 +55,18 @@ export function getControllerUrl(request: NextRequest): string {
   const defaultUrl = getDefaultControllerUrl();
   const url = request.nextUrl.searchParams.get('controllerUrl');
   if (url) {
+    // F1b: the per-request override is L1-only. An L2 (own-scope, Matrix
+    // credential) session must always hit the deployment-configured
+    // controller so the A2 self-scope chain and audit attribution stay
+    // intact — a redirected request would land on a controller that has no
+    // notion of this user's scope. Pre-login requests (login flow, public
+    // setup endpoints) keep the override behind the SSRF allowlist as before.
+    // Level 3 sessions are exactly the admin-credential sessions ('sa' /
+    // 'controller-token' — see the login route's credential selection).
+    const session = getSessionFromRequest(request);
+    if (session && session.level < 3) {
+      return defaultUrl;
+    }
     try {
       const parsed = new URL(url);
       if (!['http:', 'https:'].includes(parsed.protocol)) {

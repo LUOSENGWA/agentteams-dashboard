@@ -69,7 +69,7 @@ function l1Cookie(): string {
 
 describe('GET /api/agentteams/setup/backends', () => {
   it('reports unconfigured standalone state with embedded auto-detect results', async () => {
-    const res = await GET();
+    const res = await GET(makeRequest());
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
       configured: boolean;
@@ -86,7 +86,7 @@ describe('GET /api/agentteams/setup/backends', () => {
   it('reports configured when env provides the required backends', async () => {
     vi.stubEnv('AGENTTEAMS_CONTROLLER_URL', 'http://ctl:8090');
     vi.stubEnv('AGENTTEAMS_MATRIX_URL', 'http://mx:6167');
-    const res = await GET();
+    const res = await GET(makeRequest());
     const data = (await res.json()) as {
       configured: boolean;
       backends: Record<string, { candidates: string[] }>;
@@ -105,12 +105,30 @@ describe('GET /api/agentteams/setup/backends', () => {
     );
     vi.stubEnv('AGENTTEAMS_CONTROLLER_URL', 'http://env:8090');
     vi.stubEnv('AGENTTEAMS_MATRIX_URL', 'http://mx:6167');
-    const res = await GET();
+    const res = await GET(makeRequest());
     const data = (await res.json()) as {
       backends: Record<string, { candidates: string[] }>;
     };
     expect(data.backends.controller.candidates).toEqual(['http://in:8090', 'http://env:8090']);
     expect(readConfigSync()?.backends.controller).toEqual({ internal: 'http://in:8090' });
+  });
+
+  it('exposes the structured file config only to a level-3 session (F1b settings tab)', async () => {
+    fs.writeFileSync(
+      configFile(),
+      JSON.stringify({
+        version: 1,
+        backends: { controller: { internal: 'http://in:8090', external: 'http://out:8090' } },
+      }),
+    );
+
+    const l1 = await GET(makeRequest(undefined, l1Cookie()));
+    const l1Data = (await l1.json()) as { config?: Record<string, { internal?: string; external?: string }> };
+    expect(l1Data.config).toEqual({ controller: { internal: 'http://in:8090', external: 'http://out:8090' } });
+
+    const anon = await GET(makeRequest());
+    const anonData = (await anon.json()) as { config?: unknown };
+    expect(anonData.config).toBeUndefined();
   });
 });
 

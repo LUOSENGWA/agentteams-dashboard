@@ -69,7 +69,7 @@ const BACKEND_NAMES_SET: BackendNameSet = Object.fromEntries(
   BACKEND_NAMES.map((name) => [name, name]),
 );
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const config = readConfigSync();
   const perBackend: Record<string, { configured: boolean; candidates: string[] }> = {};
   let configured = true;
@@ -92,10 +92,19 @@ export async function GET() {
     healthy = Object.fromEntries(probed);
   }
 
+  // The structured file config (internal/external per backend) is only
+  // exposed to a level-3 (L1 admin) session — it feeds the settings dialog
+  // backend tab. Pre-login callers (the first-launch page) get candidates
+  // and embedded defaults only.
+  const session = getSessionFromRequest(request);
+  const l1Config =
+    session && session.level >= 3 ? { config: config?.backends ?? {} } : {};
+
   return NextResponse.json({
     configured,
     backends: perBackend,
     embedded: { defaults: EMBEDDED_DEFAULTS, healthy },
+    ...l1Config,
   });
 }
 
