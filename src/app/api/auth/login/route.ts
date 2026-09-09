@@ -56,6 +56,41 @@ async function fetchHumanViaSa(request: NextRequest, name: string): Promise<Huma
   return fetchHumanWithToken(request, name, token);
 }
 
+/** Identity probe with the user's OWN Matrix token. The Controller's
+ * Matrix auth only accepts permissionLevel=2 tokens, so a 200 on the
+ * status endpoint proves team-user identity WITHOUT reading the Human CR
+ * (the plugin's model: the user's own access token is the default
+ * identity, admin tokens are an optional channel — agentteams_connector/
+ * config.py `controller_token` = "Optional admin token for L1 full view"). */
+async function probeMatrixToken(request: NextRequest, matrixToken: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${getControllerUrl(request)}/api/v1/status`, {
+      headers: { Authorization: `Bearer ${matrixToken}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Teams visible to the caller's own Matrix token — the Controller
+ * filters the list by accessibleTeams server-side (ListTeams), so this is
+ * the user's own team scope, not an admin read. */
+async function fetchTeamsWithToken(request: NextRequest, matrixToken: string): Promise<string[]> {
+  try {
+    const res = await fetch(`${getControllerUrl(request)}/api/v1/teams/`, {
+      headers: { Authorization: `Bearer ${matrixToken}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { teams?: { name?: string }[] };
+    return (data.teams ?? []).map((t) => t.name ?? '').filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
 /** CR lookup with an explicit admin-grade token (SA env or a validated
  * Controller admin token pasted at login — one-person-per-instance
  * deployments may hold no server-side SA credential at all). */
@@ -334,6 +369,29 @@ async function attemptMatrixLogin(
     } else {
       return NextResponse.json(
         { success: false, error: 'Controller 管理员 token 无效' },
+        { status: 401 },
+      );
+    }
+  }
+  if (!human) {
+    // No admin-grade credential available (SA-less one-person-per-instance):
+    // identify with the user's OWN Matrix token instead of an admin read.
+    // A 200 proves team-user (L2) identity — the Controller's Matrix auth
+    // rejects every other level — and the teams list carries the user's
+    // own accessibleTeams (server-side filtered). Plugin-aligned: own
+    // token = default identity, no admin credential needed for L2.
+    if (await probeMatrixToken(request, String(matrix.accessToken))) {
+      human = {
+        name: localpart,
+        permissionLevel: 2,
+        accessibleTeams: await fetchTeamsWithToken(request, String(matrix.accessToken)),
+      };
+    } else {
+      return NextResponse.json(
+        {
+          success: false,
+          error: '无法确认该账号的权限级别：请展开「管理员账号验证」提供 Controller 管理员 token，或联系部署管理员检查 Human CR',
+        },
         { status: 401 },
       );
     }

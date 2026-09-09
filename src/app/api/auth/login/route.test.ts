@@ -58,6 +58,7 @@ function installFetchMock(opts: {
   humans?: Record<string, { status?: number; body?: Record<string, unknown> }>;
   matrixLogin?: { status?: number; body?: Record<string, unknown> };
   teams?: { status?: number; body?: Record<string, unknown> };
+  status?: { status?: number; body?: Record<string, unknown> };
 }) {
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = String(input);
@@ -66,6 +67,15 @@ function installFetchMock(opts: {
     if (humanMatch) {
       const spec = opts.humans?.[decodeURIComponent(humanMatch[1])] ?? { status: 404 };
       return new Response(spec.status ? null : JSON.stringify(spec.body ?? {}), {
+        status: spec.status ?? 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
+    if (url.includes('/api/v1/status')) {
+      // Own-matrix-token identity probe — default 401 (token rejected =
+      // not an L2 team user); L2 tests pass `status` explicitly.
+      const spec = opts.status ?? { status: 401 };
+      return new Response(spec.status ? null : JSON.stringify(spec.body ?? { ok: true }), {
         status: spec.status ?? 200,
         headers: { 'content-type': 'application/json' },
       });
@@ -204,11 +214,14 @@ describe('POST /api/auth/login (dual track, M19)', () => {
     expect(data.mode).toBe('matrix');
   });
 
-  // ── SA-less (one-person-per-instance) level-lookup fallback ────────────
-  // The Controller denies L2 matrix tokens on human reads
-  // (authorizeHuman has no "human" case), so without a server-side SA
-  // credential the level lookup needs a Controller admin token pasted at
-  // login. L2-without-token needs the upstream GET /api/v1/me (pending).
+  // ── SA-less (one-person-per-instance) identity resolution ──────────────
+  // The Controller denies matrix tokens on human reads (authorizeHuman
+  // has no "human" case), so without a server-side SA credential:
+  // admin token pasted at login → CR read (L1 self-service), otherwise
+  // the user's OWN matrix token probes /status — a 200 proves L2 (the
+  // controller only accepts level-2 matrix tokens) and /teams returns
+  // the user's own accessibleTeams. Plugin model: own token = default
+  // identity, no admin credential needed.
 
   it('SA-less instance: L1 + valid pasted controller token performs the level lookup', async () => {
     mockGetAuthToken.mockResolvedValue(undefined);
@@ -244,18 +257,37 @@ describe('POST /api/auth/login (dual track, M19)', () => {
     expect(data.error).toBe('Controller 管理员 token 无效');
   });
 
-  it('SA-less instance: L2 without any admin token → generic 401 (upstream /me pending)', async () => {
+  it('SA-less instance: L2 with NO admin token → 200 level 2 via own matrix token (plugin model)', async () => {
     mockGetAuthToken.mockResolvedValue(undefined);
     installFetchMock({
+      status: { body: { ok: true } }, // own matrix token accepted → L2 proven
+      teams: { body: { teams: [{ name: 'biz-team' }], total: 1 } },
       matrixLogin: {
         body: { access_token: 'syt_l2_token', user_id: '@sunzong:sat.example', device_id: 'D1' },
       },
     });
 
     const response = await POST(request({ username: 'sunzong', password: 'matrix-password' }));
+    expect(response.status).toBe(200);
+    const data = await responseJson(response);
+    expect(data.success).toBe(true);
+    expect(data.user).toEqual({ username: 'sunzong', level: 2 });
+    expect(data.mode).toBe('matrix');
+  });
+
+  it('SA-less instance: controller rejects the matrix token (L1/L3) + no admin token → specific 401', async () => {
+    mockGetAuthToken.mockResolvedValue(undefined);
+    installFetchMock({
+      // no `status` key → probe defaults to 401 (token rejected)
+      matrixLogin: {
+        body: { access_token: 'syt_l1_token', user_id: '@luo:sat.example', device_id: 'D1' },
+      },
+    });
+
+    const response = await POST(request({ username: 'luo', password: 'matrix-password' }));
     expect(response.status).toBe(401);
     const data = await responseJson(response);
-    expect(data.error).toBe('Invalid username or password');
+    expect(data.error).toBe('无法确认该账号的权限级别：请展开「管理员账号验证」提供 Controller 管理员 token，或联系部署管理员检查 Human CR');
   });
 
   it('SA-less instance: L2 + valid pasted controller token → level 2 (admin bootstrap)', async () => {
