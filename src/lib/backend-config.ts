@@ -35,14 +35,14 @@ import {
 
 export { BACKEND_NAMES, EMBEDDED_DEFAULTS, REQUIRED_BACKENDS, type BackendName };
 
-type FsModule = typeof import('fs');
+type FsModule = typeof import('node:fs');
 
 let fsPromise: Promise<FsModule> | null = null;
 let fsResolved: FsModule | null = null;
 
 function loadFs(): Promise<FsModule> {
   if (!fsPromise) {
-    fsPromise = import('fs')
+    fsPromise = import('node:fs')
       .then((mod) => {
         fsResolved = mod;
         return mod;
@@ -75,7 +75,7 @@ export function configFilePath(): string {
 }
 
 async function tokenFilePath(): Promise<string> {
-  const path = await import('path');
+  const path = await import('node:path');
   return path.join(path.dirname(configFilePath()), '.setup-token');
 }
 
@@ -158,7 +158,7 @@ export async function configExists(): Promise<boolean> {
 
 async function writeConfigAtomic(config: DashboardConfig): Promise<void> {
   const fsp = (await loadFs()).promises;
-  const path = await import('path');
+  const path = await import('node:path');
   const file = configFilePath();
   await fsp.mkdir(path.dirname(file), { recursive: true });
   const tmp = `${file}.tmp`;
@@ -359,7 +359,7 @@ export async function getSetupToken(): Promise<string> {
   // is closed (verifySetupToken fails closed on it).
   if (isSharedMode()) return '';
   const fsp = (await loadFs()).promises;
-  const path = await import('path');
+  const path = await import('node:path');
   const tokenFile = await tokenFilePath();
   try {
     const persisted = (await fsp.readFile(tokenFile, 'utf-8')).trim();
@@ -367,7 +367,7 @@ export async function getSetupToken(): Promise<string> {
   } catch {
     // fall through to generation
   }
-  const crypto = await import('crypto');
+  const crypto = await import('node:crypto');
   const token = crypto.randomBytes(16).toString('hex');
   try {
     await fsp.mkdir(path.dirname(tokenFile), { recursive: true });

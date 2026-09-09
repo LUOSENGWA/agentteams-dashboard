@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Readable } from 'stream';
+import { Readable } from 'node:stream';
 import { createMinioClient } from '@/lib/minio-client';
 
 export async function GET(request: NextRequest) {

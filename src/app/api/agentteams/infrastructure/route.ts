@@ -87,7 +87,7 @@ async function checkKubernetes(): Promise<InfrastructureInfo['kubernetes']> {
   try {
     // Use Node.js https to query the in-cluster API server with the mounted CA/token.
     const https = await import('https');
-    const fs = await import('fs');
+    const fs = await import('node:fs');
 
     const ca = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/ca.crt');
     const token = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf-8').trim();

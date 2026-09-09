@@ -27,7 +27,7 @@ const ALLOWED_HOSTS = [
 async function readAuthTokenFromFile(path: string): Promise<string | undefined> {
   try {
     // Use dynamic import so this code can still run in non-Node environments (e.g. tests)
-    const fs = await import('fs');
+    const fs = await import('node:fs');
     return fs.readFileSync(path, 'utf-8').trim();
   } catch {
     return undefined;

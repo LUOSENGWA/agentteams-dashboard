@@ -227,10 +227,18 @@ async function attemptConsoleLogin(
       consoleUrl,
     });
     consoleRes = result.response;
-  } catch {
+  } catch (err) {
+    // F1g: surface the failure in docker logs. A silently-failing Console
+    // track sends admin-password users down the Matrix track into the
+    // confusing "paste a Controller token" error with no trace of WHY the
+    // password path died (Luo-zong 9/9: only the token worked).
+    console.error(
+      `Console track fetch failed (${consoleUrl}): ${err instanceof Error ? err.message : String(err)}`,
+    );
     return { kind: 'failed' };
   }
   if (!consoleRes.ok) {
+    console.error(`Console track rejected: HTTP ${consoleRes.status} for user "${username}" (${consoleUrl})`);
     return { kind: 'failed' };
   }
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { Readable } from 'stream';
+import { Readable } from 'node:stream';
 import type { Client } from 'minio';
 import { createMinioClient, getMinioBucket } from '@/lib/minio-client';
 import { isValidNameSegment } from '@/lib/skill-package';
