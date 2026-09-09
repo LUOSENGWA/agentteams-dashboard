@@ -155,7 +155,19 @@ async function attemptConsoleLogin(
   password: string,
   opts: { allowMatrix: boolean },
 ): Promise<ConsoleAttempt> {
-  const consoleUrl = getHigressConsoleURL();
+  let consoleUrl: string;
+  try {
+    consoleUrl = getHigressConsoleURL();
+  } catch (err) {
+    // Console deployment config invalid (e.g. host not on the allowlist in a
+    // one-person-per-instance LAN deployment): the Console track is
+    // unavailable, but the Matrix track does not depend on it — fall through
+    // so one track's misconfiguration never blocks the whole login endpoint.
+    console.error(
+      `Console track unavailable: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return { kind: 'failed' };
+  }
 
   // NOTE: the upstream auto-initializer (/system/init, "first login auto-
   // registers a Console admin") was intentionally REMOVED. It is a privilege

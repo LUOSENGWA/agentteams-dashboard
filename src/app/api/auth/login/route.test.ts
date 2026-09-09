@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { POST } from './route';
-import { callHigressConsole, forwardCookies } from '../../higress/proxy-helper';
+import { callHigressConsole, forwardCookies, getHigressConsoleURL } from '../../higress/proxy-helper';
 import { getAuthToken, getControllerUrl } from '../../agentteams/proxy-helper';
 import { __resetSessionStoreForTests, SESSION_COOKIE_NAME } from '@/lib/dashboard-session';
 
@@ -28,6 +28,7 @@ const mockCallHigressConsole = vi.mocked(callHigressConsole);
 const mockForwardCookies = vi.mocked(forwardCookies);
 const mockGetAuthToken = vi.mocked(getAuthToken);
 const mockGetControllerUrl = vi.mocked(getControllerUrl);
+const mockGetHigressConsoleURL = vi.mocked(getHigressConsoleURL);
 
 const SECRET = 'c'.repeat(64);
 
@@ -92,6 +93,8 @@ describe('POST /api/auth/login (dual track, M19)', () => {
     vi.stubEnv('AGENTTEAMS_HIGRESS_ADAPTER_MODE', 'direct');
     vi.stubEnv('DASHBOARD_COOKIE_SECURE', '');
     mockCallHigressConsole.mockReset();
+    mockGetHigressConsoleURL.mockReset();
+    mockGetHigressConsoleURL.mockReturnValue('http://higress-console:8080');
     mockForwardCookies.mockReset();
     mockGetAuthToken.mockReset();
     mockGetAuthToken.mockResolvedValue('sa-token');
@@ -166,6 +169,29 @@ describe('POST /api/auth/login (dual track, M19)', () => {
     expect(cookies.some((c) => c.startsWith('_hi_sess='))).toBe(false);
     // The Matrix token must never appear in a cookie value.
     expect(cookies.every((c) => !c.includes('syt_l2_token'))).toBe(true);
+  });
+
+  it('Console deployment config error (host not allowed) → falls through to the Matrix track instead of 502 (one-person-per-instance LAN deployment)', async () => {
+    const cfgError = new Error(
+      'Higress Console deployment configuration error: Console host "192.168.54.107" is not allowed',
+    );
+    cfgError.name = 'HigressConsoleConfigurationError';
+    mockGetHigressConsoleURL.mockImplementation(() => {
+      throw cfgError;
+    });
+    installFetchMock({
+      humans: { sunzong: { body: { name: 'sunzong', permissionLevel: 2, accessibleTeams: ['biz-team'] } } },
+      matrixLogin: {
+        body: { access_token: 'syt_l2_token', user_id: '@sunzong:sat.example', device_id: 'D1' },
+      },
+    });
+
+    const response = await POST(request({ username: 'sunzong', password: 'matrix-password' }));
+    expect(response.status).toBe(200);
+    const data = await responseJson(response);
+    expect(data.success).toBe(true);
+    expect(data.user).toEqual({ username: 'sunzong', level: 2 });
+    expect(data.mode).toBe('matrix');
   });
 
   it('Matrix: CR level 1 + valid admin account credentials → level-3 session, SA data credential, matrix chat token kept', async () => {
