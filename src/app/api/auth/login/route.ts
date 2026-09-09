@@ -79,7 +79,7 @@ async function probeMatrixToken(request: NextRequest, matrixToken: string): Prom
  * the user's own team scope, not an admin read. */
 async function fetchTeamsWithToken(request: NextRequest, matrixToken: string): Promise<string[]> {
   try {
-    const res = await fetch(`${getControllerUrl(request)}/api/v1/teams/`, {
+    const res = await fetch(`${getControllerUrl(request)}/api/v1/teams`, {
       headers: { Authorization: `Bearer ${matrixToken}` },
       signal: AbortSignal.timeout(5000),
     });
@@ -310,7 +310,7 @@ async function verifyAdminConsoleCredentials(username: string, password: string)
  */
 async function verifyControllerToken(request: NextRequest, token: string): Promise<boolean> {
   try {
-    const res = await fetch(`${getControllerUrl(request)}/api/v1/teams/`, {
+    const res = await fetch(`${getControllerUrl(request)}/api/v1/teams`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(5000),
     });

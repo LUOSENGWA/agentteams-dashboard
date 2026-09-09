@@ -80,7 +80,7 @@ function installFetchMock(opts: {
         headers: { 'content-type': 'application/json' },
       });
     }
-    if (url.includes('/api/v1/teams/')) {
+    if (url.includes('/api/v1/teams')) {
       // verifyControllerToken endpoint — default 401 (invalid token);
       // tests asserting a VALID pasted token pass `teams` explicitly.
       const spec = opts.teams ?? { status: 401 };
