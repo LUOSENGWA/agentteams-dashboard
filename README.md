@@ -168,8 +168,10 @@ docker run -d -p 13000:3000 \
 - `DASHBOARD_SESSION_SECRET` is **required** — login fails closed without
   it. Generate once and keep it stable across container rebuilds.
 - `DASHBOARD_SETUP_TOKEN_ENFORCE=0` lets the installer skip the pre-login
-  setup token (trusted-LAN deployments; the startup log records the open
-  state). Omit it to keep the one-time token gate.
+  setup token (trusted-LAN deployments only; the startup log records the
+  open state). Omit it to keep the pre-login token gate — the same token
+  stays the owner gate for `?setup=1` reconfiguration until the volume is
+  reset (it is not consumed by the first save).
 - Team admins (L1) verify once more at login: the admin password (needs
   `AGENTTEAMS_AUTH_TOKEN` below) or a controller token pasted in the login
   form.
@@ -186,7 +188,9 @@ docker run -d -p 13000:3000 \
 
 Effects: only admin (L1) sessions may save the backend config (L2 save
 returns 403); the setup token is read from env only and never written to the
-volume; every config write is audited with actor + level + changed fields.
+volume — with no env token the pre-login setup path is closed (fail-closed;
+set it so the `?setup=1` escape hatch works); every config write is audited
+with actor + level + changed fields.
 `AGENTTEAMS_AUTH_TOKEN` enables the L1 admin-password login path — without
 it, L1 pastes the controller token at each login instead.
 
@@ -214,10 +218,10 @@ docker build -t agentteams-dashboard:local .
 | `AGENTTEAMS_AUTH_TOKEN_FILE` | Token file path (supports rotation) | — |
 | `DASHBOARD_SESSION_SECRET` | HMAC secret for session cookies — **required** for login | — |
 | `DASHBOARD_CONFIG_FILE` | Backend config file written by the first-launch setup page (file takes precedence over `AGENTTEAMS_*_URL` env) | `/data/agentteams-dashboard/config.json` |
-| `DASHBOARD_SETUP_TOKEN` | Pre-login setup token. Unset = auto-generated and printed once to the log (standalone); in shared mode the env is the only source | — |
+| `DASHBOARD_SETUP_TOKEN` | Pre-login setup token. Unset = auto-generated and printed once to the log (standalone); in shared mode the env is the only source (absent = pre-login path closed, fail-closed) | — |
 | `DASHBOARD_SETUP_TOKEN_ENFORCE` | `0` = pre-login config save needs no token (trusted LAN) | unset (gate enforced) |
 | `DASHBOARD_SHARED_MODE` | `1` = multiple users share this instance (L1-only config save, audited writes) | unset (one user per instance) |
-| `DASHBOARD_ALLOWED_HOSTS` | Optional SSRF filter for the setup "test connection" probe | unset (allow) |
+| `DASHBOARD_ALLOWED_HOSTS` | Strict allowlist for the setup "test connection" probe (it is token/session-gated; the metadata sentinel 169.254.169.254 is denied in all modes) | unset (allow for session/token holders) |
 | `DATABASE_URL` | SQLite database path | `file:./db/dashboard.db` |
 | `NEXT_PUBLIC_BASE_PATH` | URL base path (embedded deployment) | `/dashboard` |
 

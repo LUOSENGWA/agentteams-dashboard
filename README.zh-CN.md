@@ -166,7 +166,9 @@ docker run -d -p 13000:3000 \
 - `DASHBOARD_SESSION_SECRET` **必填**——缺失时登录 fail closed。生成一次，
   容器重建时保持稳定。
 - `DASHBOARD_SETUP_TOKEN_ENFORCE=0` = 安装者免 pre-login setup token（限
-  可信 LAN；启动日志记录开放状态）；不设置则保留一次性 token 门。
+  可信 LAN；启动日志记录开放状态）；不设置则保留登录前 token 门——同一
+  token 可重复用于 `?setup=1` 重配，直到数据卷重置（首启保存不会消费
+  它）。
 - 团队管理员（L1）登录时多一步验证：admin 密码（需下面的
   `AGENTTEAMS_AUTH_TOKEN`）或在登录表单粘贴 controller token。
 - 网关 Console 功能（模型管理、共享登录）另需
@@ -181,7 +183,9 @@ docker run -d -p 13000:3000 \
 ```
 
 效果：仅 L1 会话可保存后端配置（L2 保存返回 403）；setup token 只从 env
-读取、永不落卷；每次配置写审计 actor+级别+变更字段。`AGENTTEAMS_AUTH_TOKEN`
+读取、永不落卷——缺 env token 时登录前配置路径关闭（fail-closed，
+`?setup=1` 逃生口不可用；需要逃生口就设它）；每次配置写审计
+actor+级别+变更字段。`AGENTTEAMS_AUTH_TOKEN`
 启用 L1 admin 密码登录；不配则 L1 每次登录粘 controller token。
 
 **嵌入部署**（`install/agentteams-install.sh` 安装）：地址来自 AgentTeams
@@ -206,10 +210,10 @@ docker build -t agentteams-dashboard:local .
 | `AGENTTEAMS_AUTH_TOKEN_FILE` | Token 文件路径（支持轮转） | — |
 | `DASHBOARD_SESSION_SECRET` | 会话 cookie HMAC 密钥——登录**必填** | — |
 | `DASHBOARD_CONFIG_FILE` | 首启 setup 页写入的后端配置文件（文件优先于 `AGENTTEAMS_*_URL` env） | `/data/agentteams-dashboard/config.json` |
-| `DASHBOARD_SETUP_TOKEN` | Pre-login setup token。未设=自动生成并打一次日志（单机）；共享模式下 env 是唯一来源 | — |
+| `DASHBOARD_SETUP_TOKEN` | Pre-login setup token。未设=自动生成并打一次日志（单机）；共享模式下 env 是唯一来源（缺=登录前路径关闭，fail-closed） | — |
 | `DASHBOARD_SETUP_TOKEN_ENFORCE` | `0` = pre-login 保存配置免 token（限可信 LAN） | 未设（门生效） |
 | `DASHBOARD_SHARED_MODE` | `1` = 多用户共享本实例（配置保存仅 L1、写操作审计） | 未设（一人一实例） |
-| `DASHBOARD_ALLOWED_HOSTS` | setup「测试连接」探针的可选 SSRF 过滤 | 未设（放行） |
+| `DASHBOARD_ALLOWED_HOSTS` | setup「测试连接」探针的严格白名单（探针已 token/会话门控；metadata 哨兵 169.254.169.254 全模式拒绝） | 未设（对 session/token 持有者放行） |
 | `DATABASE_URL` | SQLite 数据库路径 | `file:./db/dashboard.db` |
 | `NEXT_PUBLIC_BASE_PATH` | URL 基础路径（嵌入部署时用） | `/dashboard` |
 
