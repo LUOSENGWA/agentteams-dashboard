@@ -690,6 +690,16 @@ export function OverviewSection() {
                     icon={GitBranch}
                     detail={infrastructure.controller?.version}
                   />
+                  {/* SGLang: optional inference backend — only shown once an
+                      address is configured (F1). */}
+                  {infrastructure.sglang && infrastructure.sglang.endpoint !== '' && (
+                    <HealthCard
+                      name="SGLang"
+                      healthy={infrastructure.sglang.healthy}
+                      icon={Bot}
+                      detail={infrastructure.sglang.endpoint}
+                    />
+                  )}
                 </div>
               ) : (
                 <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground">

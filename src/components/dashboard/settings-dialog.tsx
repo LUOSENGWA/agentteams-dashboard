@@ -38,6 +38,7 @@ import {
 import { useInfrastructure } from '@/hooks/use-agentteams-infrastructure';
 import { ThemeTab } from './settings/theme-tab';
 import { PluginsTab } from './settings/plugins-tab';
+import { BackendTab } from './settings/backend-tab';
 
 // Empty default means "use the server-side AGENTTEAMS_CONTROLLER_URL" so the same
 // image works in embedded (localhost) and Kubernetes (in-cluster) modes.
@@ -65,7 +66,14 @@ export function SettingsDialog() {
     setTaskBoardVisible,
     projectsVisible,
     setProjectsVisible,
+    userLevel,
   } = useAgentTeamsStore();
+
+  // F1b: backend address config (settings tab + the per-request controllerUrl
+  // override in the connection test) is an L1 (level 3) capability. Non-admins
+  // always hit the deployment-configured controller — the server enforces the
+  // same rule in proxy-helper.getControllerUrl (the UI gate is cosmetic only).
+  const isL1 = userLevel >= 3;
 
   const { data: infrastructure } = useInfrastructure();
 
@@ -100,7 +108,9 @@ export function SettingsDialog() {
     setTestResult(null);
     const start = performance.now();
     try {
-      const testPath = tempUrl.trim()
+      // Non-admins test the server-configured controller only (their override
+      // would be dropped by the server anyway — see proxy-helper.getControllerUrl).
+      const testPath = isL1 && tempUrl.trim()
         ? `/api/agentteams/healthz/?controllerUrl=${encodeURIComponent(tempUrl)}`
         : '/api/agentteams/healthz/';
       const res = await fetch(apiUrl(testPath));
@@ -137,8 +147,12 @@ export function SettingsDialog() {
         </DialogHeader>
 
         <Tabs defaultValue="connection" className="w-full">
-          <TabsList className="grid w-full grid-cols-4">
+          <TabsList className="grid w-full grid-cols-5">
             <TabsTrigger value="connection">连接</TabsTrigger>
+            <TabsTrigger value="backends">
+              <Server className="w-3.5 h-3.5 mr-1" />
+              后端
+            </TabsTrigger>
             <TabsTrigger value="theme">
               <Palette className="w-3.5 h-3.5 mr-1" />
               外观
@@ -154,22 +168,30 @@ export function SettingsDialog() {
           </TabsList>
 
           <TabsContent value="connection" className="space-y-5 py-4">
-            {/* Controller URL */}
-            <div className="space-y-2">
-              <Label htmlFor="controller-url">Controller 地址</Label>
-              <div className="flex gap-2">
-                <Input
-                  id="controller-url"
-                  value={tempUrl}
-                  onChange={(e) => { setTempUrl(e.target.value); setTestResult(null); }}
-                  placeholder="留空以使用服务端配置 (AGENTTEAMS_CONTROLLER_URL)"
-                  className="flex-1"
-                />
-                <Button variant="outline" size="icon" onClick={handleReset} title="重置为默认">
-                  <RotateCcw className="w-4 h-4" />
-                </Button>
+            {/* Controller URL — L1 only (F1b): the per-request ?controllerUrl=
+                override is ignored server-side for non-admin sessions, so the
+                field is hidden for them instead of silently mis-tested. */}
+            {isL1 ? (
+              <div className="space-y-2">
+                <Label htmlFor="controller-url">Controller 地址</Label>
+                <div className="flex gap-2">
+                  <Input
+                    id="controller-url"
+                    value={tempUrl}
+                    onChange={(e) => { setTempUrl(e.target.value); setTestResult(null); }}
+                    placeholder="留空以使用服务端配置 (AGENTTEAMS_CONTROLLER_URL)"
+                    className="flex-1"
+                  />
+                  <Button variant="outline" size="icon" onClick={handleReset} title="重置为默认">
+                    <RotateCcw className="w-4 h-4" />
+                  </Button>
+                </div>
               </div>
-            </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                后端地址由管理员（L1）在「后端」页统一配置；当前身份不支持按请求覆盖 Controller 地址。
+              </p>
+            )}
 
             {/* Connection Status */}
             <div className="flex items-center gap-2">
@@ -372,6 +394,10 @@ export function SettingsDialog() {
                 onCheckedChange={setProjectsVisible}
               />
             </div>
+          </TabsContent>
+
+          <TabsContent value="backends" className="py-4">
+            <BackendTab />
           </TabsContent>
 
           <TabsContent value="theme" className="py-4">

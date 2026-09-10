@@ -1,14 +1,19 @@
 // @vitest-environment node
-import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createServer, type Server } from 'node:http';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { NextRequest } from 'next/server';
-import { proxyToAgentTeams } from './proxy-helper';
+import { getControllerUrl, proxyToAgentTeams } from './proxy-helper';
 import {
   SESSION_COOKIE_NAME,
   __resetSessionStoreForTests,
   createSession,
   destroySession,
+  sessionCookieHeader,
 } from '@/lib/dashboard-session';
+import { effectiveUrl, forgetWorking, pickBackendUrl } from '@/lib/backend-config';
 
 let server: Server;
 let controllerUrl: string;
@@ -226,5 +231,218 @@ describe('proxyToAgentTeams per-session credential (M19 dual track)', () => {
     destroySession(sessionId);
     await proxy(requestWith(`${SESSION_COOKIE_NAME}=${cookieValue}`, { authorization: 'Bearer browser-forged' }));
     expect(captured[0].authorization).toBe('Bearer sa-admin-token');
+  });
+});
+
+describe('getControllerUrl ?controllerUrl= override gating (F1b)', () => {
+  const OVERRIDE = 'http://127.0.0.1:9999'; // allowed by the SSRF host list
+  const DEFAULT_URL = 'http://ctl-default:8090';
+  const saved = {
+    secret: process.env.DASHBOARD_SESSION_SECRET,
+    controller: process.env.AGENTTEAMS_CONTROLLER_URL,
+    api: process.env.AGENTTEAMS_API_URL,
+    configFile: process.env.DASHBOARD_CONFIG_FILE,
+  };
+
+  beforeAll(() => {
+    process.env.DASHBOARD_SESSION_SECRET = 'f'.repeat(64);
+    process.env.AGENTTEAMS_CONTROLLER_URL = DEFAULT_URL;
+    process.env.AGENTTEAMS_API_URL = '';
+    process.env.DASHBOARD_CONFIG_FILE = '/nonexistent-dir-for-tests/config.json';
+    forgetWorking('controller');
+  });
+
+  afterAll(() => {
+    for (const [key, value] of Object.entries(saved)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+    __resetSessionStoreForTests();
+  });
+
+  function withCookie(cookie: string | null, query: string): NextRequest {
+    const headers = new Headers();
+    if (cookie) headers.set('cookie', cookie);
+    return new NextRequest(`http://localhost/api/agentteams/healthz/${query}`, { headers });
+  }
+
+  function cookieFor(
+    user: string,
+    crLevel: number,
+    credential: { kind: 'sa' } | { kind: 'matrix'; token: string } | { kind: 'controller-token'; token: string },
+  ): string {
+    const { cookieValue } = createSession({ user, crLevel, credential });
+    return sessionCookieHeader(cookieValue);
+  }
+
+  it('L1 (level 3, sa credential): allowed-host override is honored', () => {
+    const cookie = cookieFor('luo', 1, { kind: 'sa' });
+    expect(getControllerUrl(withCookie(cookie, `?controllerUrl=${encodeURIComponent(OVERRIDE)}`))).toBe(OVERRIDE);
+  });
+
+  it('L2 (level 2, matrix credential): override is dropped, default used', () => {
+    const cookie = cookieFor('sunzong', 2, { kind: 'matrix', token: 'syt_l2_token' });
+    expect(getControllerUrl(withCookie(cookie, `?controllerUrl=${encodeURIComponent(OVERRIDE)}`))).toBe(DEFAULT_URL);
+  });
+
+  it('observer (level 1, matrix credential): override is dropped, default used', () => {
+    const cookie = cookieFor('viewer', 3, { kind: 'matrix', token: 'viewer_token' });
+    expect(getControllerUrl(withCookie(cookie, `?controllerUrl=${encodeURIComponent(OVERRIDE)}`))).toBe(DEFAULT_URL);
+  });
+
+  it('pre-login (no session): override still honored behind the SSRF list', () => {
+    expect(getControllerUrl(withCookie(null, `?controllerUrl=${encodeURIComponent(OVERRIDE)}`))).toBe(OVERRIDE);
+  });
+
+  it('L1 session: non-allowed host is still rejected by the SSRF list', () => {
+    const cookie = cookieFor('luo', 1, { kind: 'sa' });
+    expect(getControllerUrl(withCookie(cookie, '?controllerUrl=http%3A%2F%2Fevil.example.com'))).toBe(DEFAULT_URL);
+  });
+
+  it('L2 session: no override parameter → default (unchanged behavior)', () => {
+    const cookie = cookieFor('sunzong', 2, { kind: 'matrix', token: 'syt_l2_token' });
+    expect(getControllerUrl(withCookie(cookie, ''))).toBe(DEFAULT_URL);
+  });
+});
+
+describe('proxyToAgentTeams failover (F1c — plugin catch-all parity)', () => {
+  let good: Server;
+  let auth: Server;
+  let goodUrl: string;
+  let authUrl: string;
+  let dead1: string;
+  let dead2: string;
+  let goodCalls = 0;
+  let authCalls = 0;
+  let configFile: string;
+
+  function closedLoopbackPort(): Promise<number> {
+    // Bind then close → the port is free (and refused) for the test.
+    const tmp = createServer();
+    const listen = new Promise<void>((resolve) => tmp.listen(0, '127.0.0.1', resolve));
+    return Promise.resolve(listen).then(async () => {
+      const a = tmp.address();
+      if (!a || typeof a === 'string') throw new Error('no tmp server');
+      await new Promise<void>((resolve) => tmp.close(() => resolve()));
+      return a.port;
+    });
+  }
+
+  beforeAll(async () => {
+    good = createServer((_req, res) => {
+      goodCalls += 1;
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end('{"ok":true}');
+    });
+    auth = createServer((_req, res) => {
+      authCalls += 1;
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end('{"error":"unauthorized"}');
+    });
+    await Promise.all([
+      new Promise<void>((resolve) => good.listen(0, '127.0.0.1', resolve)),
+      new Promise<void>((resolve) => auth.listen(0, '127.0.0.1', resolve)),
+    ]);
+    const ga = good.address();
+    const aa = auth.address();
+    if (!ga || typeof ga === 'string' || !aa || typeof aa === 'string') throw new Error('no server');
+    goodUrl = `http://127.0.0.1:${ga.port}`;
+    authUrl = `http://127.0.0.1:${aa.port}`;
+    const [p1, p2] = await Promise.all([closedLoopbackPort(), closedLoopbackPort()]);
+    dead1 = `http://127.0.0.1:${p1}`;
+    dead2 = `http://127.0.0.1:${p2}`;
+    configFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'proxy-failover-')), 'config.json');
+  });
+
+  afterAll(async () => {
+    await Promise.all([
+      new Promise<void>((resolve) => good.close(() => resolve())),
+      new Promise<void>((resolve) => auth.close(() => resolve())),
+    ]);
+    fs.rmSync(path.dirname(configFile), { recursive: true, force: true });
+  });
+
+  beforeEach(() => {
+    goodCalls = 0;
+    authCalls = 0;
+    forgetWorking('controller');
+    vi.stubEnv('DASHBOARD_CONFIG_FILE', configFile);
+    vi.stubEnv('AGENTTEAMS_CONTROLLER_URL', '');
+    vi.stubEnv('AGENTTEAMS_API_URL', '');
+    vi.stubEnv('DASHBOARD_SESSION_SECRET', 'c'.repeat(64));
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    forgetWorking('controller');
+    if (fs.existsSync(configFile)) fs.rmSync(configFile);
+  });
+
+  function writeConfig(internal: string, external: string) {
+    fs.writeFileSync(
+      configFile,
+      JSON.stringify({ version: 1, backends: { controller: { internal, external } } }),
+    );
+  }
+
+  function req(query = ''): NextRequest {
+    return new NextRequest(`http://localhost/api/agentteams/teams${query}`, { method: 'GET' });
+  }
+
+  it('dead first candidate → same-address retry → walks to the working second candidate', async () => {
+    writeConfig(dead1, goodUrl);
+    const res = await proxyToAgentTeams(req(), dead1, '/api/v1/teams', { forwardBody: false, method: 'GET' });
+    expect(res.status).toBe(200);
+    expect(goodCalls).toBe(1);
+    // the working cache now points at the address that actually served
+    expect(pickBackendUrl('controller')).toBe(goodUrl);
+  });
+
+  it('all candidates dead → 502 with per-address details', async () => {
+    writeConfig(dead1, dead2);
+    const res = await proxyToAgentTeams(req(), dead1, '/api/v1/teams', { forwardBody: false, method: 'GET' });
+    expect(res.status).toBe(502);
+    const data = (await res.json()) as { error: string; details: Array<{ url: string; error: string }> };
+    expect(data.error).toContain('unreachable');
+    expect(data.details.map((d) => d.url).sort()).toEqual([dead1, dead2].sort());
+    // no working address may be marked from a fully failed round
+    expect(effectiveUrl('controller')).toBeNull();
+  });
+
+  it('an HTTP 401 is returned as-is (no retry, not marked working)', async () => {
+    writeConfig(authUrl, goodUrl);
+    const res = await proxyToAgentTeams(req(), authUrl, '/api/v1/teams', { forwardBody: false, method: 'GET' });
+    expect(res.status).toBe(401);
+    expect(authCalls).toBe(1);
+    expect(goodCalls).toBe(0);
+    expect(effectiveUrl('controller')).toBeNull();
+  });
+
+  it('a valid ?controllerUrl= override pins a single address (no candidate walk)', async () => {
+    writeConfig(dead1, goodUrl);
+    const r1 = await proxyToAgentTeams(
+      req(`?controllerUrl=${encodeURIComponent(goodUrl)}`),
+      dead1,
+      '/api/v1/teams',
+      { forwardBody: false, method: 'GET' },
+    );
+    expect(r1.status).toBe(200);
+    expect(goodCalls).toBe(1);
+
+    // a dead override must NOT fall back to the config candidates
+    const r2 = await proxyToAgentTeams(
+      req(`?controllerUrl=${encodeURIComponent(dead2)}`),
+      dead1,
+      '/api/v1/teams',
+      { forwardBody: false, method: 'GET' },
+    );
+    expect(r2.status).toBe(502);
+    expect(goodCalls).toBe(1); // the good candidate was never walked
+  });
+
+  it('no config and no working cache → the passed primary is the single target', async () => {
+    const res = await proxyToAgentTeams(req(), goodUrl, '/api/v1/teams', { forwardBody: false, method: 'GET' });
+    expect(res.status).toBe(200);
+    expect(goodCalls).toBe(1);
   });
 });

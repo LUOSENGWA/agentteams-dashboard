@@ -1,40 +1,50 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthToken } from '../proxy-helper';
+import {
+  markWorking,
+  pickBackendUrl,
+  probeBackend,
+} from '@/lib/backend-config';
 import type { InfrastructureInfo } from '@/lib/agentteams-api';
 
 const TIMEOUT_MS = 5000;
 
-// Defaults follow the embedded (single-container) topology: all platform
-// services live in the agentteams-controller container on the agentteams-net
-// docker network. Install scripts inject the env vars below; k8s deployments
-// must point them at the corresponding Services explicitly.
-const CONTROLLER_URL =
-  process.env.AGENTTEAMS_CONTROLLER_URL ||
-  process.env.AGENTTEAMS_API_URL ||
-  'http://agentteams-controller:8090';
-
-const MINIO_ENDPOINT =
-  process.env.AGENTTEAMS_FS_ENDPOINT ||
-  process.env.AGENTTEAMS_MINIO_ENDPOINT ||
-  process.env.AGENTTEAMS_MINIO_URL ||
-  'http://agentteams-controller:9000';
-
-const MATRIX_ENDPOINT =
-  process.env.AGENTTEAMS_MATRIX_URL ||
-  process.env.NEXT_PUBLIC_MATRIX_API_URL || // set by install/agentteams-dashboard.sh
-  'http://agentteams-controller:6167';
-
+// Per-request backend resolution (F1): config file (dual address + failover
+// working cache) > env vars > embedded topology defaults. The embedded
+// (single-container) topology keeps all platform services in the
+// agentteams-controller container on the agentteams-net docker network;
+// install scripts inject the env vars, k8s deployments point them at the
+// corresponding Services, and standalone installs fill the config file via
+// the first-launch setup page.
 const HIGRESS_MODE = process.env.AGENTTEAMS_HIGRESS_ADAPTER_MODE === 'external' ? 'external' : 'direct';
 // Higress exposes separate data-plane and Console endpoints in the embedded
 // topology. Dashboard runs in its own container, so loopback addresses are invalid.
 const EMBEDDED_HIGRESS_GATEWAY_ENDPOINT = 'http://aigw-local.agentteams.io:8080';
 const EMBEDDED_HIGRESS_CONSOLE_ENDPOINT = 'http://agentteams-controller:8001';
-const HIGRESS_GATEWAY_ENDPOINT =
-  process.env.AGENTTEAMS_AI_GATEWAY_URL ||
-  (HIGRESS_MODE === 'direct' ? EMBEDDED_HIGRESS_GATEWAY_ENDPOINT : undefined);
-const HIGRESS_CONSOLE_ENDPOINT =
-  process.env.AGENTTEAMS_AI_GATEWAY_ADMIN_URL ||
-  (HIGRESS_MODE === 'direct' ? EMBEDDED_HIGRESS_CONSOLE_ENDPOINT : undefined);
+
+function resolveControllerUrl(): string {
+  return pickBackendUrl('controller') || 'http://agentteams-controller:8090';
+}
+
+function resolveMinioEndpoint(): string {
+  return pickBackendUrl('minio') || 'http://agentteams-controller:9000';
+}
+
+function resolveMatrixEndpoint(): string {
+  return pickBackendUrl('matrix') || 'http://agentteams-controller:6167';
+}
+
+function resolveHigressGatewayEndpoint(): string | undefined {
+  return pickBackendUrl('higress-gateway') || (HIGRESS_MODE === 'direct' ? EMBEDDED_HIGRESS_GATEWAY_ENDPOINT : undefined);
+}
+
+function resolveHigressConsoleEndpoint(): string | undefined {
+  return pickBackendUrl('higress-console') || (HIGRESS_MODE === 'direct' ? EMBEDDED_HIGRESS_CONSOLE_ENDPOINT : undefined);
+}
+
+function resolveSglangEndpoint(): string | undefined {
+  return pickBackendUrl('sglang'); // optional backend; no embedded default
+}
 
 async function fetchWithTimeout(
   url: string,
@@ -52,15 +62,16 @@ async function fetchWithTimeout(
   }
 }
 
-async function checkController(): Promise<InfrastructureInfo['controller']> {
+async function checkController(url: string): Promise<InfrastructureInfo['controller']> {
   try {
-    const res = await fetchWithTimeout(`${CONTROLLER_URL}/healthz`);
+    const res = await fetchWithTimeout(`${url}/healthz`);
+    if (res.ok) markWorking('controller', url);
     const authToken = await getAuthToken();
     const headers: Record<string, string> = {};
     if (authToken) {
       headers.Authorization = `Bearer ${authToken}`;
     }
-    const versionRes = await fetchWithTimeout(`${CONTROLLER_URL}/api/v1/version`, { headers });
+    const versionRes = await fetchWithTimeout(`${url}/api/v1/version`, { headers });
     let version = 'unknown';
     if (versionRes.ok) {
       const data = await versionRes.json().catch(() => ({}));
@@ -76,7 +87,7 @@ async function checkKubernetes(): Promise<InfrastructureInfo['kubernetes']> {
   try {
     // Use Node.js https to query the in-cluster API server with the mounted CA/token.
     const https = await import('https');
-    const fs = await import('fs');
+    const fs = await import('node:fs');
 
     const ca = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/ca.crt');
     const token = fs.readFileSync('/var/run/secrets/kubernetes.io/serviceaccount/token', 'utf-8').trim();
@@ -122,30 +133,44 @@ async function checkKubernetes(): Promise<InfrastructureInfo['kubernetes']> {
   }
 }
 
-async function checkMinio(): Promise<InfrastructureInfo['minio']> {
+async function checkMinio(url: string): Promise<InfrastructureInfo['minio']> {
   try {
-    const res = await fetchWithTimeout(`${MINIO_ENDPOINT}/minio/health/live`);
+    const res = await fetchWithTimeout(`${url}/minio/health/live`);
+    if (res.ok) markWorking('minio', url);
     return {
       healthy: res.ok,
-      endpoint: MINIO_ENDPOINT,
+      endpoint: url,
       buckets: [], // Bucket list is provided by /api/agentteams/storage/buckets
     };
   } catch {
     return {
       healthy: false,
-      endpoint: MINIO_ENDPOINT,
+      endpoint: url,
       buckets: [],
     };
   }
 }
 
-async function checkMatrix(): Promise<InfrastructureInfo['matrix']> {
+async function checkMatrix(url: string): Promise<InfrastructureInfo['matrix']> {
   try {
-    const res = await fetchWithTimeout(`${MATRIX_ENDPOINT}/_matrix/client/versions`);
-    return { healthy: res.ok, homeserver: MATRIX_ENDPOINT };
+    const res = await fetchWithTimeout(`${url}/_matrix/client/versions`);
+    if (res.ok) markWorking('matrix', url);
+    return { healthy: res.ok, homeserver: url };
   } catch {
-    return { healthy: false, homeserver: MATRIX_ENDPOINT };
+    return { healthy: false, homeserver: url };
   }
+}
+
+// SGLang is an optional inference backend (model list / model management).
+async function checkSglang(url: string | undefined): Promise<InfrastructureInfo['sglang']> {
+  if (!url) {
+    return { healthy: false, endpoint: '' };
+  }
+  const result = await probeBackend('sglang', url, TIMEOUT_MS);
+  // httpOk (status < 400), not ok (network connected): a 401/5xx probe must
+  // not mark the address working or report a healthy inference backend.
+  if (result.httpOk) markWorking('sglang', url, result.latencyMs);
+  return { healthy: result.httpOk, endpoint: url };
 }
 
 async function checkExternalService(endpoint: string | undefined) {
@@ -212,11 +237,16 @@ async function checkHigressGateway(endpoint: string | undefined) {
   }
 }
 
-async function checkHigress(): Promise<NonNullable<InfrastructureInfo['higress']>> {
+async function checkHigress(
+  gatewayEndpoint: string | undefined,
+  consoleEndpoint: string | undefined
+): Promise<NonNullable<InfrastructureInfo['higress']>> {
   const [gateway, console] = await Promise.all([
-    checkHigressGateway(HIGRESS_GATEWAY_ENDPOINT),
-    checkExternalService(HIGRESS_CONSOLE_ENDPOINT),
+    checkHigressGateway(gatewayEndpoint),
+    checkExternalService(consoleEndpoint),
   ]);
+  if (gateway.state === 'reachable' && gatewayEndpoint) markWorking('higress-gateway', gatewayEndpoint);
+  if (console.state === 'reachable' && consoleEndpoint) markWorking('higress-console', consoleEndpoint);
 
   // Runtime adaptation health tracks the Gateway data plane probe only.
   // The optional Console management address keeps its own status so an
@@ -231,12 +261,23 @@ async function checkHigress(): Promise<NonNullable<InfrastructureInfo['higress']
 
 // GET /api/agentteams/infrastructure - aggregate health of all platform components
 export async function GET(_request: NextRequest) {
-  const [controller, kubernetes, minio, matrix, higress] = await Promise.all([
-    checkController(),
+  // Resolve addresses per request (F1): the config file may have been
+  // written/updated since module load, and the failover working cache must
+  // be consulted (and refreshed) here.
+  const controllerUrl = resolveControllerUrl();
+  const minioEndpoint = resolveMinioEndpoint();
+  const matrixEndpoint = resolveMatrixEndpoint();
+  const higressGateway = resolveHigressGatewayEndpoint();
+  const higressConsole = resolveHigressConsoleEndpoint();
+  const sglangEndpoint = resolveSglangEndpoint();
+
+  const [controller, kubernetes, minio, matrix, higress, sglang] = await Promise.all([
+    checkController(controllerUrl),
     checkKubernetes(),
-    checkMinio(),
-    checkMatrix(),
-    checkHigress(),
+    checkMinio(minioEndpoint),
+    checkMatrix(matrixEndpoint),
+    checkHigress(higressGateway, higressConsole),
+    checkSglang(sglangEndpoint),
   ]);
 
   const info: InfrastructureInfo = {
@@ -245,6 +286,7 @@ export async function GET(_request: NextRequest) {
     minio,
     matrix,
     higress,
+    sglang,
   };
 
   return NextResponse.json(info);

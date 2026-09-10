@@ -295,6 +295,8 @@ export interface InfrastructureInfo {
   matrix?: { healthy: boolean; homeserver: string };
   kubernetes?: { healthy: boolean; version: string };
   controller?: { healthy: boolean; version: string };
+  /** Optional SGLang inference backend (F1). endpoint is empty when not configured. */
+  sglang?: { healthy: boolean; endpoint: string };
 }
 
 export interface BucketResponse {

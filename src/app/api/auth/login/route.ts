@@ -53,6 +53,48 @@ interface HumanRecord {
 async function fetchHumanViaSa(request: NextRequest, name: string): Promise<HumanRecord | null> {
   const token = await getAuthToken();
   if (!token) return null;
+  return fetchHumanWithToken(request, name, token);
+}
+
+/** Identity probe with the user's OWN Matrix token. The Controller's
+ * Matrix auth only accepts permissionLevel=2 tokens, so a 200 on the
+ * status endpoint proves team-user identity WITHOUT reading the Human CR
+ * (the plugin's model: the user's own access token is the default
+ * identity, admin tokens are an optional channel — agentteams_connector/
+ * config.py `controller_token` = "Optional admin token for L1 full view"). */
+async function probeMatrixToken(request: NextRequest, matrixToken: string): Promise<boolean> {
+  try {
+    const res = await fetch(`${getControllerUrl(request)}/api/v1/status`, {
+      headers: { Authorization: `Bearer ${matrixToken}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/** Teams visible to the caller's own Matrix token — the Controller
+ * filters the list by accessibleTeams server-side (ListTeams), so this is
+ * the user's own team scope, not an admin read. */
+async function fetchTeamsWithToken(request: NextRequest, matrixToken: string): Promise<string[]> {
+  try {
+    const res = await fetch(`${getControllerUrl(request)}/api/v1/teams`, {
+      headers: { Authorization: `Bearer ${matrixToken}` },
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { teams?: { name?: string }[] };
+    return (data.teams ?? []).map((t) => t.name ?? '').filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+/** CR lookup with an explicit admin-grade token (SA env or a validated
+ * Controller admin token pasted at login — one-person-per-instance
+ * deployments may hold no server-side SA credential at all). */
+async function fetchHumanWithToken(request: NextRequest, name: string, token: string): Promise<HumanRecord | null> {
   try {
     const res = await fetch(`${getControllerUrl(request)}/api/v1/humans/${encodeURIComponent(name)}`, {
       headers: { Authorization: `Bearer ${token}` },
@@ -155,7 +197,19 @@ async function attemptConsoleLogin(
   password: string,
   opts: { allowMatrix: boolean },
 ): Promise<ConsoleAttempt> {
-  const consoleUrl = getHigressConsoleURL();
+  let consoleUrl: string;
+  try {
+    consoleUrl = getHigressConsoleURL();
+  } catch (err) {
+    // Console deployment config invalid (e.g. host not on the allowlist in a
+    // one-person-per-instance LAN deployment): the Console track is
+    // unavailable, but the Matrix track does not depend on it — fall through
+    // so one track's misconfiguration never blocks the whole login endpoint.
+    console.error(
+      `Console track unavailable: ${err instanceof Error ? err.message : String(err)}`,
+    );
+    return { kind: 'failed' };
+  }
 
   // NOTE: the upstream auto-initializer (/system/init, "first login auto-
   // registers a Console admin") was intentionally REMOVED. It is a privilege
@@ -173,10 +227,18 @@ async function attemptConsoleLogin(
       consoleUrl,
     });
     consoleRes = result.response;
-  } catch {
+  } catch (err) {
+    // F1g: surface the failure in docker logs. A silently-failing Console
+    // track sends admin-password users down the Matrix track into the
+    // confusing "paste a Controller token" error with no trace of WHY the
+    // password path died (Luo-zong 9/9: only the token worked).
+    console.error(
+      `Console track fetch failed (${consoleUrl}): ${err instanceof Error ? err.message : String(err)}`,
+    );
     return { kind: 'failed' };
   }
   if (!consoleRes.ok) {
+    console.error(`Console track rejected: HTTP ${consoleRes.status} for user "${username}" (${consoleUrl})`);
     return { kind: 'failed' };
   }
 
@@ -256,7 +318,7 @@ async function verifyAdminConsoleCredentials(username: string, password: string)
  */
 async function verifyControllerToken(request: NextRequest, token: string): Promise<boolean> {
   try {
-    const res = await fetch(`${getControllerUrl(request)}/api/v1/teams/`, {
+    const res = await fetch(`${getControllerUrl(request)}/api/v1/teams`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(5000),
     });
@@ -300,7 +362,48 @@ async function attemptMatrixLogin(
 
   const userId = typeof matrix.userId === 'string' ? matrix.userId : '';
   const localpart = userId.startsWith('@') ? userId.slice(1).split(':')[0] : username;
-  const human = await fetchHumanViaSa(request, localpart);
+  let human = await fetchHumanViaSa(request, localpart);
+  if (!human && controllerToken) {
+    // One-person-per-instance deployment: the server may hold no admin
+    // credential (no AGENTTEAMS_AUTH_TOKEN). The Controller admin token
+    // pasted at login (existing L1 field) can perform the same level
+    // lookup — validated against the Controller before use. The L2-only
+    // matrix token itself is denied on human reads (controller
+    // authorizeHuman has no "human" case), so without an admin-grade
+    // token here the lookup is impossible; the upstream GET /api/v1/me
+    // (self-scope) would close that gap for L2.
+    if (await verifyControllerToken(request, controllerToken)) {
+      human = await fetchHumanWithToken(request, localpart, controllerToken);
+    } else {
+      return NextResponse.json(
+        { success: false, error: 'Controller 管理员 token 无效' },
+        { status: 401 },
+      );
+    }
+  }
+  if (!human) {
+    // No admin-grade credential available (SA-less one-person-per-instance):
+    // identify with the user's OWN Matrix token instead of an admin read.
+    // A 200 proves team-user (L2) identity — the Controller's Matrix auth
+    // rejects every other level — and the teams list carries the user's
+    // own accessibleTeams (server-side filtered). Plugin-aligned: own
+    // token = default identity, no admin credential needed for L2.
+    if (await probeMatrixToken(request, String(matrix.accessToken))) {
+      human = {
+        name: localpart,
+        permissionLevel: 2,
+        accessibleTeams: await fetchTeamsWithToken(request, String(matrix.accessToken)),
+      };
+    } else {
+      return NextResponse.json(
+        {
+          success: false,
+          error: '无法确认该账号的权限级别：请展开「管理员账号验证」提供 Controller 管理员 token，或联系部署管理员检查 Human CR',
+        },
+        { status: 401 },
+      );
+    }
+  }
   const crLevel = human && typeof human.permissionLevel === 'number' ? human.permissionLevel : -1;
   const dashLevel = MATRIX_CR_LEVEL_TO_DASH_LEVEL[crLevel];
   if (!human || !dashLevel) {

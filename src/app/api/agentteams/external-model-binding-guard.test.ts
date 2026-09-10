@@ -1,3 +1,4 @@
+// @vitest-environment node
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { rejectExternalModelProvider, rejectUnavailableExternalModelAlias } from './external-model-binding-guard';

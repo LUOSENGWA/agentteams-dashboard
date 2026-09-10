@@ -146,16 +146,64 @@ npm start
 
 ### Docker
 
+The same image serves every deployment form; the form is chosen by env flags
+at `docker run` time.
+
+**Standalone — one instance per user (default).** After `docker run`, open
+the URL: the first-launch page collects the backend addresses (Controller /
+Matrix / MinIO / Higress / SGLang, internal + external each), you save, and
+the login page appears. Team members (L2) then log in with **their own
+Matrix account and password only** — no tokens, no admin credentials.
+
 ```bash
-# Pull and run the pre-built image
 docker run -d -p 13000:3000 \
   --name agentteams-dashboard \
-  -e AGENTTEAMS_CONTROLLER_URL=http://host.docker.internal:8090 \
-  -e NEXT_PUBLIC_MATRIX_API_URL=http://host.docker.internal:6167 \
-  ghcr.io/agentteams-group/agentteams-dashboard:v1.2.3.1
+  --restart unless-stopped \
+  -v agentteams-dashboard-data:/data/agentteams-dashboard \
+  -e DASHBOARD_SESSION_SECRET="$(openssl rand -hex 32)" \
+  -e DASHBOARD_SETUP_TOKEN_ENFORCE=0 \
+  ghcr.io/agentteams-group/agentteams-dashboard:<tag>
+```
 
+- `DASHBOARD_SESSION_SECRET` is **required** — login fails closed without
+  it. Generate once and keep it stable across container rebuilds.
+- `DASHBOARD_SETUP_TOKEN_ENFORCE=0` lets the installer skip the pre-login
+  setup token (trusted-LAN deployments only; the startup log records the
+  open state). Omit it to keep the pre-login token gate — the same token
+  stays the owner gate for `?setup=1` reconfiguration until the volume is
+  reset (it is not consumed by the first save).
+- Team admins (L1) verify once more at login: the admin password (needs
+  `AGENTTEAMS_AUTH_TOKEN` below) or a controller token pasted in the login
+  form.
+- Gateway Console features (model management, shared login) additionally
+  need `-e AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS=<console-host>`.
+
+**Shared — multiple users on one instance.** Add:
+
+```bash
+  -e DASHBOARD_SHARED_MODE=1 \
+  -e DASHBOARD_SETUP_TOKEN="$(openssl rand -hex 16)" \
+  -e AGENTTEAMS_AUTH_TOKEN=<controller cli-token>
+```
+
+Effects: only admin (L1) sessions may save the backend config (L2 save
+returns 403); the setup token is read from env only and never written to the
+volume — with no env token the pre-login setup path is closed (fail-closed;
+set it so the `?setup=1` escape hatch works); every config write is audited
+with actor + level + changed fields.
+`AGENTTEAMS_AUTH_TOKEN` enables the L1 admin-password login path — without
+it, L1 pastes the controller token at each login instead.
+
+**Embedded** (installed by `install/agentteams-install.sh`): addresses come
+from the surrounding AgentTeams topology; the first-launch page only appears
+when nothing is configured.
+
+To reconfigure at any time: login page → "Cannot log in? Backend setup"
+(`?setup=1`).
+
+```bash
 # Or build from source
-docker build -t ghcr.io/agentteams-group/agentteams-dashboard:v1.2.3.1 .
+docker build -t agentteams-dashboard:local .
 ```
 
 ## ⚙️ Configuration
@@ -166,8 +214,14 @@ docker build -t ghcr.io/agentteams-group/agentteams-dashboard:v1.2.3.1 .
 | `NEXT_PUBLIC_AGENTTEAMS_CONTROLLER_URL` | Browser-facing Controller URL (optional) | — |
 | `NEXT_PUBLIC_MATRIX_API_URL` | Matrix Homeserver endpoint | — |
 | `MATRIX_HOMESERVER_ALLOWLIST` | Comma-separated homeserver hostnames allowed through the Matrix proxy (exclusive once set) | — |
-| `AGENTTEAMS_AUTH_TOKEN` | Controller auth token | — |
+| `AGENTTEAMS_AUTH_TOKEN` | Controller auth token — enables the L1 admin-password login path and (with `DASHBOARD_SHARED_MODE=1`) is the only admin credential source | — |
 | `AGENTTEAMS_AUTH_TOKEN_FILE` | Token file path (supports rotation) | — |
+| `DASHBOARD_SESSION_SECRET` | HMAC secret for session cookies — **required** for login | — |
+| `DASHBOARD_CONFIG_FILE` | Backend config file written by the first-launch setup page (file takes precedence over `AGENTTEAMS_*_URL` env) | `/data/agentteams-dashboard/config.json` |
+| `DASHBOARD_SETUP_TOKEN` | Pre-login setup token. Unset = auto-generated and printed once to the log (standalone); in shared mode the env is the only source (absent = pre-login path closed, fail-closed) | — |
+| `DASHBOARD_SETUP_TOKEN_ENFORCE` | `0` = pre-login config save needs no token (trusted LAN) | unset (gate enforced) |
+| `DASHBOARD_SHARED_MODE` | `1` = multiple users share this instance (L1-only config save, audited writes) | unset (one user per instance) |
+| `DASHBOARD_ALLOWED_HOSTS` | Strict allowlist for the setup "test connection" probe (it is token/session-gated; the metadata sentinel 169.254.169.254 is denied in all modes) | unset (allow for session/token holders) |
 | `DATABASE_URL` | SQLite database path | `file:./db/dashboard.db` |
 | `NEXT_PUBLIC_BASE_PATH` | URL base path (embedded deployment) | `/dashboard` |
 
