@@ -17,6 +17,7 @@ const configFile = () => path.join(workDir, 'config.json');
 beforeAll(async () => {
   workDir = fs.mkdtempSync(path.join(os.tmpdir(), 'backends-test-'));
   server = createServer((_req, res) => {
+    serverHits += 1;
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end('{}');
   });
@@ -31,11 +32,17 @@ afterAll(async () => {
   fs.rmSync(workDir, { recursive: true, force: true });
 });
 
+let serverHits = 0;
+
 beforeEach(() => {
   vi.unstubAllEnvs();
   vi.stubEnv('DASHBOARD_CONFIG_FILE', configFile());
+  // PR-91 review (Block 2): the probe is token-gated pre-login — these
+  // tests exercise the probe semantics, so a valid env token is available.
+  vi.stubEnv('DASHBOARD_SETUP_TOKEN', 'test-token-123');
   vi.stubEnv('AGENTTEAMS_CONTROLLER_URL', '');
   vi.stubEnv('AGENTTEAMS_SGLANG_URL', '');
+  serverHits = 0;
   for (const name of BACKEND_NAMES) forgetWorking(name);
 });
 
@@ -45,6 +52,18 @@ afterEach(() => {
 });
 
 function post(body: unknown): NextRequest {
+  const payload =
+    body && typeof body === 'object' && !Array.isArray(body) ? (body as Record<string, unknown>) : {};
+  // PR-91 review: carry the setup token — the pre-login door to the probe.
+  return new NextRequest('http://localhost/api/agentteams/setup/backends/test', {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ token: 'test-token-123', ...payload }),
+  });
+}
+
+/** Raw request WITHOUT the token — for the gate tests themselves. */
+function postRaw(body: unknown): NextRequest {
   return new NextRequest('http://localhost/api/agentteams/setup/backends/test', {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
@@ -137,5 +156,76 @@ describe('POST /api/agentteams/setup/backends/test (F1c plugin config_test seman
       }),
     );
     expect(res.status).toBe(400);
+  });
+});
+
+describe('PR-91 review (Block 2): the probe is no longer unauthenticated', () => {
+  it('pre-login probe without a token → 403 token-required, nothing probed', async () => {
+    fs.writeFileSync(
+      configFile(),
+      JSON.stringify({ version: 1, backends: { controller: { internal: goodUrl } } }),
+    );
+    const res = await POST(postRaw({ backends: { controller: { internal: goodUrl } } }));
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toBe('token-required');
+    expect(serverHits).toBe(0); // gate fires before any network I/O
+  });
+
+  it('pre-login probe with a wrong token → 403 invalid-token, nothing probed', async () => {
+    const res = await POST(
+      postRaw({ token: 'wrong-token', backends: { controller: { internal: goodUrl } } }),
+    );
+    expect(res.status).toBe(403);
+    expect(((await res.json()) as { error: string }).error).toBe('invalid-token');
+    expect(serverHits).toBe(0);
+  });
+
+  it('pre-login probe with the setup token works (same door as the config write)', async () => {
+    fs.writeFileSync(
+      configFile(),
+      JSON.stringify({ version: 1, backends: { controller: { internal: goodUrl } } }),
+    );
+    const res = await POST(
+      postRaw({ token: 'test-token-123', backends: { controller: { internal: goodUrl } } }),
+    );
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
+    expect(serverHits).toBeGreaterThan(0);
+  });
+
+  it('ENFORCE=0: pre-login probe without a token works (installer opt-out, trusted-LAN)', async () => {
+    vi.stubEnv('DASHBOARD_SETUP_TOKEN_ENFORCE', '0');
+    fs.writeFileSync(
+      configFile(),
+      JSON.stringify({ version: 1, backends: { controller: { internal: goodUrl } } }),
+    );
+    const res = await POST(postRaw({ backends: { controller: { internal: goodUrl } } }));
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { ok: boolean }).ok).toBe(true);
+  });
+});
+
+describe('isTestTargetAllowed SSRF filter (PR-91 review)', () => {
+  it('denies the cloud metadata sentinel in all modes', async () => {
+    const { isTestTargetAllowed } = await import('@/lib/backend-config');
+    vi.unstubAllEnvs();
+    expect(isTestTargetAllowed('http://169.254.169.254/latest/meta-data/')).toBe(false);
+    vi.stubEnv('DASHBOARD_ALLOWED_HOSTS', '169.254.169.254');
+    expect(isTestTargetAllowed('http://169.254.169.254/latest/meta-data/')).toBe(false);
+  });
+
+  it('empty allowlist = allow for the (now gated) caller; loopback fine', async () => {
+    const { isTestTargetAllowed } = await import('@/lib/backend-config');
+    vi.unstubAllEnvs();
+    expect(isTestTargetAllowed('http://127.0.0.1:8090')).toBe(true);
+    expect(isTestTargetAllowed('http://192.168.54.107:8090')).toBe(true);
+  });
+
+  it('a set allowlist stays strict', async () => {
+    const { isTestTargetAllowed } = await import('@/lib/backend-config');
+    vi.unstubAllEnvs();
+    vi.stubEnv('DASHBOARD_ALLOWED_HOSTS', 'allowed.example.com');
+    expect(isTestTargetAllowed('http://allowed.example.com:8090')).toBe(true);
+    expect(isTestTargetAllowed('http://evil.example.com:8090')).toBe(false);
   });
 });

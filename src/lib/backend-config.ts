@@ -97,14 +97,24 @@ export function isHttpUrl(value: string | undefined | null): value is string {
 // Empty (default) = allow any http(s) target — this is a local
 // self-configuration tool; operators can pin exact hosts if they want.
 export function isTestTargetAllowed(url: string): boolean {
-  const fromEnv = (process.env.DASHBOARD_ALLOWED_HOSTS || '').trim();
-  if (!fromEnv) return true;
   let hostname: string;
   try {
     hostname = new URL(url.trim()).hostname.toLowerCase().replace(/^\[|\]$/g, '');
   } catch {
     return false;
   }
+  // Cloud instance-metadata sentinel: never a legitimate dashboard backend
+  // in any mode (the setup probe is an authenticated owner tool since the
+  // PR-91 security review — this is belt, not the suspenders).
+  if (hostname === '169.254.169.254') return false;
+  const fromEnv = (process.env.DASHBOARD_ALLOWED_HOSTS || '').trim();
+  // Empty = allow (local self-config posture — plugin config_test parity).
+  // Since the PR-91 review the probe endpoint is no longer reachable
+  // unauthenticated: pre-login callers must hold the setup token (or the
+  // installer opted out with DASHBOARD_SETUP_TOKEN_ENFORCE=0, trusted-LAN),
+  // and post-login callers hold a session. Set DASHBOARD_ALLOWED_HOSTS for
+  // a strict allowlist regardless of caller.
+  if (!fromEnv) return true;
   const allowed = fromEnv
     .split(',')
     .map((h) => h.trim().toLowerCase())
@@ -331,6 +341,21 @@ export function orderedCandidates(name: BackendName): string[] {
 
 export function isSharedMode(): boolean {
   return process.env.DASHBOARD_SHARED_MODE === '1';
+}
+
+/** PR-91 review: the setup-token check shared by the pre-login write paths
+ * (POST /setup/backends, POST /setup/backends/test, GET /setup/backends
+ * prefill) — one implementation, timing-safe, fails closed on a missing
+ * token source (shared mode without env token). */
+export async function verifySetupToken(token: string): Promise<boolean> {
+  const expected = await getSetupToken();
+  // B: shared mode without a DASHBOARD_SETUP_TOKEN env — the pre-login
+  // write path is closed (fails closed, no timing comparison on empty).
+  if (!expected) return false;
+  const crypto = await import('node:crypto');
+  const a = Buffer.from(token);
+  const b = Buffer.from(expected);
+  return a.length === b.length && crypto.timingSafeEqual(a, b);
 }
 
 /** F1f3: the installer (deployer) chooses whether the pre-login setup

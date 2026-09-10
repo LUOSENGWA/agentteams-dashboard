@@ -35,7 +35,9 @@ interface SetupStatusResponse {
   /** F1f3: false when the installer disabled the pre-login token gate
    * (DASHBOARD_SETUP_TOKEN_ENFORCE=0) — the token field is hidden. */
   setupTokenRequired?: boolean;
-  backends: Record<BackendName, BackendStatus>;
+  /** PR-91 review: absent in the anonymous (pre-login, no token) response —
+   * the saved topology is only served to a session or ?token= holder. */
+  backends?: Record<BackendName, BackendStatus>;
   embedded: {
     defaults: Record<BackendName, string | undefined>;
     healthy: Record<BackendName, boolean> | null;
@@ -104,6 +106,49 @@ export function BackendSetupPage({ onDone, reconfigure = false }: { onDone: () =
     };
   }, []);
 
+  // PR-91 review: the saved topology is no longer served pre-login. Once
+  // the operator enters the setup token (reconfigure mode), refetch with
+  // it — same owner gate as the pre-login write — and prefill the saved
+  // addresses (only empty slots: never overwrite what the user typed).
+  useEffect(() => {
+    if (!reconfigure || !tokenRequired) return;
+    const trimmed = token.trim();
+    if (!trimmed) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      fetch(
+        apiUrl(`/api/agentteams/setup/backends?token=${encodeURIComponent(trimmed)}`),
+        { credentials: 'same-origin' },
+      )
+        .then((res) => res.json().catch(() => null))
+        .then((data: SetupStatusResponse | null) => {
+          if (cancelled || !data?.backends) return;
+          setAddrs((prev) =>
+            Object.fromEntries(
+              BACKEND_NAMES.map((name) => {
+                const candidates = data.backends?.[name]?.candidates ?? [];
+                const cur = prev[name];
+                return [
+                  name,
+                  {
+                    internal: cur.internal.trim() || (candidates[0] ?? ''),
+                    external: cur.external.trim() || (candidates[1] ?? ''),
+                  },
+                ];
+              }),
+            ) as Record<BackendName, { internal: string; external: string }>,
+          );
+        })
+        .catch(() => {
+          /* wrong token / transient — the user keeps typing manually */
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [token, reconfigure, tokenRequired]);
+
   const setSlot = (name: BackendName, slot: 'internal' | 'external', value: string) => {
     setAddrs((prev) => ({ ...prev, [name]: { ...prev[name], [slot]: value } }));
     setTests((prev) => ({ ...prev, [`${name}:${slot}`]: EMPTY_TEST }));
@@ -131,6 +176,10 @@ export function BackendSetupPage({ onDone, reconfigure = false }: { onDone: () =
           credentials: 'same-origin',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({
+            // PR-91 review: the probe is token-gated pre-login (same door as
+            // the save) — the endpoint is no longer an unauthenticated
+            // fetch proxy.
+            token: token.trim() || undefined,
             backends: { [name]: { internal: internal || undefined, external: external || undefined } },
           }),
         });
@@ -256,7 +305,7 @@ export function BackendSetupPage({ onDone, reconfigure = false }: { onDone: () =
           <CardTitle className="text-lg">{reconfigure ? '后端配置' : '后端配置（首次启动）'}</CardTitle>
           <CardDescription>
             {reconfigure
-              ? `覆盖现有后端配置${tokenRequired ? '（登录前保存需要 setup token）' : '（本实例已关闭登录前 token 验证，直接保存即可）'}。保存后回到登录页；配置在挂载卷中，重启不丢失。登录前看不到已保存的具体值，直接填写正确地址即可。`
+              ? `覆盖现有后端配置${tokenRequired ? '（登录前保存需要 setup token）' : '（本实例已关闭登录前 token 验证，直接保存即可）'}。保存后回到登录页；配置在挂载卷中，重启不丢失。登录前默认看不到已保存的具体值，直接填写正确地址即可；填入 setup token 后已存值会自动回填空槽。`
               : 'Dashboard 还没有可用的后端地址。填写后保存即可登录；配置保存在挂载卷中，重启不丢失。'}
             每个后端可只填一个地址；「内网」= 容器/集群网络，「外网」= 跨网段备用（自动切换）。
             「测试」一次验证该后端填写的全部地址（✅ 可用 / ⚠️ 已连通需鉴权 / ❌ 不可达，含原因分类）。
@@ -364,7 +413,7 @@ export function BackendSetupPage({ onDone, reconfigure = false }: { onDone: () =
               <p className="text-xs text-muted-foreground">
                 {reconfigure
                   ? '登录前修改配置需要 setup token（与首启同一个）：docker logs &lt;容器&gt; 搜 setup token，或 env DASHBOARD_SETUP_TOKEN。找不到 token = docker volume rm 数据卷 出厂重置（配置与 token 一并重建）。'
-                  : '仅首次保存需要。token 在服务器日志里（docker logs &lt;容器&gt;，搜 setup token），也可用 env DASHBOARD_SETUP_TOKEN 预先指定；保存成功后不再需要。'}
+                  : '首启保存需要；之后登录前修改配置（?setup=1）仍是同一个 token（可重复使用，直到数据卷出厂重置）。token 在服务器日志里（docker logs &lt;容器&gt;，搜 setup token），也可用 env DASHBOARD_SETUP_TOKEN 预先指定。'}
               </p>
             </div>
           )}

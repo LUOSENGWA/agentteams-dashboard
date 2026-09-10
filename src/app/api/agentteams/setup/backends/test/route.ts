@@ -4,14 +4,17 @@ import {
   backendCandidatesSync,
   effectiveUrl,
   isHttpUrl,
+  isSetupTokenEnforced,
   isTestTargetAllowed,
   listMatchesSaved,
   probeBackend,
   selectAndMark,
   toProbeRow,
+  verifySetupToken,
   type BackendName,
   type ProbeRow,
 } from '@/lib/backend-config';
+import { getSessionFromRequest } from '@/lib/dashboard-session';
 
 // POST /api/agentteams/setup/backends/test — server-side connectivity test.
 //
@@ -25,8 +28,17 @@ import {
 // - Rows carry the two-layer model: ok = network connected (401/403 count),
 //   httpOk = status < 400 (only these are election-eligible).
 //
-// Public (pre-login) by design — the first-launch setup page tests before
-// any session exists. SSRF surface pinned by DASHBOARD_ALLOWED_HOSTS.
+// Access (PR-91 review, Block 2): the probe is NO LONGER an unauthenticated
+// fetch proxy — same door as POST /setup/backends:
+//   - any authenticated session (post-login settings tab, L1 and L2),
+//   - pre-login: the setup token in the body (token-gated, repeatable,
+//     exactly like the pre-login write); with
+//     DASHBOARD_SETUP_TOKEN_ENFORCE=0 (installer opt-out, trusted-LAN) the
+//     gate is off — the same documented posture as the unauthenticated
+//     config writes that opt-out already accepts (startup warn).
+// SSRF hardening: DASHBOARD_ALLOWED_HOSTS (empty = allow for the
+// session/token holders above, strict allowlist when set) plus an
+// unconditional deny of the cloud metadata sentinel (169.254.169.254).
 
 type DraftAddrs = { internal?: string; external?: string };
 
@@ -49,10 +61,27 @@ function parseDrafts(body: unknown): Partial<Record<BackendName, DraftAddrs>> | 
 }
 
 export async function POST(request: NextRequest) {
-  const body = (await request.json().catch(() => null)) as unknown;
-  const drafts = parseDrafts(body);
+  const raw = (await request.json().catch(() => null)) as unknown;
+  const body = (raw ?? {}) as { token?: unknown; backends?: unknown };
+  const drafts = parseDrafts(raw);
   if (drafts === null) {
     return NextResponse.json({ ok: false, error: 'invalid-request' }, { status: 400 });
+  }
+
+  // PR-91 review: same door as POST /setup/backends — a pre-login caller
+  // must hold the setup token (when the gate is enforced). No session, no
+  // probe: the endpoint used to be an unauthenticated fetch proxy.
+  const session = getSessionFromRequest(request);
+  if (!session) {
+    if (isSetupTokenEnforced()) {
+      const token = typeof body.token === 'string' ? body.token : undefined;
+      if (!token) {
+        return NextResponse.json({ ok: false, error: 'token-required' }, { status: 403 });
+      }
+      if (!(await verifySetupToken(token))) {
+        return NextResponse.json({ ok: false, error: 'invalid-token' }, { status: 403 });
+      }
+    }
   }
 
   // Targets: draft values where provided, otherwise the configured list.

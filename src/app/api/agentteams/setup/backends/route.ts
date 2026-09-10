@@ -1,10 +1,14 @@
 // /api/agentteams/setup/backends — dashboard-level backend address config (F1).
 //
-// GET (public, pre-login readable): reports whether the dashboard is usable
-// (required backends have at least one candidate address). Drives the
-// first-launch gate on the root page: unconfigured -> backend setup UI
-// instead of the login form. The embedded auto-detect probe only runs in the
-// unconfigured case so normal deployments pay zero extra latency.
+// GET (gate-shape public, topology gated — PR-91 review): the anonymous
+// response reports only { configured, setupTokenRequired, embedded } so a
+// logged-out caller cannot enumerate the saved topology. Candidates and
+// effective are served to an authenticated session or a pre-login caller
+// with the setup token (?token= — same owner gate as the pre-login write),
+// which the ?setup=1 reconfigure page uses to prefill the saved addresses.
+// Drives the first-launch gate on the root page: unconfigured -> backend
+// setup UI instead of the login form. The embedded auto-detect probe only
+// runs in the unconfigured case so normal deployments pay zero extra latency.
 //
 // POST (auth modes — F1c + F1f shared-mode hardening):
 //   - post-login, standalone (default, one instance per user): any logged-in
@@ -43,7 +47,6 @@
 // Every successful save re-probes the saved backends (plugin put_config →
 // refresh_effective) and returns `effective` / `switched` for the UI banner.
 import { NextRequest, NextResponse } from 'next/server';
-import crypto from 'node:crypto';
 import { getSessionFromRequest } from '@/lib/dashboard-session';
 import {
   BACKEND_NAMES,
@@ -52,7 +55,6 @@ import {
   backendCandidates,
   configExists,
   effectiveUrl,
-  getSetupToken,
   isHttpUrl,
   isSetupTokenEnforced,
   isSharedMode,
@@ -61,6 +63,7 @@ import {
   refreshEffective,
   saveConfigOneShot,
   updateConfig,
+  verifySetupToken,
   type BackendAddrs,
   type BackendName,
 } from '@/lib/backend-config';
@@ -124,12 +127,29 @@ export async function GET(request: NextRequest) {
     healthy = Object.fromEntries(probed);
   }
 
-  // The structured file config (internal/external per backend) is exposed
-  // to any AUTHENTICATED session — the settings backend tab is visible and
-  // editable to L1 and L2 alike (plugin parity: whoever uses this instance
-  // edits this instance's config). Pre-login callers (the first-launch
-  // page) get candidates and embedded defaults only.
+  // PR-91 review (Block 1): the saved topology (candidates + effective) is
+  // NOT public pre-login — anyone who can reach the dashboard must not be
+  // able to enumerate the internal controller/matrix/minio/higress
+  // addresses. Full detail is served to:
+  //   - any authenticated session (settings backend tab, L1 and L2 alike),
+  //   - a pre-login caller holding the setup token (?token= — the same
+  //     owner gate as the pre-login write), so the ?setup=1 reconfigure
+  //     page can prefill the saved addresses once the operator has the
+  //     token.
+  // Everyone else gets the gate-shape only: configured / setupTokenRequired
+  // / embedded defaults (hardcoded in the source, not deployment data).
   const session = getSessionFromRequest(request);
+  const queryToken = request.nextUrl.searchParams.get('token');
+  const prefillAuthorized =
+    !session && queryToken ? await verifySetupToken(queryToken) : !!session;
+  if (!prefillAuthorized) {
+    return NextResponse.json({
+      configured,
+      setupTokenRequired: isSetupTokenEnforced(),
+      embedded: { defaults: EMBEDDED_DEFAULTS, healthy },
+    });
+  }
+
   const authedConfig = session ? { config: config?.backends ?? {} } : {};
 
   // Effective (working-cache) address per backend — the "在生效" badge data.
@@ -269,12 +289,5 @@ function diffBackends(
   return changed.join('; ');
 }
 
-async function verifySetupToken(token: string): Promise<boolean> {
-  const expected = await getSetupToken();
-  // B: shared mode without a DASHBOARD_SETUP_TOKEN env — the pre-login
-  // write path is closed (fails closed, no timing comparison on empty).
-  if (!expected) return false;
-  const a = Buffer.from(token);
-  const b = Buffer.from(expected);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
-}
+// verifySetupToken is shared with POST /setup/backends/test — one
+// implementation in @/lib/backend-config (PR-91 review).

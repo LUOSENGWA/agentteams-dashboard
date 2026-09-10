@@ -49,14 +49,14 @@ afterEach(() => {
   vi.unstubAllEnvs();
 });
 
-function makeRequest(init?: { method?: string; body?: string }, cookie?: string) {
+function makeRequest(
+  init?: { method?: string; body?: string },
+  cookie?: string,
+  url = 'http://localhost/api/agentteams/setup/backends',
+) {
   const headers = new Headers();
   if (cookie) headers.set('cookie', cookie);
-  return new NextRequest('http://localhost/api/agentteams/setup/backends', {
-    method: init?.method,
-    headers,
-    body: init?.body,
-  });
+  return new NextRequest(url, { method: init?.method, headers, body: init?.body });
 }
 
 function l1Cookie(): string {
@@ -78,8 +78,10 @@ function l2Cookie(): string {
 }
 
 describe('GET /api/agentteams/setup/backends', () => {
-  it('reports unconfigured standalone state with embedded auto-detect results', async () => {
-    const res = await GET(makeRequest());
+  it('reports unconfigured standalone state with embedded auto-detect results (token holder)', async () => {
+    const res = await GET(
+      makeRequest(undefined, undefined, 'http://localhost/api/agentteams/setup/backends?token=test-token-123'),
+    );
     expect(res.status).toBe(200);
     const data = (await res.json()) as {
       configured: boolean;
@@ -93,10 +95,12 @@ describe('GET /api/agentteams/setup/backends', () => {
     expect(data.embedded.healthy?.controller).toBe(false);
   });
 
-  it('reports configured when env provides the required backends', async () => {
+  it('reports configured when env provides the required backends (token holder)', async () => {
     vi.stubEnv('AGENTTEAMS_CONTROLLER_URL', 'http://ctl:8090');
     vi.stubEnv('AGENTTEAMS_MATRIX_URL', 'http://mx:6167');
-    const res = await GET(makeRequest());
+    const res = await GET(
+      makeRequest(undefined, undefined, 'http://localhost/api/agentteams/setup/backends?token=test-token-123'),
+    );
     const data = (await res.json()) as {
       configured: boolean;
       backends: Record<string, { candidates: string[] }>;
@@ -108,19 +112,88 @@ describe('GET /api/agentteams/setup/backends', () => {
     expect(data.embedded.healthy).toBeNull();
   });
 
-  it('file config overrides and extends env candidates', async () => {
+  it('file config overrides and extends env candidates (token holder)', async () => {
     fs.writeFileSync(
       configFile(),
       JSON.stringify({ version: 1, backends: { controller: { internal: 'http://in:8090' } } }),
     );
     vi.stubEnv('AGENTTEAMS_CONTROLLER_URL', 'http://env:8090');
     vi.stubEnv('AGENTTEAMS_MATRIX_URL', 'http://mx:6167');
-    const res = await GET(makeRequest());
+    const res = await GET(
+      makeRequest(undefined, undefined, 'http://localhost/api/agentteams/setup/backends?token=test-token-123'),
+    );
     const data = (await res.json()) as {
       backends: Record<string, { candidates: string[] }>;
     };
     expect(data.backends.controller.candidates).toEqual(['http://in:8090', 'http://env:8090']);
     expect(readConfigSync()?.backends.controller).toEqual({ internal: 'http://in:8090' });
+  });
+
+  // PR-91 review (Block 1): the saved topology is NOT public pre-login.
+  it('anonymous GET reveals no saved topology (PR-91 Block 1)', async () => {
+    fs.writeFileSync(
+      configFile(),
+      JSON.stringify({
+        version: 1,
+        backends: { controller: { internal: 'http://in:8090', external: 'http://out:8090' } },
+      }),
+    );
+    vi.stubEnv('AGENTTEAMS_MATRIX_URL', 'http://mx:6167');
+    const res = await GET(makeRequest());
+    expect(res.status).toBe(200);
+    const data = (await res.json()) as {
+      configured: boolean;
+      setupTokenRequired?: boolean;
+      embedded?: unknown;
+      backends?: unknown;
+      config?: unknown;
+      effective?: unknown;
+    };
+    // gate shape only — the root page's first-launch check needs these
+    expect(data.configured).toBe(true);
+    expect(data.setupTokenRequired).toBe(true);
+    expect(data.embedded).toBeDefined();
+    // no saved topology, no effective URLs, no structured config
+    expect(data.backends).toBeUndefined();
+    expect(data.config).toBeUndefined();
+    expect(data.effective).toBeUndefined();
+  });
+
+  it('pre-login ?token= holder sees candidates + effective (setup page prefill)', async () => {
+    fs.writeFileSync(
+      configFile(),
+      JSON.stringify({
+        version: 1,
+        backends: { controller: { internal: 'http://in:8090', external: 'http://out:8090' } },
+      }),
+    );
+    vi.stubEnv('AGENTTEAMS_MATRIX_URL', 'http://mx:6167');
+    const res = await GET(
+      makeRequest(undefined, undefined, 'http://localhost/api/agentteams/setup/backends?token=test-token-123'),
+    );
+    const data = (await res.json()) as {
+      backends?: Record<string, { candidates: string[] }>;
+      effective?: Record<string, string>;
+      config?: unknown;
+    };
+    expect(data.backends?.controller?.candidates).toEqual(['http://in:8090', 'http://out:8090']);
+    // the effective working cache is part of the owner view
+    expect(data.effective).toBeDefined();
+    // the structured `config` field stays session-only
+    expect(data.config).toBeUndefined();
+  });
+
+  it('a wrong ?token= gets the minimal shape (no topology)', async () => {
+    fs.writeFileSync(
+      configFile(),
+      JSON.stringify({ version: 1, backends: { controller: { internal: 'http://in:8090' } } }),
+    );
+    const res = await GET(
+      makeRequest(undefined, undefined, 'http://localhost/api/agentteams/setup/backends?token=wrong-token'),
+    );
+    const data = (await res.json()) as { backends?: unknown; effective?: unknown };
+    expect(data.backends).toBeUndefined();
+    expect(data.effective).toBeUndefined();
   });
 
   it('exposes the structured file config to L1 and L2 alike, never to pre-login', async () => {
