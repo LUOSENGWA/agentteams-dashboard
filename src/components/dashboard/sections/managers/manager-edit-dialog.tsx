@@ -25,6 +25,8 @@ export function ManagerEditDialog({
   onOpenChange,
   onSubmit,
   modelOptions,
+  sessionIssue,
+
 }: {
   open: boolean;
   managerName: string | null;
@@ -34,6 +36,8 @@ export function ManagerEditDialog({
   onOpenChange: (_open: boolean) => void;
   onSubmit: () => void;
   modelOptions: ModelSelectionOption[];
+  sessionIssue?: string | null;
+
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -49,6 +53,7 @@ export function ManagerEditDialog({
               onChange={(model) => onChange({ ...value, model })}
               placeholder="例如 team-chat"
               options={modelOptions}
+              sessionIssue={sessionIssue}
             />
           </div>
           <div className="space-y-2">

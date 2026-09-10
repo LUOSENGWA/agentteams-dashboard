@@ -23,6 +23,18 @@ interface ModelSelectorProps {
   placeholder?: string;
   disabled?: boolean;
   options?: ModelSelectionOption[];
+  // F9②/F10：Higress 模型数据加载失败（Console 会话失效/不可达/未配置）时的
+  // 显式原因 + 出路——不静默平铺（只显内置组而不说明 = 用户以为 alias 丢了）。
+  sessionIssue?: string | null;
+}
+
+function SessionIssueNote({ message }: { message: string }) {
+  return (
+    <p className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs text-amber-600 break-words">
+      模型别名组暂不可用：{message}。内置模型与自定义输入仍可使用；以管理员
+      凭据重新登录（Higress Console 轨）后重试即可恢复别名组。
+    </p>
+  );
 }
 
 export function ModelSelector({
@@ -31,6 +43,7 @@ export function ModelSelector({
   placeholder = '选择模型',
   disabled,
   options,
+  sessionIssue,
 }: ModelSelectorProps) {
   const uniqueOptions = [
     ...new Map((options ?? []).map((option) => [option.alias, option])).values(),
@@ -78,6 +91,7 @@ export function ModelSelector({
         <p className="text-xs text-muted-foreground break-words">
           自定义请求模型别名，将由通配符路由或服务端绑定校验处理。
         </p>
+        {sessionIssue ? <SessionIssueNote message={sessionIssue} /> : null}
       </div>
     );
   }
@@ -147,6 +161,7 @@ export function ModelSelector({
             : '在「模型管理」配置模型别名后，此处会提供可选项。'}
         </p>
       )}
+      {sessionIssue ? <SessionIssueNote message={sessionIssue} /> : null}
     </div>
   );
 }

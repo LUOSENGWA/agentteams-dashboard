@@ -22,6 +22,8 @@ export function ManagerCreateDialog({
   onOpenChange,
   onSubmit,
   modelOptions,
+  sessionIssue,
+
 }: {
   open: boolean;
   value: CreateManagerRequest;
@@ -30,6 +32,8 @@ export function ManagerCreateDialog({
   onOpenChange: (_open: boolean) => void;
   onSubmit: () => void;
   modelOptions: ModelSelectionOption[];
+  sessionIssue?: string | null;
+
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -53,6 +57,7 @@ export function ManagerCreateDialog({
               onChange={(model) => onChange({ ...value, model })}
               placeholder="例如 team-chat"
               options={modelOptions}
+              sessionIssue={sessionIssue}
             />
             <p className="text-xs text-muted-foreground">
               Manager 通过 AI 网关访问模型，使用 Consumer 凭证认证，无需提供真实 API Key。

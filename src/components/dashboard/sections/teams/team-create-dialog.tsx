@@ -49,6 +49,8 @@ export function TeamCreateDialog({
   onSubmit,
   workers,
   modelOptions,
+  sessionIssue,
+
 }: {
   open: boolean;
   value: CreateTeamRequest;
@@ -58,6 +60,8 @@ export function TeamCreateDialog({
   onSubmit: () => void;
   workers: WorkerResponse[];
   modelOptions?: ModelSelectionOption[];
+  sessionIssue?: string | null;
+
 }) {
   // Keep the raw worker list text locally so a trailing separator the user
   // types (e.g. "worker1,") is preserved on screen; value.workerNames always
@@ -170,6 +174,7 @@ export function TeamCreateDialog({
               }
               placeholder="例如 team-chat"
               options={modelOptions ?? []}
+              sessionIssue={sessionIssue}
             />
             <p className="text-xs text-muted-foreground">
               仅在自动建站时使用。可在 Worker 列表中单独调整已存在 Worker 的模型。
