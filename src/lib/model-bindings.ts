@@ -17,6 +17,14 @@ function matchesPattern(value: string, pattern: string): boolean {
   return new RegExp(expression).test(value);
 }
 
+// 精确匹配 predicate 的 matchType 有**两种写法**：dashboard 建路由写 `EXACT`
+// （models-section.tsx 下拉），Higress Console 原生建路由写 `EQUAL`（Node1
+// 活体数据实锤）。只收 EXACT 会让 Console 建的路由 alias 全部漏收（2026-09-10
+// 罗总实报：deepseek-v4-pro 自定义模型不见）。两种都收。
+function isExactMatchType(matchType: string | undefined): boolean {
+  return matchType === 'EXACT' || matchType === 'EQUAL';
+}
+
 function routeMatchesAlias(route: AiRoute, alias: string): boolean {
   const predicates = route.modelPredicates ?? [];
   if (predicates.length === 0) return true;
@@ -100,9 +108,9 @@ function collectAllAliases(
         }
       }
     }
-    // Route modelPredicates (EXACT)
+    // Route modelPredicates (EXACT/EQUAL — Console 原生路由用 EQUAL)
     for (const predicate of route.modelPredicates ?? []) {
-      if (predicate.matchType === 'EXACT') {
+      if (isExactMatchType(predicate.matchType)) {
         const alias = typeof predicate.matchValue === 'string' ? predicate.matchValue.trim() : '';
         if (alias && !alias.includes('*') && !alias.startsWith('~')) aliases.add(alias);
       }
@@ -253,7 +261,7 @@ export function listAvailableRequestModelAliases(
   for (const route of routes) {
     for (const predicate of route.modelPredicates ?? []) {
       const alias = typeof predicate.matchValue === 'string' ? predicate.matchValue.trim() : '';
-      if (predicate.matchType === 'EXACT' && alias && !alias.includes('*') && !alias.startsWith('~')) {
+      if (isExactMatchType(predicate.matchType) && alias && !alias.includes('*') && !alias.startsWith('~')) {
         aliases.add(alias);
       }
     }
