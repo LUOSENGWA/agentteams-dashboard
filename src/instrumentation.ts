@@ -28,6 +28,10 @@ export async function register(): Promise<void> {
         'Anyone who can reach this dashboard can rewrite the backend addresses. Trusted-LAN deployments only.',
     );
   }
+  // Post-merge review Block 4: surface the setup token in the startup logs
+  // (standalone + enforced mode; no-op elsewhere) — see bootstrapSetupToken.
+  const { bootstrapSetupToken } = await import('./lib/backend-config');
+  await bootstrapSetupToken();
   const { startAddressProbe } = await import('./lib/address-probe');
   startAddressProbe();
 }
