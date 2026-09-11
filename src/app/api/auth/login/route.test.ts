@@ -1,10 +1,14 @@
 // @vitest-environment node
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import { POST } from './route';
 import { callHigressConsole, forwardCookies, getHigressConsoleURL } from '../../higress/proxy-helper';
 import { getAuthToken, getControllerUrl } from '../../agentteams/proxy-helper';
 import { __resetSessionStoreForTests, SESSION_COOKIE_NAME } from '@/lib/dashboard-session';
+import { forgetWorking } from '@/lib/backend-config';
 
 vi.mock('../../higress/proxy-helper', () => ({
   callHigressConsole: vi.fn(),
@@ -57,6 +61,7 @@ function failedConsoleLogin() {
 /** fetch mock router: SA human lookup + Matrix login, default 401. */
 function installFetchMock(opts: {
   humans?: Record<string, { status?: number; body?: Record<string, unknown> }>;
+  humansList?: { status?: number; body?: Record<string, unknown> };
   matrixLogin?: { status?: number; body?: Record<string, unknown> };
   teams?: { status?: number; body?: Record<string, unknown> };
   status?: { status?: number; body?: Record<string, unknown> };
@@ -81,9 +86,20 @@ function installFetchMock(opts: {
         headers: { 'content-type': 'application/json' },
       });
     }
+    if (url.endsWith('/api/v1/humans')) {
+      // verifyControllerToken endpoint — admin-only in the Controller
+      // (an L2 Matrix token gets 403 here even though /api/v1/teams
+      // returns 200 for it). Default 401 = invalid token; tests asserting
+      // a VALID admin token pass `humansList` explicitly.
+      const spec = opts.humansList ?? { status: 401 };
+      return new Response(spec.status ? null : JSON.stringify(spec.body ?? { humans: [] }), {
+        status: spec.status ?? 200,
+        headers: { 'content-type': 'application/json' },
+      });
+    }
     if (url.includes('/api/v1/teams')) {
-      // verifyControllerToken endpoint — default 401 (invalid token);
-      // tests asserting a VALID pasted token pass `teams` explicitly.
+      // ListTeams — default 401; tests asserting L2 team-scope reads
+      // pass `teams` explicitly.
       const spec = opts.teams ?? { status: 401 };
       return new Response(spec.status ? null : JSON.stringify(spec.body ?? { items: [] }), {
         status: spec.status ?? 200,
@@ -228,6 +244,7 @@ describe('POST /api/auth/login (dual track, M19)', () => {
     mockGetAuthToken.mockResolvedValue(undefined);
     installFetchMock({
       humans: { luo: { body: { name: 'luo', permissionLevel: 1, accessibleTeams: [] } } },
+      humansList: { body: { humans: [] } },
       teams: { body: { items: [] } },
       matrixLogin: {
         body: { access_token: 'syt_l1_token', user_id: '@luo:sat.example', device_id: 'D1' },
@@ -295,6 +312,7 @@ describe('POST /api/auth/login (dual track, M19)', () => {
     mockGetAuthToken.mockResolvedValue(undefined);
     installFetchMock({
       humans: { sunzong: { body: { name: 'sunzong', permissionLevel: 2, accessibleTeams: ['biz-team'] } } },
+      humansList: { body: { humans: [] } },
       teams: { body: { items: [] } },
       matrixLogin: {
         body: { access_token: 'syt_l2_token', user_id: '@sunzong:sat.example', device_id: 'D1' },
@@ -369,19 +387,12 @@ describe('POST /api/auth/login (dual track, M19)', () => {
     mockCallHigressConsole.mockResolvedValue(failedConsoleLogin());
     installFetchMock({
       humans: { luo: { body: { name: 'luo', permissionLevel: 1 } } },
+      // The token verification hits the admin-only GET /api/v1/humans → 200.
+      humansList: { body: { humans: [] } },
       matrixLogin: {
         body: { access_token: 'syt_l1_token', user_id: '@luo:sat.example', device_id: 'D2' },
       },
     });
-    // The token verification hits /api/v1/teams via fetch → answer 200.
-    const routerFetch = vi.mocked(fetch);
-    vi.stubGlobal(
-      'fetch',
-      vi.fn(async (input: RequestInfo | URL) => {
-        if (String(input).includes('/api/v1/teams')) return new Response('{}', { status: 200 });
-        return routerFetch(input as RequestInfo);
-      }),
-    );
 
     const response = await POST(
       request({ username: 'luo', password: 'matrix-password', controllerToken: 'cli-admin-token' }),
@@ -396,7 +407,7 @@ describe('POST /api/auth/login (dual track, M19)', () => {
 
   it('Matrix: CR level 1 + INVALID pasted token → 401', async () => {
     mockCallHigressConsole.mockResolvedValue(failedConsoleLogin());
-    // The fetch router's default 401 also answers the /api/v1/teams check →
+    // The fetch router's default 401 also answers the /api/v1/humans check →
     // token verification fails.
     installFetchMock({
       humans: { luo: { body: { name: 'luo', permissionLevel: 1 } } },
@@ -496,5 +507,61 @@ describe('POST /api/auth/login (dual track, M19)', () => {
     expect(data.matrix).toBeNull();
     expect(JSON.stringify(data)).not.toContain('secret-matrix');
     expect(response.headers.getSetCookie().some((c) => c.startsWith(`${SESSION_COOKIE_NAME}=`))).toBe(true);
+  });
+
+  it('post-merge review Block 1: saved matrix address (setup page) is used for login when env is empty (standalone deployment)', async () => {
+    mockCallHigressConsole.mockResolvedValue(failedConsoleLogin());
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'login-matrix-cfg-'));
+    try {
+      const configFile = path.join(dir, 'config.json');
+      fs.writeFileSync(
+        configFile,
+        JSON.stringify({ version: 1, backends: { matrix: { internal: 'http://matrix.custom.test:8448' } } }),
+      );
+      vi.stubEnv('DASHBOARD_CONFIG_FILE', configFile);
+      vi.stubEnv('NEXT_PUBLIC_MATRIX_API_URL', '');
+      vi.stubEnv('AGENTTEAMS_MATRIX_URL', '');
+      forgetWorking('matrix');
+      const fetchMock = installFetchMock({
+        humans: { bob: { body: { name: 'bob', permissionLevel: 2, accessibleTeams: ['t1'] } } },
+        matrixLogin: {
+          body: { access_token: 'syt_cfg_token', user_id: '@bob:custom.test', device_id: 'D1' },
+        },
+      });
+
+      const response = await POST(request({ username: 'bob', password: 'pw' }));
+      expect(response.status).toBe(200);
+      const data = await responseJson(response);
+      expect(data.mode).toBe('matrix');
+      const loginCalls = fetchMock.mock.calls
+        .map((c) => String(c[0]))
+        .filter((u) => u.includes('/_matrix/client/v3/login'));
+      expect(loginCalls).toEqual(['http://matrix.custom.test:8448/_matrix/client/v3/login']);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('post-merge review Block 3: a token that only passes /teams (L2) is rejected by the admin-only check', async () => {
+    mockGetAuthToken.mockResolvedValue(undefined); // SA-less instance
+    mockCallHigressConsole.mockResolvedValue(failedConsoleLogin());
+    const fetchMock = installFetchMock({
+      // The token WOULD pass the old check: ListTeams returns 200 for L2.
+      teams: { body: { teams: [] } },
+      // ...but the admin-only endpoint (GET /api/v1/humans) denies it.
+      humansList: { status: 403 },
+      matrixLogin: {
+        body: { access_token: 'syt_l1_token', user_id: '@luo:sat.example', device_id: 'D1' },
+      },
+    });
+
+    const response = await POST(
+      request({ username: 'luo', password: 'matrix-password', controllerToken: 'own-l2-matrix-token' }),
+    );
+    expect(response.status).toBe(401);
+    const data = await responseJson(response);
+    expect(data.error).toBe('Controller 管理员 token 无效');
+    const adminCheckCalls = fetchMock.mock.calls.map((c) => String(c[0])).filter((u) => u.endsWith('/api/v1/humans'));
+    expect(adminCheckCalls.length).toBe(1);
   });
 });

@@ -1,4 +1,8 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+// @vitest-environment node
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import {
   getHigressConsoleURL,
   HigressConsoleConfigurationError,
@@ -57,5 +61,43 @@ describe('Higress Console proxy configuration', () => {
     const helper = await import('./proxy-helper');
     expect(helper.isFallbackConfigWriteEnabled()).toBe(true);
     expect(helper.prepareAiRoutePayload({ name: 'chat', fallbackConfig: { maxRetries: 2 } })).toEqual({ name: 'chat', fallbackConfig: { maxRetries: 2 } });
+  });
+});
+
+describe('getHigressConsoleURL: saved setup-page config (post-merge review Block 2)', () => {
+  let dir: string;
+
+  beforeEach(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'console-cfg-'));
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('saved higress-console wins over env and is authorized without an allowlist entry', () => {
+    const file = path.join(dir, 'config.json');
+    fs.writeFileSync(
+      file,
+      JSON.stringify({
+        version: 1,
+        backends: { 'higress-console': { internal: 'http://console.custom.test:8001' } },
+      }),
+    );
+    vi.stubEnv('DASHBOARD_CONFIG_FILE', file);
+    vi.stubEnv('AGENTTEAMS_AI_GATEWAY_ADMIN_URL', '');
+    vi.stubEnv('AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS', 'other.example.test'); // does NOT include the saved host
+
+    expect(getHigressConsoleURL()).toBe('http://console.custom.test:8001/');
+  });
+
+  it('no saved config → env path unchanged (host still needs the allowlist)', () => {
+    vi.stubEnv('DASHBOARD_CONFIG_FILE', path.join(dir, 'absent.json'));
+    vi.stubEnv('AGENTTEAMS_HIGRESS_ADAPTER_MODE', 'external');
+    vi.stubEnv('AGENTTEAMS_AI_GATEWAY_ADMIN_URL', 'https://console.example.test');
+    vi.stubEnv('AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS', 'other.example.test');
+
+    expect(() => getHigressConsoleURL()).toThrow(HigressConsoleConfigurationError);
   });
 });

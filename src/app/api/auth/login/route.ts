@@ -30,14 +30,24 @@ import { NextRequest, NextResponse } from 'next/server';
 import { callHigressConsole, forwardCookies, getHigressConsoleURL } from '../../higress/proxy-helper';
 import { getAuthToken, getControllerUrl } from '../../agentteams/proxy-helper';
 import { createSession, sessionCookieHeader } from '@/lib/dashboard-session';
+import { pickBackendUrl } from '@/lib/backend-config';
 import { validateHomeserverUrl } from '@/lib/homeserver-allowlist';
 
-// Server-side default follows the embedded topology: the dashboard container
-// reaches Tuwunel directly inside the agentteams-controller container.
-const MATRIX_HOMESERVER =
-  process.env.NEXT_PUBLIC_MATRIX_API_URL ||
-  process.env.AGENTTEAMS_MATRIX_URL ||
-  'http://agentteams-controller:6167';
+// Matrix homeserver for password login — resolved PER LOGIN ATTEMPT
+// (post-merge review Block 1): saved config (setup page) > env > embedded
+// co-located default (the dashboard container reaches Tuwunel directly
+// inside the agentteams-controller container). The module-level constant
+// this replaced ignored the saved config, so a standalone deployment with
+// Matrix elsewhere always hit the in-cluster address and the Matrix track
+// silently died.
+function resolveMatrixHomeserver(): string {
+  return (
+    pickBackendUrl('matrix') ||
+    process.env.NEXT_PUBLIC_MATRIX_API_URL ||
+    process.env.AGENTTEAMS_MATRIX_URL ||
+    'http://agentteams-controller:6167'
+  );
+}
 
 interface HumanRecord {
   name?: string;
@@ -112,14 +122,15 @@ async function fetchHumanWithToken(request: NextRequest, name: string, token: st
  * Returns the Matrix login result or null if it fails.
  */
 async function tryMatrixLogin(username: string, password: string): Promise<Record<string, unknown> | null> {
+  const homeserver = resolveMatrixHomeserver();
   try {
-    validateHomeserverUrl(MATRIX_HOMESERVER, { allowPrivateNetwork: true });
+    validateHomeserverUrl(homeserver, { allowPrivateNetwork: true });
   } catch {
     return null; // Invalid homeserver URL, skip
   }
 
   try {
-    const res = await fetch(`${MATRIX_HOMESERVER}/_matrix/client/v3/login`, {
+    const res = await fetch(`${homeserver}/_matrix/client/v3/login`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -137,7 +148,7 @@ async function tryMatrixLogin(username: string, password: string): Promise<Recor
       accessToken: data.access_token,
       userId: data.user_id,
       deviceId: data.device_id,
-      homeserver: MATRIX_HOMESERVER,
+      homeserver,
     };
   } catch {
     return null; // Matrix unreachable or login failed, skip silently
@@ -313,12 +324,19 @@ async function verifyAdminConsoleCredentials(username: string, password: string)
 }
 
 /**
- * Verify a user-supplied Controller admin token by calling an admin endpoint.
- * Returns true only when the Controller accepts it.
+ * Verify a user-supplied Controller admin token by calling an ADMIN-ONLY
+ * endpoint. GET /api/v1/humans (list) is denied for L2 Matrix tokens by the
+ * Controller authorizer (RoleHuman has no "human" case → 403) and accepted
+ * for admin/manager tokens, so passing this proves the token is admin-grade,
+ * not merely authenticated. The previous check hit GET /api/v1/teams, which
+ * an L2 token also returns 200 for (ListTeams filters by accessibleTeams
+ * but still succeeds) — a non-admin token would pass verification and be
+ * stored as the session's admin data-plane credential (kind
+ * 'controller-token').
  */
 async function verifyControllerToken(request: NextRequest, token: string): Promise<boolean> {
   try {
-    const res = await fetch(`${getControllerUrl(request)}/api/v1/teams`, {
+    const res = await fetch(`${getControllerUrl(request)}/api/v1/humans`, {
       headers: { Authorization: `Bearer ${token}` },
       signal: AbortSignal.timeout(5000),
     });
