@@ -60,8 +60,14 @@ export function validateHigressConsoleURL(
     const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
     // trustedHosts: hosts saved through the token-gated setup page —
     // operator data for this deployment, authorized without an env
-    // allowlist entry (post-merge review Block 2).
-    const allowed = [...getAllowedHosts(), ...(opts?.trustedHosts ?? [])];
+    // allowlist entry (post-merge review Block 2). Checked BEFORE the env
+    // allowlist: in external mode without
+    // AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS, getAllowedHosts() throws,
+    // and a saved host must not be caught by that throw.
+    if (opts?.trustedHosts?.includes(hostname)) {
+      return parsed.toString();
+    }
+    const allowed = getAllowedHosts();
     if (!allowed.includes(hostname)) {
       throw new HigressConsoleConfigurationError(`Console host "${hostname}" is not allowed`);
     }
@@ -121,17 +127,17 @@ export async function callHigressConsole(
     method?: string;
     body?: string | Record<string, unknown>;
     cookie?: string | null;
-    consoleUrl?: string;
   } = {}
 ): Promise<{ response: Response; body: unknown }> {
-  // An explicitly provided consoleUrl is caller-resolved (getHigressConsoleURL)
-  // — re-validate for shape; the host is trusted (it may be a saved
-  // setup-page host outside the env allowlist, see getHigressConsoleURL).
-  const consoleUrl = options.consoleUrl
-    ? validateHigressConsoleURL(options.consoleUrl, {
-        trustedHosts: [new URL(options.consoleUrl).hostname.toLowerCase().replace(/^\[|\]$/g, '')],
-      })
-    : getHigressConsoleURL();
+  // Single resolution path (post-merge review Block 2 follow-up): every
+  // caller goes through getHigressConsoleURL(). The previous optional
+  // consoleUrl accepted raw caller values (e.g. the env var read directly in
+  // api-auth) and self-signed their own host into trustedHosts — bypassing
+  // the allowlist (the Higress session cookie could be forwarded to an
+  // unauthorised host) while desyncing session validation from the login
+  // URL. Callers that need the URL for logging resolve it themselves via
+  // getHigressConsoleURL().
+  const consoleUrl = getHigressConsoleURL();
   const targetUrl = new URL(path, consoleUrl).toString();
 
   const controller = new AbortController();

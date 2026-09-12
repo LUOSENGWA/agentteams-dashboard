@@ -232,10 +232,11 @@ async function attemptConsoleLogin(
   // setup only).
   let consoleRes: Response;
   try {
+    // No consoleUrl option: callHigressConsole resolves the same shared URL
+    // (getHigressConsoleURL). `consoleUrl` above stays for log messages only.
     const result = await callHigressConsole('/session/login', {
       method: 'POST',
       body: { username, password },
-      consoleUrl,
     });
     consoleRes = result.response;
   } catch (err) {
@@ -315,7 +316,6 @@ async function verifyAdminConsoleCredentials(username: string, password: string)
     const { response } = await callHigressConsole('/session/login', {
       method: 'POST',
       body: { username, password },
-      consoleUrl: getHigressConsoleURL(),
     });
     return response.ok;
   } catch {
