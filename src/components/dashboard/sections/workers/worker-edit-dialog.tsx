@@ -36,6 +36,8 @@ export function WorkerEditDialog({
   onOpenChange,
   onSubmit,
   modelOptions,
+  sessionIssue,
+
 }: {
   open: boolean;
   workerName: string | null;
@@ -45,6 +47,8 @@ export function WorkerEditDialog({
   onOpenChange: (_open: boolean) => void;
   onSubmit: () => void;
   modelOptions: ModelSelectionOption[];
+  sessionIssue?: string | null;
+
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -60,6 +64,7 @@ export function WorkerEditDialog({
               onChange={(model) => onChange({ ...value, model })}
               placeholder="例如 team-chat"
               options={modelOptions}
+              sessionIssue={sessionIssue}
             />
           </div>
           <div className="space-y-2">

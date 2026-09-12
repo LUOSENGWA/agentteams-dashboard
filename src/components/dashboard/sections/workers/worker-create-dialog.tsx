@@ -42,6 +42,8 @@ export function WorkerCreateDialog({
   isPending,
   onSubmit,
   modelOptions,
+  sessionIssue,
+
   agentSpecs,
 }: {
   open: boolean;
@@ -51,6 +53,8 @@ export function WorkerCreateDialog({
   isPending: boolean;
   onSubmit: () => void;
   modelOptions: ModelSelectionOption[];
+  sessionIssue?: string | null;
+
   agentSpecs?: AgentSpecTemplateOption[];
 }) {
   const nameError = workerNameError(value.name);
@@ -186,6 +190,7 @@ export function WorkerCreateDialog({
                 onChange={(model) => onChange({ ...value, model })}
                 placeholder="例如 team-chat"
                 options={modelOptions}
+              sessionIssue={sessionIssue}
               />
             </div>
             <p className="text-xs text-muted-foreground break-words">

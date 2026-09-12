@@ -26,9 +26,8 @@ import { agentteamsApi } from '@/lib/agentteams-api';
 import { useAgentTeamsStore } from '@/lib/agentteams-store';
 import { useViewMode } from '@/lib/use-view-mode';
 import { RUNTIME_LABELS } from '@/lib/phase-colors';
-import { useModels, useAiRoutes } from '@/hooks/use-agentteams-models';
+import { useModelSelection } from '@/hooks/use-model-selection';
 import { buildModelBindings, hasUnavailableModelAliases } from '@/lib/model-bindings';
-import { buildModelSelectionOptions } from '@/lib/model-catalog';
 import { ApiErrorState } from '@/components/dashboard/api-error-state';
 import { SectionHeader } from '@/components/dashboard/section-header';
 import { ConfirmDeleteDialog } from '@/components/dashboard/confirm-delete-dialog';
@@ -168,8 +167,7 @@ export function WorkersSection() {
   const ensureReadyWorker = useEnsureReadyWorker();
   const updateWorker = useUpdateWorker();
   // Soft model alias validation (embedded mode): warn but allow submit.
-  const { data: providers } = useModels();
-  const { data: aiRoutes } = useAiRoutes();
+  const { options: modelOptions, providers, aiRoutes, sessionIssue } = useModelSelection();
 
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
@@ -195,10 +193,7 @@ export function WorkersSection() {
   const [newWorker, setNewWorker] = useState<CreateWorkerRequest>({ name: '', runtime: 'openclaw' });
   const [editForm, setEditForm] = useState<WorkerEditForm>({});
   const [agentSpecs, setAgentSpecs] = useState<Array<{ name: string; description: string; version: string }>>([]);
-  const modelOptions = useMemo(
-    () => buildModelSelectionOptions(aiRoutes ?? [], providers ?? []),
-    [aiRoutes, providers],
-  );
+  // modelOptions 来自 useModelSelection（上方）——同源单一实现。
 
   const filtered = useMemo(() => filterWorkers(workers, searchQuery), [workers, searchQuery]);
   const sorted = useMemo(() => sortWorkers(filtered, sortKey), [filtered, sortKey]);
@@ -346,12 +341,13 @@ export function WorkersSection() {
   // surface a toast.warning so the user knows the worker may fail to call LLMs,
   // but still let the mutation go through.
   const warnIfModelAliasUnbound = useCallback((model: string | undefined) => {
-    if (!model || !aiRoutes || !providers) return;
+    // F9②：会话不可用时数据未加载 ≠ 未配置——不误报"无可解析绑定"。
+    if (!model || sessionIssue || !aiRoutes || !providers) return;
     const bindings = buildModelBindings([model], aiRoutes, providers);
     if (hasUnavailableModelAliases([model], bindings)) {
       toast.warning(`请求模型别名 "${model}" 在当前 AI 路由中无可解析绑定，Worker 调用 LLM 可能失败。请在「AI 网关」中配置对应路由。`);
     }
-  }, [aiRoutes, providers]);
+  }, [aiRoutes, providers, sessionIssue]);
 
   const syncWorkerSkills = useCallback(async (workerName: string, skillNames: string[]) => {
     if (!skillNames.length) return;
@@ -820,6 +816,7 @@ export function WorkersSection() {
         isPending={createWorker.isPending}
         onSubmit={handleCreate}
         modelOptions={modelOptions}
+        sessionIssue={sessionIssue}
         agentSpecs={agentSpecs}
       />
 
@@ -832,6 +829,7 @@ export function WorkersSection() {
         onOpenChange={(open) => !open && closeEdit()}
         onSubmit={handleUpdate}
         modelOptions={modelOptions}
+        sessionIssue={sessionIssue}
       />
 
       <WorkerDetailDialog

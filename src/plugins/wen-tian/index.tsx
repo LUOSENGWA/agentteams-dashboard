@@ -43,8 +43,7 @@ import { toast } from 'sonner';
 import { apiUrl } from '@/lib/api-base';
 import { pluginSectionId, type DashboardPluginApi } from '@/lib/plugins/types';
 import { useMatrixStore } from '@/lib/matrix-store';
-import { useAiRoutes, useModels } from '@/hooks/use-agentteams-models';
-import { buildModelSelectionOptions } from '@/lib/model-catalog';
+import { useModelSelection } from '@/hooks/use-model-selection';
 import type { WorkerResponse, TeamResponse, HumanResponse, InfrastructureInfo } from '@/lib/agentteams-api';
 
 /**
@@ -382,12 +381,8 @@ function DiagnosisModelSelect({
   onChange: (_value: string) => void;
   disabled?: boolean;
 }) {
-  const { data: providers } = useModels();
-  const { data: aiRoutes } = useAiRoutes();
-  const options = useMemo(
-    () => buildModelSelectionOptions(aiRoutes ?? [], providers ?? []),
-    [aiRoutes, providers]
-  );
+  const { options, sessionIssue } = useModelSelection();
+  // F9②/F10：sessionIssue = Higress 模型数据加载失败（Console 会话失效/不可达）
   const configured = options.filter((o) => o.kind === 'configured');
   const builtin = options.filter((o) => o.kind === 'builtin');
   const [customMode, setCustomMode] = useState(false);
@@ -428,6 +423,11 @@ function DiagnosisModelSelect({
             从列表选择
           </Button>
         </div>
+        {sessionIssue && (
+          <p className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs text-amber-600 break-words">
+            模型别名组暂不可用：{sessionIssue}。默认模型与自定义输入仍可使用；以管理员凭据重新登录（Higress Console 轨）后重试即可恢复。
+          </p>
+        )}
       </div>
     );
   }
@@ -512,6 +512,11 @@ function DiagnosisModelSelect({
           内置模型别名，需先在「模型管理」为其配置路由映射，否则调用可能失败。
         </p>
       ) : null}
+      {sessionIssue && (
+        <p className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs text-amber-600 break-words">
+          模型别名组暂不可用：{sessionIssue}。默认模型与自定义输入仍可使用；以管理员凭据重新登录（Higress Console 轨）后重试即可恢复。
+        </p>
+      )}
     </div>
   );
 }

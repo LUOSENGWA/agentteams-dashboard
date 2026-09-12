@@ -19,9 +19,8 @@ import { useCreateManager, useDeleteManager, useUpdateManager } from '@/hooks/us
 import { useSearch } from '@/lib/search-context';
 import { useAgentTeamsStore } from '@/lib/agentteams-store';
 import { useViewMode } from '@/lib/use-view-mode';
-import { useModels, useAiRoutes } from '@/hooks/use-agentteams-models';
+import { useModelSelection } from '@/hooks/use-model-selection';
 import { buildModelBindings, hasUnavailableModelAliases } from '@/lib/model-bindings';
-import { buildModelSelectionOptions } from '@/lib/model-catalog';
 import { ApiErrorState } from '@/components/dashboard/api-error-state';
 import { SectionHeader } from '@/components/dashboard/section-header';
 import { ConfirmDeleteDialog } from '@/components/dashboard/confirm-delete-dialog';
@@ -99,8 +98,7 @@ export function ManagersSection() {
   const createManager = useCreateManager();
   const deleteManager = useDeleteManager();
   const updateManager = useUpdateManager();
-  const { data: providers } = useModels();
-  const { data: aiRoutes } = useAiRoutes();
+  const { options: modelOptions, providers, aiRoutes, sessionIssue } = useModelSelection();
 
   const [createOpen, setCreateOpen] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null);
@@ -112,11 +110,6 @@ export function ManagersSection() {
 
   const [sortKey, setSortKey] = useState<SortKey>('name');
   const { viewMode, handleViewModeChange } = useViewMode('card');
-  const modelOptions = useMemo(
-    () => buildModelSelectionOptions(aiRoutes ?? [], providers ?? []),
-    [aiRoutes, providers],
-  );
-
   const filteredManagers = useMemo(
     () => filterManagers(managers, searchQuery),
     [managers, searchQuery],
@@ -140,7 +133,7 @@ export function ManagersSection() {
   }, [managers]);
 
   const handleCreate = useCallback(() => {
-    if (newManager.model && aiRoutes && providers && hasUnavailableModelAliases(
+    if (newManager.model && !sessionIssue && aiRoutes && providers && hasUnavailableModelAliases(
       [newManager.model],
       buildModelBindings([newManager.model], aiRoutes, providers),
     )) {
@@ -152,7 +145,7 @@ export function ManagersSection() {
         setNewManager({ name: '' });
       },
     });
-  }, [createManager, newManager, aiRoutes, providers]);
+  }, [createManager, newManager, aiRoutes, providers, sessionIssue]);
 
   const handleDelete = useCallback(() => {
     if (deleteTarget) {
@@ -181,7 +174,7 @@ export function ManagersSection() {
     if (!editManager) return;
     const { name: _ignored, ...data } = editForm;
     void _ignored;
-    if (editForm.model && aiRoutes && providers && hasUnavailableModelAliases(
+    if (editForm.model && !sessionIssue && aiRoutes && providers && hasUnavailableModelAliases(
       [editForm.model],
       buildModelBindings([editForm.model], aiRoutes, providers),
     )) {
@@ -201,7 +194,7 @@ export function ManagersSection() {
         },
       },
     );
-  }, [editForm, editManager, updateManager, closeEdit, aiRoutes, providers]);
+  }, [editForm, editManager, updateManager, closeEdit, aiRoutes, providers, sessionIssue]);
 
   const workersList: WorkerResponse[] = workers || [];
   const teamsList: TeamResponse[] = teams || [];
@@ -299,6 +292,7 @@ export function ManagersSection() {
         isPending={createManager.isPending}
         onSubmit={handleCreate}
         modelOptions={modelOptions}
+        sessionIssue={sessionIssue}
       />
 
       <ManagerEditDialog
@@ -310,6 +304,7 @@ export function ManagersSection() {
         onOpenChange={(open) => !open && closeEdit()}
         onSubmit={handleUpdate}
         modelOptions={modelOptions}
+        sessionIssue={sessionIssue}
       />
 
       <ManagerDetailDialog

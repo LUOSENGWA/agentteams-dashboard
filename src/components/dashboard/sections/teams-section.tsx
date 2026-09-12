@@ -15,7 +15,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useTeams } from '@/hooks/use-agentteams-teams';
 import { useWorkers } from '@/hooks/use-agentteams-workers';
 import { useManagers } from '@/hooks/use-agentteams-managers';
-import { useModels, useAiRoutes } from '@/hooks/use-agentteams-models';
+import { useModelSelection } from '@/hooks/use-model-selection';
 import { useCreateTeam, useDeleteTeam, useUpdateTeam } from '@/hooks/use-agentteams-mutations';
 import { useSearch } from '@/lib/search-context';
 import { useAgentTeamsStore } from '@/lib/agentteams-store';
@@ -26,7 +26,6 @@ import { ConfirmDeleteDialog } from '@/components/dashboard/confirm-delete-dialo
 import { toast } from 'sonner';
 import { formatErrorMessage } from '@/lib/api-error';
 import type { CreateTeamRequest, UpdateTeamRequest, TeamResponse, WorkerResponse, ManagerResponse } from '@/lib/agentteams-api';
-import { buildModelSelectionOptions } from '@/lib/model-catalog';
 import { ITEMS_PER_PAGE, SORT_OPTIONS, type SortKey } from './teams/team-types';
 import {
   filterTeams,
@@ -92,12 +91,7 @@ export function TeamsSection() {
   const { data: teams, isLoading, isError, refetch, isRefetching } = useTeams();
   const { data: workers } = useWorkers();
   const { data: managers } = useManagers();
-  const { data: providers } = useModels();
-  const { data: aiRoutes } = useAiRoutes();
-  const modelOptions = useMemo(
-    () => buildModelSelectionOptions(aiRoutes ?? [], providers ?? []),
-    [aiRoutes, providers],
-  );
+  const { options: modelOptions, sessionIssue } = useModelSelection();
   const { searchQuery } = useSearch();
   const { isConnected } = useAgentTeamsStore();
   const createTeam = useCreateTeam();
@@ -420,6 +414,7 @@ export function TeamsSection() {
         onSubmit={handleCreate}
         workers={workersList}
         modelOptions={modelOptions}
+        sessionIssue={sessionIssue}
       />
 
       <TeamEditDialog

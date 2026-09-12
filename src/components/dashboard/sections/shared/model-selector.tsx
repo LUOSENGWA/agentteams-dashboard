@@ -8,7 +8,9 @@ import { Badge } from '@/components/ui/badge';
 import {
   Select,
   SelectContent,
+  SelectGroup,
   SelectItem,
+  SelectLabel,
   SelectSeparator,
   SelectTrigger,
   SelectValue,
@@ -23,6 +25,18 @@ interface ModelSelectorProps {
   placeholder?: string;
   disabled?: boolean;
   options?: ModelSelectionOption[];
+  // F9②/F10：Higress 模型数据加载失败（Console 会话失效/不可达/未配置）时的
+  // 显式原因 + 出路——不静默平铺（只显内置组而不说明 = 用户以为 alias 丢了）。
+  sessionIssue?: string | null;
+}
+
+function SessionIssueNote({ message }: { message: string }) {
+  return (
+    <p className="rounded-md border border-amber-500/30 bg-amber-500/5 p-2 text-xs text-amber-600 break-words">
+      模型别名组暂不可用：{message}。内置模型与自定义输入仍可使用；以管理员
+      凭据重新登录（Higress Console 轨）后重试即可恢复别名组。
+    </p>
+  );
 }
 
 export function ModelSelector({
@@ -31,10 +45,15 @@ export function ModelSelector({
   placeholder = '选择模型',
   disabled,
   options,
+  sessionIssue,
 }: ModelSelectorProps) {
   const uniqueOptions = [
     ...new Map((options ?? []).map((option) => [option.alias, option])).values(),
   ];
+  // 分组对齐插件（可辨认性）：路由可解析的 alias 与需配路由的内置模板分开两组，
+  // 组内按名称排序（buildModelSelectionOptions 已整体排序，filter 保序）。
+  const configuredOptions = uniqueOptions.filter((option) => option.kind === 'configured');
+  const builtinOptions = uniqueOptions.filter((option) => option.kind === 'builtin');
   const known = uniqueOptions.some((option) => option.alias === value);
   const [customMode, setCustomMode] = useState(false);
 
@@ -78,6 +97,7 @@ export function ModelSelector({
         <p className="text-xs text-muted-foreground break-words">
           自定义请求模型别名，将由通配符路由或服务端绑定校验处理。
         </p>
+        {sessionIssue ? <SessionIssueNote message={sessionIssue} /> : null}
       </div>
     );
   }
@@ -100,28 +120,46 @@ export function ModelSelector({
           <SelectValue placeholder={placeholder} />
         </SelectTrigger>
         <SelectContent className="max-w-[min(100vw-2rem,28rem)]">
-          {uniqueOptions.map((option) => (
-            <SelectItem key={option.alias} value={option.alias} className="min-w-0">
-              <span className="flex items-center gap-1.5 min-w-0">
-                <span className="font-mono truncate">{option.alias}</span>
-                {option.kind === 'builtin' && (
-                  <Badge variant="secondary" className="text-[9px] shrink-0">
-                    <Sparkles className="mr-0.5 size-2.5" />
-                    内置
-                  </Badge>
-                )}
-              </span>
-              {option.kind === 'configured' && option.binding ? (
-                <span className="block truncate text-xs text-muted-foreground">
-                  {option.binding.routeName} / {option.binding.providerName} / {option.binding.targetModel}
-                </span>
-              ) : (
-                <span className="block truncate text-xs text-muted-foreground">
-                  内置模型，需在「模型管理」配置路由映射
-                </span>
-              )}
-            </SelectItem>
-          ))}
+          {configuredOptions.length > 0 && (
+            <SelectGroup>
+              <SelectLabel>Higress alias（路由可解析）</SelectLabel>
+              {configuredOptions.map((option) => (
+                <SelectItem key={option.alias} value={option.alias} className="min-w-0">
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    <span className="font-mono truncate">{option.alias}</span>
+                  </span>
+                  {option.kind === 'configured' && option.binding ? (
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {option.binding.routeName} / {option.binding.providerName} / {option.binding.targetModel}
+                    </span>
+                  ) : (
+                    <span className="block truncate text-xs text-muted-foreground">
+                      网关路由可解析
+                    </span>
+                  )}
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          )}
+          {builtinOptions.length > 0 && (
+            <SelectGroup>
+              <SelectLabel>Higress 内置 alias（需配路由映射）</SelectLabel>
+              {builtinOptions.map((option) => (
+                <SelectItem key={option.alias} value={option.alias} className="min-w-0">
+                  <span className="flex items-center gap-1.5 min-w-0">
+                    <span className="font-mono truncate">{option.alias}</span>
+                    <Badge variant="secondary" className="text-[9px] shrink-0">
+                      <Sparkles className="mr-0.5 size-2.5" />
+                      内置
+                    </Badge>
+                  </span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    内置模型，需在「模型管理」配置路由映射
+                  </span>
+                </SelectItem>
+              ))}
+            </SelectGroup>
+          )}
           {uniqueOptions.length > 0 && <SelectSeparator />}
           <SelectItem value={CUSTOM_ALIAS}>
             <span className="flex items-center gap-1.5 text-muted-foreground">
@@ -147,6 +185,7 @@ export function ModelSelector({
             : '在「模型管理」配置模型别名后，此处会提供可选项。'}
         </p>
       )}
+      {sessionIssue ? <SessionIssueNote message={sessionIssue} /> : null}
     </div>
   );
 }

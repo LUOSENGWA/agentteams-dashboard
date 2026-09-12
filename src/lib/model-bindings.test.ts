@@ -92,6 +92,30 @@ describe('model bindings', () => {
     expect(() => buildModelBindings(['team-chat'], [route], [{ name: 'openai', type: 'openai', tokenCount: 1 }])).not.toThrow();
   });
 
+  it('collects aliases from Console-native EQUAL predicates (not just EXACT)', () => {
+    // 2026-09-10 Node1 live data: Higress Console-created routes use
+    // matchType 'EQUAL' (dashboard-created routes use 'EXACT'). The
+    // deepseek-v4-pro custom-model route was invisible to the selector
+    // because collection only accepted EXACT.
+    const route = {
+      name: 'default-ai-route',
+      pathPredicate: { matchType: 'PRE', matchValue: '/v1' },
+      modelPredicates: [{ matchType: 'EQUAL', matchValue: 'deepseek-v4-pro' } as { matchType: string; matchValue: string }],
+      upstreams: [{ provider: 'openai-compat', weight: 100 }],
+    };
+    const bindings = listAvailableRequestModelAliases(
+      [route],
+      [{ name: 'openai-compat', type: 'openai', tokenCount: 1 }],
+    );
+    expect(bindings.map((b) => b.requestModelAlias)).toContain('deepseek-v4-pro');
+    const binding = bindings.find((b) => b.requestModelAlias === 'deepseek-v4-pro');
+    // 有 predicate（非 passthrough）+ provider 在列 → available
+    expect(binding?.available).toBe(true);
+    expect(binding?.routeName).toBe('default-ai-route');
+    // 无 modelMapping → 目标 = 请求模型名原样转发
+    expect(binding?.targetModel).toBe('deepseek-v4-pro');
+  });
+
   it('does not emit duplicate bindings when a route lists the same provider twice', () => {
     const bindings = buildModelBindings(
       ['team-chat'],
