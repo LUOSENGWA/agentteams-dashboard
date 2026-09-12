@@ -9,6 +9,7 @@ import {
   EMBEDDED_DEFAULTS,
   backendCandidates,
   backendCandidatesSync,
+  bootstrapSetupToken,
   classifyProbeError,
   configExists,
   configFilePath,
@@ -174,6 +175,48 @@ describe('getSetupToken', () => {
   });
 });
 
+describe('bootstrapSetupToken (post-merge review Block 4: token in docker logs at process start)', () => {
+  it('standalone + enforced + no env token: generates, persists, and logs at startup', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await bootstrapSetupToken();
+    const file = path.join(workDir, '.setup-token');
+    expect(fs.existsSync(file)).toBe(true);
+    const token = fs.readFileSync(file, 'utf-8').trim();
+    expect(token).toMatch(/^[0-9a-f]{32}$/);
+    expect(spy).toHaveBeenCalledWith(`[dashboard] one-time backend setup token: ${token}`);
+    spy.mockRestore();
+  });
+
+  it('restart (persisted token from file) logs the same token again', async () => {
+    const first = await getSetupToken(); // first boot: generate + persist
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await bootstrapSetupToken();
+    expect(spy).toHaveBeenCalledWith(`[dashboard] one-time backend setup token: ${first}`);
+    spy.mockRestore();
+  });
+
+  it('shared mode and ENFORCE=0: no-op (no file, no log)', async () => {
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.stubEnv('DASHBOARD_SHARED_MODE', '1');
+    await bootstrapSetupToken();
+    expect(spy).not.toHaveBeenCalled();
+    vi.stubEnv('DASHBOARD_SHARED_MODE', '');
+    vi.stubEnv('DASHBOARD_SETUP_TOKEN_ENFORCE', '0');
+    await bootstrapSetupToken();
+    expect(spy).not.toHaveBeenCalled();
+    expect(fs.existsSync(path.join(workDir, '.setup-token'))).toBe(false);
+    spy.mockRestore();
+  });
+
+  it('env token: no extra log (the operator already holds it)', async () => {
+    vi.stubEnv('DASHBOARD_SETUP_TOKEN', 'env-token');
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    await bootstrapSetupToken();
+    expect(spy).not.toHaveBeenCalled();
+    spy.mockRestore();
+  });
+});
+
 describe('pickBackendUrl + working cache', () => {
   it('falls back through the candidate list', () => {
     expect(pickBackendUrl('sglang')).toBeUndefined();
@@ -225,6 +268,33 @@ describe('isTestTargetAllowed', () => {
     expect(isTestTargetAllowed('http://sub.a.example.com/')).toBe(true);
     expect(isTestTargetAllowed('http://evil-a.example.com/')).toBe(false);
     expect(isTestTargetAllowed('not-a-url')).toBe(false);
+  });
+
+  it('post-merge review: metadata sentinels are rejected in every form', () => {
+    vi.stubEnv('DASHBOARD_ALLOWED_HOSTS', '');
+    const denied = [
+      'http://169.254.169.254/latest/meta-data/',
+      'http://[::ffff:169.254.169.254]/latest/meta-data/', // IPv4-mapped IPv6
+      'http://169.254.1.5/', // whole 169.254.0.0/16 range
+      'http://[fe80::1]/', // IPv6 link-local
+      'http://metadata.google.internal/computeMetadata/v1/',
+      'http://metadata.google.com/',
+      'http://metadata/latest/meta-data/',
+    ];
+    for (const url of denied) {
+      expect(isTestTargetAllowed(url), url).toBe(false);
+    }
+    // Legitimate targets (incl. private LAN, which is the self-config posture)
+    // are unaffected.
+    expect(isTestTargetAllowed('http://192.168.54.107:8001/')).toBe(true);
+    expect(isTestTargetAllowed('http://10.0.0.5:8900/')).toBe(true);
+    expect(isTestTargetAllowed('http://localhost:8001/')).toBe(true);
+  });
+
+  it('post-merge review: an explicit DASHBOARD_ALLOWED_HOSTS entry cannot re-allow the sentinel', () => {
+    vi.stubEnv('DASHBOARD_ALLOWED_HOSTS', '169.254.169.254');
+    expect(isTestTargetAllowed('http://169.254.169.254/')).toBe(false);
+    expect(isTestTargetAllowed('http://[::ffff:169.254.169.254]/')).toBe(false);
   });
 });
 
@@ -292,6 +362,39 @@ describe('probeBackend', () => {
     const result = await probeBackend('sglang', 'http://127.0.0.1:1');
     expect(result.ok).toBe(false);
     expect(result.error).toBeTruthy();
+  });
+
+  it('post-merge review: refuses a redirect to a disallowed target (302 → metadata sentinel)', async () => {
+    const redirectServer = createServer((_req, res) => {
+      res.writeHead(302, { location: 'http://169.254.169.254/latest/meta-data/' });
+      res.end();
+    });
+    await new Promise<void>((resolve) => redirectServer.listen(0, '127.0.0.1', resolve));
+    const addr = redirectServer.address();
+    if (!addr || typeof addr === 'string') throw new Error('no address');
+    const result = await probeBackend('matrix', `http://127.0.0.1:${addr.port}`, 3000);
+    redirectServer.close();
+    expect(result.ok).toBe(false);
+    expect(result.error).toBeTruthy();
+  });
+
+  it('post-merge review: follows a redirect to an allowed target', async () => {
+    const redirectServer = createServer((req, res) => {
+      if (req.url?.startsWith('/go')) {
+        res.writeHead(302, { location: '/ok' });
+        res.end();
+      } else {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{}');
+      }
+    });
+    await new Promise<void>((resolve) => redirectServer.listen(0, '127.0.0.1', resolve));
+    const addr = redirectServer.address();
+    if (!addr || typeof addr === 'string') throw new Error('no address');
+    const result = await probeBackend('controller', `http://127.0.0.1:${addr.port}/go`, 3000);
+    redirectServer.close();
+    expect(result.ok).toBe(true);
+    expect(result.status).toBe(200);
   });
 
   it('embedded defaults are the documented embedded topology (no sglang)', () => {

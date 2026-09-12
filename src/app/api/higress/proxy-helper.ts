@@ -1,5 +1,6 @@
 // Shared proxy helper for Higress Console API routes
 import { NextResponse } from 'next/server';
+import { readConfigSync } from '@/lib/backend-config';
 
 const TIMEOUT_MS = 15000;
 const FALLBACK_CONFIG_WRITE_ENABLED = process.env.AGENTTEAMS_HIGRESS_FALLBACK_CONFIG_WRITE_ENABLED === 'true';
@@ -47,14 +48,27 @@ function getAllowedHosts(): string[] {
   return DEFAULT_ALLOWED_HOSTS;
 }
 
-export function validateHigressConsoleURL(url: string): string {
+export function validateHigressConsoleURL(
+  url: string,
+  opts?: { trustedHosts?: string[] },
+): string {
   try {
     const parsed = new URL(url);
     if (!['http:', 'https:'].includes(parsed.protocol)) {
       throw new HigressConsoleConfigurationError('Console URL must use HTTP or HTTPS');
     }
     const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
-    if (!getAllowedHosts().includes(hostname)) {
+    // trustedHosts: hosts saved through the token-gated setup page —
+    // operator data for this deployment, authorized without an env
+    // allowlist entry (post-merge review Block 2). Checked BEFORE the env
+    // allowlist: in external mode without
+    // AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS, getAllowedHosts() throws,
+    // and a saved host must not be caught by that throw.
+    if (opts?.trustedHosts?.includes(hostname)) {
+      return parsed.toString();
+    }
+    const allowed = getAllowedHosts();
+    if (!allowed.includes(hostname)) {
       throw new HigressConsoleConfigurationError(`Console host "${hostname}" is not allowed`);
     }
     return parsed.toString();
@@ -67,6 +81,19 @@ export function validateHigressConsoleURL(url: string): string {
 }
 
 export function getHigressConsoleURL(): string {
+  // Resolution order (post-merge review Block 2): saved config (setup page)
+  // > env > embedded default. The Console track previously ignored the
+  // saved `higress-console` address, so a standalone deployment always hit
+  // the in-cluster URL. A host saved through the token-gated setup path is
+  // operator data for this deployment: validated for shape, trusted for
+  // host (the env allowlist still governs env-configured and embedded
+  // URLs).
+  const saved = readConfigSync()?.backends['higress-console'];
+  const savedUrl = saved?.internal || saved?.external;
+  if (savedUrl) {
+    const savedHost = new URL(savedUrl).hostname.toLowerCase().replace(/^\[|\]$/g, '');
+    return validateHigressConsoleURL(savedUrl, { trustedHosts: [savedHost] });
+  }
   const configuredUrl = process.env.AGENTTEAMS_AI_GATEWAY_ADMIN_URL;
   if (!configuredUrl) {
     if (isExternalAdapterMode()) {
@@ -100,10 +127,17 @@ export async function callHigressConsole(
     method?: string;
     body?: string | Record<string, unknown>;
     cookie?: string | null;
-    consoleUrl?: string;
   } = {}
 ): Promise<{ response: Response; body: unknown }> {
-  const consoleUrl = options.consoleUrl ? validateHigressConsoleURL(options.consoleUrl) : getHigressConsoleURL();
+  // Single resolution path (post-merge review Block 2 follow-up): every
+  // caller goes through getHigressConsoleURL(). The previous optional
+  // consoleUrl accepted raw caller values (e.g. the env var read directly in
+  // api-auth) and self-signed their own host into trustedHosts — bypassing
+  // the allowlist (the Higress session cookie could be forwarded to an
+  // unauthorised host) while desyncing session validation from the login
+  // URL. Callers that need the URL for logging resolve it themselves via
+  // getHigressConsoleURL().
+  const consoleUrl = getHigressConsoleURL();
   const targetUrl = new URL(path, consoleUrl).toString();
 
   const controller = new AbortController();

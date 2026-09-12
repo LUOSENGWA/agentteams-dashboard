@@ -93,6 +93,55 @@ export function isHttpUrl(value: string | undefined | null): value is string {
   }
 }
 
+// Cloud instance-metadata sentinels: never a legitimate dashboard backend in
+// any mode. Post-merge review: the original string-equality check on the
+// plain IP missed the IPv4-mapped IPv6 form ([::ffff:169.254.169.254]), the
+// rest of the 169.254.0.0/16 range, IPv6 link-local, and the common metadata
+// DNS names.
+const METADATA_HOSTNAMES = new Set([
+  'metadata',
+  'metadata.google.internal',
+  'metadata.google.com',
+  'instance-data',
+]);
+
+/** IPv4 address embedded in an IPv4-mapped IPv6 literal, if any. */
+function ipv4MappedFrom(hostname: string): string | null {
+  const dotted = hostname.match(/^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/i);
+  if (dotted) return dotted[1];
+  const hext = hostname.match(/^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/i);
+  if (!hext) return null;
+  const hi = Number.parseInt(hext[1], 16);
+  const lo = Number.parseInt(hext[2], 16);
+  return `${hi >>> 8}.${hi & 0xff}.${lo >>> 8}.${lo & 0xff}`;
+}
+
+/** 169.254.0.0/16 — link-local, the cloud metadata sentinel range. */
+function isIpv4LinkLocal(hostname: string): boolean {
+  const parts = hostname.split('.');
+  if (parts.length !== 4) return false;
+  const nums = parts.map((p) => Number(p));
+  if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  return nums[0] === 169 && nums[1] === 254;
+}
+
+/** fe80::/10 — IPv6 link-local (zone id, if any, stripped). */
+function isIpv6LinkLocal(hostname: string): boolean {
+  const h = hostname.toLowerCase().split('%')[0];
+  return h.includes(':') && /^fe[89ab]/.test(h);
+}
+
+/** Metadata sentinel in any form: plain IP, IPv4-mapped, /16 range,
+ * fe80::/10, or the DNS names that resolve to it. */
+function isMetadataTarget(hostname: string): boolean {
+  const mapped = ipv4MappedFrom(hostname);
+  const hosts = mapped ? [hostname, mapped] : [hostname];
+  return (
+    hosts.some((h) => h === '169.254.169.254' || isIpv4LinkLocal(h) || METADATA_HOSTNAMES.has(h)) ||
+    isIpv6LinkLocal(hostname)
+  );
+}
+
 // Optional SSRF filter for the pre-login "test connection" endpoint.
 // Empty (default) = allow any http(s) target — this is a local
 // self-configuration tool; operators can pin exact hosts if they want.
@@ -105,8 +154,10 @@ export function isTestTargetAllowed(url: string): boolean {
   }
   // Cloud instance-metadata sentinel: never a legitimate dashboard backend
   // in any mode (the setup probe is an authenticated owner tool since the
-  // PR-91 security review — this is belt, not the suspenders).
-  if (hostname === '169.254.169.254') return false;
+  // PR-91 security review — this is belt, not the suspenders). Covers the
+  // plain IP, IPv4-mapped IPv6 forms, the whole 169.254.0.0/16 range,
+  // IPv6 link-local, and the common metadata DNS names (post-merge review).
+  if (isMetadataTarget(hostname)) return false;
   const fromEnv = (process.env.DASHBOARD_ALLOWED_HOSTS || '').trim();
   // Empty = allow (local self-config posture — plugin config_test parity).
   // Since the PR-91 review the probe endpoint is no longer reachable
@@ -407,6 +458,24 @@ export async function getSetupToken(): Promise<string> {
   return token;
 }
 
+/**
+ * Process-start bootstrap (post-merge review Block 4), called from
+ * instrumentation register(): in standalone + enforced mode the setup token
+ * must be retrievable from `docker logs` the moment the process is up — the
+ * setup page tells the operator to search the logs, but getSetupToken() is
+ * otherwise lazy (first verifySetupToken call only), so a fresh
+ * deployment's logs contained no token until the first (wrong) submission.
+ * No-op in shared mode (env is the only source by design), ENFORCE=0 (no
+ * token at all), and env-token mode (the operator already holds it).
+ */
+export async function bootstrapSetupToken(): Promise<void> {
+  if (isSharedMode() || !isSetupTokenEnforced()) return;
+  if ((process.env.DASHBOARD_SETUP_TOKEN || '').trim()) return;
+  const token = await getSetupToken();
+  if (!token) return;
+  console.error(`[dashboard] one-time backend setup token: ${token}`);
+}
+
 // ---------------------------------------------------------------------------
 // Health probes (per-kind path; also used by the infrastructure panel)
 // ---------------------------------------------------------------------------
@@ -540,6 +609,28 @@ export async function resolveIpHint(url: string): Promise<string> {
   }
 }
 
+/**
+ * Probe fetch with vetted redirects (post-merge review): the default fetch
+ * follows 302/308, so a target that redirects to the cloud metadata sentinel
+ * (or any other address) would bypass isTestTargetAllowed, which only vets
+ * the ORIGINAL url. Each hop is re-vetted with the same filter — a
+ * disallowed hop is refused, while a benign self-redirect (e.g. a console's
+ * Next trailing-slash 308) still resolves. Cap: 2 hops.
+ */
+async function probeFetchWithVettedRedirects(url: string, init: RequestInit, maxHops = 2): Promise<Response> {
+  let current = url;
+  for (let hop = 0; ; hop += 1) {
+    const res = await fetch(current, { ...init, redirect: 'manual' });
+    const location = res.status >= 300 && res.status < 400 ? res.headers.get('location') : null;
+    if (!location || hop >= maxHops) return res;
+    const next = new URL(location, current).toString();
+    if (!isTestTargetAllowed(next)) {
+      throw new Error(`probe redirect refused: target host "${new URL(next).hostname}" not allowed`);
+    }
+    current = next;
+  }
+}
+
 async function probeOnce(name: BackendName, url: string, timeoutMs: number): Promise<ProbeResult> {
   const spec = PROBE_PATHS[name];
   const target = new URL(spec.path, url.replace(/\/+$/, '')).toString();
@@ -547,7 +638,7 @@ async function probeOnce(name: BackendName, url: string, timeoutMs: number): Pro
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   const startedAt = Date.now();
   try {
-    const res = await fetch(target, {
+    const res = await probeFetchWithVettedRedirects(target, {
       method: spec.method ?? 'GET',
       signal: controller.signal,
       headers: spec.body ? { 'content-type': 'application/json' } : undefined,

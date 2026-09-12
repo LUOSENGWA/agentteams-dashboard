@@ -215,7 +215,10 @@ export function BackendSetupPage({ onDone, reconfigure = false }: { onDone: () =
         }));
       }
     },
-    [addrs],
+    // Post-merge review Block 5: token was missing from the deps — entering
+    // the address first and the token second left a stale-closure token
+    // (empty → pre-login probe 403 → "no test result").
+    [addrs, token],
   );
 
   const applyEmbeddedDefaults = () => {

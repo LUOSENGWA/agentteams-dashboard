@@ -88,8 +88,10 @@ export interface SessionValidation {
  * Returns `{ valid, user }` — `user` is populated whenever the response body
  * carries a recognisable consumer record.
  *
- * Ignores user-supplied ?consoleUrl= parameter and always uses the configured
- * environment URL to prevent SSRF via cookie forwarding.
+ * Ignores user-supplied ?consoleUrl= parameter and always uses the shared
+ * Console resolution (saved setup-page config > env > embedded, see
+ * getHigressConsoleURL) — the same URL as the Console login track — to
+ * prevent SSRF via cookie forwarding.
  */
 export async function validateHigressSession(request: NextRequest): Promise<SessionValidation> {
   const empty: SessionValidation = { valid: false, user: null };
@@ -111,13 +113,13 @@ export async function validateHigressSession(request: NextRequest): Promise<Sess
   }
 
   try {
-    // Always use the configured server-side Console URL, never accept
-    // user-supplied consoleUrl query param for auth validation (SSRF protection).
-    const consoleUrl = process.env.AGENTTEAMS_AI_GATEWAY_ADMIN_URL || undefined;
+    // Single shared Console resolution (getHigressConsoleURL), identical to
+    // the Console login track — session validation and login must hit the
+    // same Console (post-merge review Block 2). Never pass an env value
+    // directly and never accept a user-supplied consoleUrl (SSRF protection).
     const { response, body } = await callHigressConsole('/v1/consumers', {
       method: 'GET',
       cookie,
-      consoleUrl,
     });
 
     const valid = response.ok;
