@@ -170,7 +170,7 @@ export function HumanDetailDialog({
           <DialogFooter>
             <Button variant="outline" onClick={() => onEdit(human)}>
               <Pencil className="w-3 h-3 mr-1" aria-hidden="true" />
-              编辑权限
+              编辑
             </Button>
           </DialogFooter>
         )}

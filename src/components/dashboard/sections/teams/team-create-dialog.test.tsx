@@ -1,9 +1,23 @@
-import { cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import '@testing-library/jest-dom/vitest';
 import { TeamCreateDialog, parseWorkerNames } from './team-create-dialog';
-import { buildWorkerMembers } from '@/lib/agentteams-api';
+import { agentteamsApi, buildWorkerMembers } from '@/lib/agentteams-api';
 import type { WorkerResponse } from '@/lib/agentteams-api';
+import type { ModelSelectionOption } from '@/lib/model-catalog';
+
+vi.mock('@/lib/agentteams-api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/agentteams-api')>();
+  return {
+    ...actual,
+    agentteamsApi: { createWorker: vi.fn() },
+  };
+});
+
+const MODEL_OPTIONS: ModelSelectionOption[] = [
+  { alias: 'team-chat', kind: 'configured' },
+  { alias: 'qwen3.6-plus', kind: 'builtin' },
+];
 
 vi.mock('@/components/ui/dialog', () => ({
   Dialog: ({ children, open }: { children: React.ReactNode; open: boolean }) => open ? <>{children}</> : null,
@@ -29,9 +43,12 @@ vi.mock('@/components/ui/select', () => ({
     </select>
   ),
   SelectContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  SelectGroup: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   SelectItem: ({ value, children }: { value: string; children: React.ReactNode }) => (
     <option value={value}>{children}</option>
   ),
+  SelectLabel: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  SelectSeparator: () => null,
   SelectTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   SelectValue: () => null,
 }));
@@ -44,6 +61,7 @@ const renderDialog = (
   workers: WorkerResponse[],
 ) => {
   const onChange = vi.fn((_next: unknown) => {});
+  const onWorkerCreated = vi.fn((_name: string) => {});
   const result = render(
     <TeamCreateDialog
       open
@@ -53,9 +71,11 @@ const renderDialog = (
       onOpenChange={() => {}}
       onSubmit={() => {}}
       workers={workers}
+      modelOptions={MODEL_OPTIONS}
+      onWorkerCreated={(name) => onWorkerCreated(name)}
     />,
   );
-  return { onChange, container: result.container };
+  return { onChange, onWorkerCreated, container: result.container };
 };
 
 describe('TeamCreateDialog (plugin parity: members come from existing Workers only)', () => {
@@ -128,6 +148,92 @@ describe('TeamCreateDialog (plugin parity: members come from existing Workers on
   it('name + leader set → create enabled', () => {
     renderDialog({ name: 't', leader: { name: 'lead-1' } }, [worker('lead-1')]);
     expect(screen.getByRole('button', { name: '创建' })).toBeEnabled();
+  });
+});
+
+describe('TeamCreateDialog 内联新建 Worker（9/13 罗总验收：参考插件）', () => {
+  const expand = () => fireEvent.click(screen.getByRole('button', { name: /新建 Worker/ }));
+  const nameInput = () => screen.getByPlaceholderText('worker-name') as HTMLInputElement;
+  const createButton = () => screen.getByRole('button', { name: '创建并加入团队' });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllMocks();
+  });
+
+  it('默认收起：不渲染 Worker 名输入，主路径不受影响', () => {
+    renderDialog({ name: 't', leader: { name: 'lead-1' } }, [worker('lead-1')]);
+    expect(screen.queryByPlaceholderText('worker-name')).toBeNull();
+    expect(screen.getByRole('button', { name: /新建 Worker/ })).toBeInTheDocument();
+    // 默认收起 → select 顺序不变（Leader / Worker 名单）
+  });
+
+  it('展开 → 填名 → 创建并加入团队：createWorker 载荷 + 入队 + 回调 + 收起', async () => {
+    const createWorker = vi
+      .mocked(agentteamsApi.createWorker)
+      .mockResolvedValue({ name: 'new-w' } as WorkerResponse);
+    const { onChange, onWorkerCreated } = renderDialog(
+      { name: 't', leader: { name: 'lead-1' } },
+      [worker('lead-1')],
+    );
+
+    expand();
+    expect(createButton()).toBeDisabled();
+    fireEvent.change(nameInput(), { target: { value: 'new-w' } });
+    expect(createButton()).toBeEnabled();
+    fireEvent.click(createButton());
+
+    await waitFor(() =>
+      expect(createWorker).toHaveBeenCalledWith({
+        name: 'new-w',
+        runtime: 'openclaw',
+        model: undefined,
+        soul: undefined,
+      }),
+    );
+    expect(onChange).toHaveBeenCalledWith(
+      expect.objectContaining({ workerNames: ['new-w'] }),
+    );
+    expect(onWorkerCreated).toHaveBeenCalledWith('new-w');
+    // 成功后收起折叠区并重置表单
+    expect(screen.queryByPlaceholderText('worker-name')).toBeNull();
+  });
+
+  it('名字已存在为 Worker → 按钮禁用（请从列表选择）', () => {
+    renderDialog(
+      { name: 't', leader: { name: 'lead-1' } },
+      [worker('lead-1'), worker('existing-w')],
+    );
+    expand();
+    fireEvent.change(nameInput(), { target: { value: 'existing-w' } });
+    expect(createButton()).toBeDisabled();
+  });
+
+  it('名字已在团队 Workers 中 → 按钮禁用', () => {
+    renderDialog(
+      { name: 't', leader: { name: 'lead-1' }, workerNames: ['team-w'] },
+      [worker('lead-1'), worker('team-w')],
+    );
+    expand();
+    fireEvent.change(nameInput(), { target: { value: 'team-w' } });
+    expect(createButton()).toBeDisabled();
+  });
+
+  it('非法名（短于 3 字符，MinIO 访问密钥长度）→ 按钮禁用', () => {
+    renderDialog({ name: 't', leader: { name: 'lead-1' } }, [worker('lead-1')]);
+    expand();
+    fireEvent.change(nameInput(), { target: { value: 'ab' } });
+    expect(createButton()).toBeDisabled();
+  });
+
+  it('创建失败 → 显示错误并留在展开态', async () => {
+    vi.mocked(agentteamsApi.createWorker).mockRejectedValue(new Error('minio down'));
+    renderDialog({ name: 't', leader: { name: 'lead-1' } }, [worker('lead-1')]);
+    expand();
+    fireEvent.change(nameInput(), { target: { value: 'new-w' } });
+    fireEvent.click(createButton());
+    await waitFor(() => expect(screen.getByText('minio down')).toBeInTheDocument());
+    expect(screen.getByPlaceholderText('worker-name')).toBeInTheDocument();
   });
 });
 

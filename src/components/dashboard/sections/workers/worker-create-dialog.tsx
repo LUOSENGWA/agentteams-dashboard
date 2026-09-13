@@ -3,7 +3,6 @@
 import { useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Textarea } from '@/components/ui/textarea';
 import {
   Select,
   SelectContent,
@@ -25,6 +24,8 @@ import { agentteamsApi } from '@/lib/agentteams-api';
 import type { ModelSelectionOption } from '@/lib/model-catalog';
 import { workerNameError } from '@/lib/resource-name';
 import { ModelSelector } from '@/components/dashboard/sections/shared/model-selector';
+import { SoulField } from '@/components/dashboard/sections/shared/soul-field';
+import { validateModelValue, modelVerdictText } from '@/lib/model-verdict';
 import { SkillSelector } from '@/components/dashboard/sections/skills/skill-selector';
 import { McpSelector } from '@/components/dashboard/sections/mcps/mcp-selector';
 
@@ -62,6 +63,20 @@ export function WorkerCreateDialog({
   const [templateLoading, setTemplateLoading] = useState(false);
   const [templateNote, setTemplateNote] = useState<string | null>(null);
   const [templateError, setTemplateError] = useState<string | null>(null);
+
+  // G2 写前校验（对齐插件）：候选 = alias 组（configured ∪ builtin 16）；
+  // error（路径/URL/空格，9/2 /models 事故硬规则）禁提交，
+  // warn（未命中 alias 组）两步「确认强写」。
+  const modelCandidates = (modelOptions ?? []).map((option) => option.alias);
+  const modelVerdict = validateModelValue(value.model ?? '', modelCandidates);
+  const [confirmForceWrite, setConfirmForceWrite] = useState(false);
+  // 重开弹窗时重置强写确认（React「render 时按 prop 重置 state」官方模式，
+  // 不在 effect 里同步 setState——避免级联渲染告警）。
+  const [lastOpen, setLastOpen] = useState(open);
+  if (open !== lastOpen) {
+    setLastOpen(open);
+    if (open) setConfirmForceWrite(false);
+  }
 
   const handleTemplateSelect = async (templateName: string) => {
     if (!templateName || templateName === '__none__') {
@@ -187,12 +202,27 @@ export function WorkerCreateDialog({
             <div className="min-w-0 w-full overflow-hidden">
               <ModelSelector
                 value={value.model}
-                onChange={(model) => onChange({ ...value, model })}
+                onChange={(model) => {
+                  setConfirmForceWrite(false);
+                  onChange({ ...value, model });
+                }}
                 placeholder="例如 team-chat"
                 options={modelOptions}
               sessionIssue={sessionIssue}
               />
             </div>
+            <p
+              className={`text-xs break-words ${
+                modelVerdict.level === 'error'
+                  ? 'text-red-600 dark:text-red-400'
+                  : modelVerdict.level === 'warn'
+                    ? 'text-amber-600 dark:text-amber-400'
+                    : 'text-emerald-600 dark:text-emerald-400'
+              }`}
+            >
+              {modelVerdict.level === 'error' ? '✗ ' : modelVerdict.level === 'warn' ? '⚠ ' : '✓ '}
+              {modelVerdictText(modelVerdict, value.model ?? '', modelCandidates)}
+            </p>
             <p className="text-xs text-muted-foreground break-words">
               Worker 通过 AI 网关访问模型，使用 Consumer 凭证认证，无需提供真实 API Key。
             </p>
@@ -210,10 +240,9 @@ export function WorkerCreateDialog({
 
           <div className="space-y-2 min-w-0">
             <Label>Soul</Label>
-            <Textarea
-              className="w-full min-w-0 resize-y"
+            <SoulField
               value={value.soul || ''}
-              onChange={(e) => onChange({ ...value, soul: e.target.value })}
+              onChange={(soul) => onChange({ ...value, soul })}
               placeholder="Worker 人格描述（可选）"
               rows={3}
             />
@@ -252,17 +281,40 @@ export function WorkerCreateDialog({
           </div>
         </div>
 
-        <DialogFooter className="px-6 py-4 shrink-0 border-t">
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
-          <Button
-            onClick={onSubmit}
-            disabled={!value.name || !!nameError || isPending}
-            className="bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:from-emerald-600 hover:to-teal-600"
-          >
-            {isPending ? '创建中...' : '创建'}
-          </Button>
+        <DialogFooter className="px-6 py-4 shrink-0 border-t flex-col items-stretch gap-3 sm:flex-col">
+          {modelVerdict.level === 'warn' && confirmForceWrite && (
+            <div className="flex items-center justify-between gap-2 rounded-md border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/30 dark:text-amber-200">
+              <span className="break-words">
+                模型「{(value.model ?? '').trim()}」未命中 alias 组，将按原样写入，确认强写？
+              </span>
+              <span className="flex shrink-0 gap-1.5">
+                <Button variant="outline" size="sm" onClick={() => setConfirmForceWrite(false)}>
+                  返回修改
+                </Button>
+                <Button size="sm" onClick={onSubmit} disabled={isPending}>
+                  确认强写
+                </Button>
+              </span>
+            </div>
+          )}
+          <div className="flex items-center justify-end gap-2">
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              取消
+            </Button>
+            <Button
+              onClick={() => {
+                if (modelVerdict.level === 'warn') {
+                  setConfirmForceWrite(true);
+                  return;
+                }
+                onSubmit();
+              }}
+              disabled={!value.name || !!nameError || isPending || modelVerdict.level === 'error'}
+              className="bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:from-emerald-600 hover:to-teal-600"
+            >
+              {isPending ? '创建中...' : '创建'}
+            </Button>
+          </div>
         </DialogFooter>
       </DialogContent>
     </Dialog>

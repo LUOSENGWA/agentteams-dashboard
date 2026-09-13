@@ -16,6 +16,8 @@ import { useTeams } from '@/hooks/use-agentteams-teams';
 import { useWorkers } from '@/hooks/use-agentteams-workers';
 import { useManagers } from '@/hooks/use-agentteams-managers';
 import { useCreateTeam, useDeleteTeam, useUpdateTeam } from '@/hooks/use-agentteams-mutations';
+import { useModelSelection } from '@/hooks/use-model-selection';
+import { useQueryClient } from '@tanstack/react-query';
 import { useSearch } from '@/lib/search-context';
 import { useAgentTeamsStore } from '@/lib/agentteams-store';
 import { useViewMode } from '@/lib/use-view-mode';
@@ -90,6 +92,8 @@ export function TeamsSection() {
   const { data: teams, isLoading, isError, refetch, isRefetching } = useTeams();
   const { data: workers } = useWorkers();
   const { data: managers } = useManagers();
+  const queryClient = useQueryClient();
+  const { options: modelOptions, sessionIssue } = useModelSelection();
   const { searchQuery } = useSearch();
   const { isConnected } = useAgentTeamsStore();
   const createTeam = useCreateTeam();
@@ -411,6 +415,11 @@ export function TeamsSection() {
         isPending={createTeam.isPending}
         onSubmit={handleCreate}
         workers={workersList}
+        modelOptions={modelOptions}
+        sessionIssue={sessionIssue}
+        onWorkerCreated={() =>
+          void queryClient.invalidateQueries({ queryKey: ['agentteams-workers'] })
+        }
       />
 
       <TeamEditDialog
