@@ -1,6 +1,5 @@
 'use client';
 
-import { useState } from 'react';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
@@ -19,14 +18,11 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import type {
-  CreateTeamRequest,
-  WorkerResponse,
-  WorkerRuntime,
-} from '@/lib/agentteams-api';
-import { workerNameError } from '@/lib/resource-name';
-import { ModelSelector } from '@/components/dashboard/sections/shared/model-selector';
-import type { ModelSelectionOption } from '@/lib/model-catalog';
+import type { CreateTeamRequest, WorkerResponse } from '@/lib/agentteams-api';
+import {
+  MemberPicker,
+  workerPickerLabel,
+} from '@/components/dashboard/sections/shared/member-picker';
 
 export function parseWorkerNames(value: string): string[] {
   return value.split(/[,，]/).map((name) => name.trim()).filter(Boolean);
@@ -40,6 +36,10 @@ const RUNTIME_OPTIONS: { value: WorkerRuntime; label: string }[] = [
   { value: 'deepseek-harness', label: 'DeepSeek Harness（实验）' },
 ];
 
+/**
+ * 创建团队（对齐插件建队卡：Worker 全部从已有 CR 选择，不允许自由输入——
+ * 悬空引用在输入层即不可能；先建的 Worker 再编入团队，与插件一致）。
+ */
 export function TeamCreateDialog({
   open,
   value,
@@ -48,9 +48,6 @@ export function TeamCreateDialog({
   onOpenChange,
   onSubmit,
   workers,
-  modelOptions,
-  sessionIssue,
-
 }: {
   open: boolean;
   value: CreateTeamRequest;
@@ -59,36 +56,17 @@ export function TeamCreateDialog({
   onOpenChange: (_open: boolean) => void;
   onSubmit: () => void;
   workers: WorkerResponse[];
-  modelOptions?: ModelSelectionOption[];
-  sessionIssue?: string | null;
-
 }) {
-  // Keep the raw worker list text locally so a trailing separator the user
-  // types (e.g. "worker1,") is preserved on screen; value.workerNames always
-  // holds the parsed, trimmed names. Re-sync from the external value whenever
-  // the dialog opens.
-  const [lastOpen, setLastOpen] = useState(open);
-  const [workerInput, setWorkerInput] = useState(value.workerNames?.join(', ') ?? '');
-  if (open !== lastOpen) {
-    setLastOpen(open);
-    if (open) {
-      setWorkerInput(value.workerNames?.join(', ') ?? '');
-    }
-  }
-  const selectedWorkers = workers.filter((worker) => value.workerNames?.includes(worker.name));
+  const workerNames = value.workerNames ?? [];
+  const selectedWorkers = workers.filter((worker) => workerNames.includes(worker.name));
   const workersWithoutModel = selectedWorkers.filter((worker) => !worker.model?.trim());
-
-  const leaderError = value.leader?.name ? workerNameError(value.leader.name) : null;
-  const workerNamesError = (value.workerNames ?? [])
-    .map(workerNameError)
-    .find((err) => err !== null) ?? null;
-  // Existence notice: names that do not exist yet are provisioned by the
-  // controller at creation (auto-provision with the defaults below) — surface
-  // it before submit so the user sees who is being created.
-  const missingMemberNames = [
-    ...(value.leader?.name ? [value.leader.name] : []),
-    ...(value.workerNames ?? []),
-  ].filter((name) => !workers.some((worker) => worker.name === name));
+  // Leader 也是从已有 Worker 里选；Worker 选项排除当前 Leader（不重复编入）。
+  const workerOptions = workers
+    .filter((worker) => worker.name !== value.leader?.name)
+    .map((worker) => ({
+      value: worker.name,
+      label: workerPickerLabel(worker.name, worker.model),
+    }));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -106,13 +84,28 @@ export function TeamCreateDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label>Leader 名称 *</Label>
-            <Input
-              value={value.leader?.name || ''}
-              onChange={(e) => onChange({ ...value, leader: { name: e.target.value } })}
-              placeholder="leader-name"
-            />
-            {leaderError && <p className="text-xs text-red-600 dark:text-red-400">{leaderError}</p>}
+            <Label>Leader *</Label>
+            {workers.length > 0 ? (
+              <Select
+                value={value.leader?.name || undefined}
+                onValueChange={(name) => onChange({ ...value, leader: { name } })}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="选择 Leader（已有 Worker）" />
+                </SelectTrigger>
+                <SelectContent>
+                  {workers.map((worker) => (
+                    <SelectItem key={worker.name} value={worker.name}>
+                      {workerPickerLabel(worker.name, worker.model)}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <p className="text-xs text-muted-foreground">
+                暂无 Worker，先到 Worker 列表创建后再建团队
+              </p>
+            )}
           </div>
           <div className="space-y-2">
             <Label>团队名称</Label>
@@ -132,67 +125,22 @@ export function TeamCreateDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label>Worker 名称（中英文逗号分隔）</Label>
-            <Input
-              value={workerInput}
-              onChange={(e) => {
-                const text = e.target.value;
-                setWorkerInput(text);
+            <Label>Workers（从已有 Worker 选择）</Label>
+            <MemberPicker
+              options={workerOptions}
+              selected={workerNames}
+              onAdd={(name) =>
+                onChange({ ...value, workerNames: [...workerNames, name] })
+              }
+              onRemove={(name) =>
                 onChange({
                   ...value,
-                  workerNames: text ? parseWorkerNames(text) : undefined,
-                });
-              }}
-              placeholder="worker1, worker2 或 worker1，worker2"
-            />
-            {workerNamesError && <p className="text-xs text-red-600 dark:text-red-400">{workerNamesError}</p>}
-            {missingMemberNames.length > 0 && (
-              <p className="text-xs text-amber-600 dark:text-amber-400">
-                以下成员尚不存在，创建时将按上方默认自动建站：{missingMemberNames.join('、')}
-              </p>
-            )}
-          </div>
-
-          <div className="space-y-2">
-            <Label>新 Worker 默认运行时</Label>
-            <Select
-              value={value.defaultWorkerRuntime ?? 'openclaw'}
-              onValueChange={(next) =>
-                onChange({ ...value, defaultWorkerRuntime: next as WorkerRuntime })
+                  workerNames: workerNames.filter((w) => w !== name),
+                })
               }
-            >
-              <SelectTrigger>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {RUNTIME_OPTIONS.map((option) => (
-                  <SelectItem key={option.value} value={option.value}>
-                    {option.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <p className="text-xs text-muted-foreground">
-              仅在创建团队时为不存在的 Worker 自动建站时生效；已存在的 Worker 保持原有运行时。
-            </p>
-          </div>
-
-          <div className="space-y-2">
-            <Label>新 Worker 默认请求模型别名</Label>
-            <ModelSelector
-              value={value.defaultWorkerModel}
-              onChange={(model) =>
-                onChange({ ...value, defaultWorkerModel: model || undefined })
-              }
-              placeholder="例如 team-chat"
-              options={modelOptions ?? []}
-              sessionIssue={sessionIssue}
+              placeholder="选择 Worker 添加…"
             />
-            <p className="text-xs text-muted-foreground">
-              仅在自动建站时使用。可在 Worker 列表中单独调整已存在 Worker 的模型。
-            </p>
           </div>
-
           <div className="rounded-md border border-border bg-muted/30 p-3 text-xs text-muted-foreground space-y-1">
             <p>团队模型由 Leader 运行时与成员 Worker 的“请求模型别名”分别管理。</p>
             {workersWithoutModel.length > 0 ? (
@@ -212,7 +160,7 @@ export function TeamCreateDialog({
           </Button>
           <Button
             onClick={onSubmit}
-            disabled={!value.name || !value.leader?.name || !!leaderError || !!workerNamesError || isPending}
+            disabled={!value.name || !value.leader?.name || isPending}
             className="bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:from-emerald-600 hover:to-teal-600"
           >
             {isPending ? '创建中...' : '创建'}

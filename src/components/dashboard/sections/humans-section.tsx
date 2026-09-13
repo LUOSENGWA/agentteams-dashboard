@@ -104,7 +104,7 @@ export function HumansSection() {
   const [newHuman, setNewHuman] = useState<CreateHumanRequest>({
     name: '',
     displayName: '',
-    permissionLevel: 1,
+    permissionLevel: 2,
   });
 
   const [sortKey, setSortKey] = useState<SortKey>('name');
@@ -137,7 +137,7 @@ export function HumansSection() {
     createHuman.mutate(newHuman, {
       onSuccess: () => {
         setCreateOpen(false);
-        setNewHuman({ name: '', displayName: '', permissionLevel: 1 });
+        setNewHuman({ name: '', displayName: '', permissionLevel: 2 });
       },
     });
   }, [createHuman, newHuman]);

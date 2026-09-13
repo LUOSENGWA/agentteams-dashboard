@@ -13,11 +13,15 @@ export interface RBACRule {
   effect: 'allow' | 'deny';
 }
 
-// Permission levels from HumanResponse
-// 1 = Observer (view only)
-// 2 = Operator (view + wake/sleep)
-// 3 = Admin (all actions)
-
+// Dashboard SESSION levels (NOT the controller CR permissionLevel — login
+// maps CR → session via MATRIX_CR_LEVEL_TO_DASH_LEVEL {1:3, 2:2, 3:1}).
+// Session scale: 1 = least (view only), 2 = wake/sleep, 3 = admin-grade
+// (all actions). server-auth builds a HumanResponse whose permissionLevel
+// is the session level, so this table is consulted on that scale.
+//
+// The controller CR scale is the reverse (1 = 管理员 > 2 = 团队成员 >
+// 3 = Worker, docs/usage/import-worker.md) — that scale only appears in
+// the Human management UI (human-types.ts labels), never here.
 const LEVEL_PERMISSIONS: Record<number, Permission[]> = {
   1: ['view'],
   2: ['view', 'wake', 'sleep', 'ensure-ready'],
@@ -114,6 +118,7 @@ export function getAccessSummary(human: HumanResponse): {
   teamScope: string;
   workerScope: string;
 } {
+  // Session-scale names (see LEVEL_PERMISSIONS header): 3 = 管理员级.
   const levelNames: Record<number, string> = {
     1: '观察者',
     2: '操作者',

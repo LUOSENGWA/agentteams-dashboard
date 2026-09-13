@@ -1,10 +1,16 @@
 'use client';
 
-import { useState } from 'react';
 import { Label } from '@/components/ui/label';
 import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Button } from '@/components/ui/button';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import {
   Dialog,
   DialogContent,
@@ -13,11 +19,14 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import type { UpdateTeamRequest, WorkerResponse } from '@/lib/agentteams-api';
-import { workerNameError } from '@/lib/resource-name';
-import { parseWorkerNames } from './team-create-dialog';
+import { workerPickerLabel } from '@/components/dashboard/sections/shared/member-picker';
 
 export type TeamEditForm = UpdateTeamRequest & { name?: string };
 
+/**
+ * 编辑团队（对齐插件配置团队：成员从已有 Worker 选择替换/移除/添加——
+ * 编辑没有自动建站语义，界面上选不出的名字 = 不会产生悬空引用）。
+ */
 export function TeamEditDialog({
   open,
   teamName,
@@ -37,26 +46,19 @@ export function TeamEditDialog({
   onSubmit: () => void;
   workers: WorkerResponse[];
 }) {
-  // Keep the raw worker list text locally so a trailing separator the user
-  // types is preserved on screen; value.workerNames holds the parsed names.
-  // Re-sync from the external value whenever the dialog opens.
-  const [lastOpen, setLastOpen] = useState(open);
-  const [workerInput, setWorkerInput] = useState(value.workerNames?.join(', ') ?? '');
-  if (open !== lastOpen) {
-    setLastOpen(open);
-    if (open) {
-      setWorkerInput(value.workerNames?.join(', ') ?? '');
-    }
-  }
-  const workerNamesError = (value.workerNames ?? [])
-    .map(workerNameError)
-    .find((err) => err !== null) ?? null;
-  // Existence guard: team EDIT has no auto-provision semantics (only
-  // creation does), so a missing worker is a dangling reference — red mark +
-  // block submit instead of trusting the server to 400 it.
-  const missingWorkerNames = (value.workerNames ?? []).filter(
+  const workerNames = value.workerNames ?? [];
+  // 兜底守卫：从服务端载入的存量成员可能已失效（被删的 Worker）——
+  // 界面上选不出的幽灵名仍然红标 + 拦提交（防服务端 400 裸奔）。
+  const missingWorkerNames = workerNames.filter(
     (name) => !workers.some((worker) => worker.name === name),
   );
+  const workerOptions = workers
+    .filter((worker) => !workerNames.includes(worker.name))
+    .map((worker) => ({
+      value: worker.name,
+      label: workerPickerLabel(worker.name, worker.model),
+    }));
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg max-w-[95vw]">
@@ -82,23 +84,61 @@ export function TeamEditDialog({
             />
           </div>
           <div className="space-y-2">
-            <Label>Worker 名称（中英文逗号分隔）</Label>
-            <Input
-              value={workerInput}
-              onChange={(e) => {
-                const text = e.target.value;
-                setWorkerInput(text);
-                onChange({
-                  ...value,
-                  workerNames: text ? parseWorkerNames(text) : [],
-                });
-              }}
-              placeholder="worker1, worker2 或 worker1，worker2"
-            />
-            {workerNamesError && <p className="text-xs text-red-600 dark:text-red-400">{workerNamesError}</p>}
+            <Label>Workers（从已有 Worker 选择）</Label>
+            {workerNames.length > 0 && (
+              <div className="flex flex-wrap gap-1.5">
+                {workerNames.map((name) => (
+                  <span
+                    key={name}
+                    className={`inline-flex items-center gap-1 rounded-md border px-2 py-0.5 text-xs ${
+                      missingWorkerNames.includes(name)
+                        ? 'border-red-400 bg-red-500/10 text-red-600 dark:text-red-400'
+                        : 'border-border bg-muted/50'
+                    }`}
+                  >
+                    {name}
+                    <button
+                      type="button"
+                      aria-label={`移除 ${name}`}
+                      onClick={() =>
+                        onChange({
+                          ...value,
+                          workerNames: workerNames.filter((w) => w !== name),
+                        })
+                      }
+                      className="text-muted-foreground hover:text-foreground"
+                    >
+                      ×
+                    </button>
+                  </span>
+                ))}
+              </div>
+            )}
+            {workerOptions.length > 0 ? (
+              <Select
+                onValueChange={(name) =>
+                  onChange({ ...value, workerNames: [...workerNames, name] })
+                }
+              >
+                <SelectTrigger className="w-full">
+                  <SelectValue placeholder="选择 Worker 添加…" />
+                </SelectTrigger>
+                <SelectContent>
+                  {workerOptions.map((option) => (
+                    <SelectItem key={option.value} value={option.value}>
+                      {option.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              workerNames.length > 0 && (
+                <p className="text-xs text-muted-foreground">已无其他可添加的 Worker</p>
+              )
+            )}
             {missingWorkerNames.length > 0 && (
               <p className="text-xs text-red-600 dark:text-red-400">
-                以下 Worker 不存在：{missingWorkerNames.join('、')}——团队编辑不能引用不存在的 Worker（如需新建请到 Worker 列表）
+                以下 Worker 不存在：{missingWorkerNames.join('、')}——团队编辑不能引用不存在的 Worker（移除后保存）
               </p>
             )}
           </div>
@@ -109,7 +149,7 @@ export function TeamEditDialog({
           </Button>
           <Button
             onClick={onSubmit}
-            disabled={!!workerNamesError || missingWorkerNames.length > 0 || isPending}
+            disabled={missingWorkerNames.length > 0 || isPending}
             className="bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:from-emerald-600 hover:to-teal-600"
           >
             {isPending ? '更新中...' : '更新'}

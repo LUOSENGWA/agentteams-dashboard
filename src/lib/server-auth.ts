@@ -28,6 +28,8 @@ export function readServerIdentity(request: NextRequest): ServerIdentity | null 
   const name = request.headers.get(SERVER_USER_HEADER);
   if (!name) return null;
   const levelRaw = request.headers.get(SERVER_USER_LEVEL_HEADER);
+  // 会话级别（dashboard 自己的标尺，3=最高）；缺头/非法值 → 1（最低权限）。
+  // 与 CR 的 permissionLevel 标尺相反（那里 1=管理员）——映射在 login route。
   const level = levelRaw ? Number(levelRaw) : 1;
   const forwarded = request.headers.get(SERVER_USER_IP_HEADER);
   const sourceIp = forwarded ? forwarded.split(',')[0]?.trim() : undefined;

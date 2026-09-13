@@ -69,7 +69,8 @@ export function HumanCreateDialog({
           <div className="space-y-2">
             <Label>权限等级</Label>
             <Select
-              value={String(value.permissionLevel || 1)}
+              // CR 标尺（1=管理员 2=团队成员 3=Worker）：默认 2，不默认给管理员
+              value={String(value.permissionLevel ?? 2)}
               onValueChange={(v) =>
                 onChange({ ...value, permissionLevel: Number(v) as 1 | 2 | 3 })
               }

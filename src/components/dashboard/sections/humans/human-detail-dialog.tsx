@@ -139,11 +139,11 @@ export function HumanDetailDialog({
               <Badge
                 variant="outline"
                 className={`text-xs ${
-                  PERMISSION_BADGE_CLASSES[human.permissionLevel || 1] || ''
+                  PERMISSION_BADGE_CLASSES[human.permissionLevel ?? 2] || ''
                 }`}
               >
                 <Shield className="w-3 h-3 mr-1" aria-hidden="true" />
-                {human.permissionLevel || 1} - {PERMISSION_LABELS[human.permissionLevel || 1]}
+                {human.permissionLevel ?? 2} - {PERMISSION_LABELS[human.permissionLevel ?? 2]}
               </Badge>
             </div>
             {human.message && (

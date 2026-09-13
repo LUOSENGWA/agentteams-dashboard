@@ -11,7 +11,7 @@ import { PERMISSION_BADGE_CLASSES, PERMISSION_LABELS } from './human-types';
 import type { HumanResponse } from '@/lib/agentteams-api';
 
 function permissionLabel(h: HumanResponse): string {
-  const level = h.permissionLevel || 1;
+  const level = h.permissionLevel ?? 2;
   return PERMISSION_LABELS[level] || `L${level}`;
 }
 
@@ -26,7 +26,7 @@ export function HumanCard({
   onView: (_human: HumanResponse) => void;
   onDelete: (_name: string) => void;
 }) {
-  const level = human.permissionLevel || 1;
+  const level = human.permissionLevel ?? 2;
   return (
     <motion.div
       initial={{ opacity: 0, y: 20 }}

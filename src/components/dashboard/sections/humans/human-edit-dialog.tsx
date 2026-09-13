@@ -21,6 +21,7 @@ import {
 } from '@/components/ui/dialog';
 import type { HumanResponse, UpdateHumanRequest } from '@/lib/agentteams-api';
 import { PERMISSION_LABELS, PERMISSION_LEVELS } from './human-types';
+import { MemberPicker } from '../shared/member-picker';
 
 export function parseNameList(value: string): string[] {
   return value
@@ -42,7 +43,9 @@ function toDraft(human: HumanResponse | null): HumanEditDraft {
   return {
     displayName: human?.displayName ?? '',
     email: human?.email ?? '',
-    permissionLevel: (human?.permissionLevel || 1) as 1 | 2 | 3,
+    // 无级别时默认 2（团队成员）——与 controller/插件默认一致（不是 1：
+    // 1 = 管理员，默认给最高权限是错的）。
+    permissionLevel: (human?.permissionLevel ?? 2) as 1 | 2 | 3,
     accessibleTeams: (human?.accessibleTeams ?? []).join(', '),
     accessibleWorkers: (human?.accessibleWorkers ?? []).join(', '),
     note: human?.note ?? '',
@@ -66,7 +69,7 @@ export function buildHumanUpdatePayload(
   if (draft.email !== (human.email ?? '')) {
     payload.email = draft.email;
   }
-  if (draft.permissionLevel !== (human.permissionLevel || 1)) {
+  if (draft.permissionLevel !== (human.permissionLevel ?? 2)) {
     payload.permissionLevel = draft.permissionLevel;
   }
   if (parseNameList(draft.accessibleTeams).join('|') !== (human.accessibleTeams ?? []).join('|')) {
@@ -154,13 +157,30 @@ export function HumanEditDialog({
                   ))}
                 </SelectContent>
               </Select>
+              <p className="text-xs text-muted-foreground">
+                L1 = 管理员（Controller 管理员 token；Matrix 登录获得 L2）
+              </p>
             </div>
             <div className="space-y-2">
-              <Label>可访问团队（逗号分隔，留空 = 清空）</Label>
-              <Input
-                value={draft.accessibleTeams}
-                onChange={(e) => setDraft({ ...draft, accessibleTeams: e.target.value })}
-                placeholder="team1, team2, team3"
+              <Label>可访问团队（留空 = 清空）</Label>
+              <MemberPicker
+                options={teams.map((team) => ({ value: team, label: team }))}
+                selected={parseNameList(draft.accessibleTeams)}
+                onAdd={(team) =>
+                  setDraft({
+                    ...draft,
+                    accessibleTeams: [...parseNameList(draft.accessibleTeams), team].join(', '),
+                  })
+                }
+                onRemove={(team) =>
+                  setDraft({
+                    ...draft,
+                    accessibleTeams: parseNameList(draft.accessibleTeams)
+                      .filter((name) => name !== team)
+                      .join(', '),
+                  })
+                }
+                placeholder="选择团队添加…"
               />
               {missingTeams.length > 0 && (
                 <p className="text-xs text-red-600 dark:text-red-400">
@@ -169,11 +189,27 @@ export function HumanEditDialog({
               )}
             </div>
             <div className="space-y-2">
-              <Label>可访问 Workers（逗号分隔，留空 = 清空）</Label>
-              <Input
-                value={draft.accessibleWorkers}
-                onChange={(e) => setDraft({ ...draft, accessibleWorkers: e.target.value })}
-                placeholder="worker1, worker2, worker3"
+              <Label>可访问 Workers（留空 = 清空）</Label>
+              <MemberPicker
+                options={workers.map((worker) => ({ value: worker, label: worker }))}
+                selected={parseNameList(draft.accessibleWorkers)}
+                onAdd={(worker) =>
+                  setDraft({
+                    ...draft,
+                    accessibleWorkers: [...parseNameList(draft.accessibleWorkers), worker].join(
+                      ', ',
+                    ),
+                  })
+                }
+                onRemove={(worker) =>
+                  setDraft({
+                    ...draft,
+                    accessibleWorkers: parseNameList(draft.accessibleWorkers)
+                      .filter((name) => name !== worker)
+                      .join(', '),
+                  })
+                }
+                placeholder="选择 Worker 添加…"
               />
               {missingWorkers.length > 0 && (
                 <p className="text-xs text-red-600 dark:text-red-400">

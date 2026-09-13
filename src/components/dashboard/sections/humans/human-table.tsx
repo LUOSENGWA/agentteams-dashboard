@@ -46,7 +46,8 @@ export function HumanTable({
         </TableHeader>
         <TableBody>
           {humans.map((human) => {
-            const level = human.permissionLevel || 1;
+            // CR 标尺缺省按 2（团队成员）显示，与 controller/插件默认一致
+            const level = human.permissionLevel ?? 2;
             return (
               <TableRow key={human.name}>
                 <TableCell>

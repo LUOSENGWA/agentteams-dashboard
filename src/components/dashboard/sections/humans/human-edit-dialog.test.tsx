@@ -17,17 +17,18 @@ vi.mock('@/components/ui/dialog', () => ({
   DialogTitle: ({ children }: { children: React.ReactNode }) => <h2>{children}</h2>,
 }));
 
+// shadcn Select → 原生 select（value 可选：MemberPicker 不传 value）
 vi.mock('@/components/ui/select', () => ({
   Select: ({
     value,
     onValueChange,
     children,
   }: {
-    value: string;
+    value?: string;
     onValueChange: (_v: string) => void;
     children: React.ReactNode;
   }) => (
-    <select value={value} onChange={(e) => onValueChange(e.target.value)} data-testid="level-select">
+    <select value={value} onChange={(e) => onValueChange(e.target.value)}>
       {children}
     </select>
   ),
@@ -36,7 +37,7 @@ vi.mock('@/components/ui/select', () => ({
     <option value={value}>{children}</option>
   ),
   SelectTrigger: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  SelectValue: () => <span>level</span>,
+  SelectValue: () => null,
 }));
 
 const baseHuman: HumanResponse = {
@@ -73,7 +74,7 @@ const renderDialog = (props?: {
   const teams = props?.teams ?? ['biz-team'];
   const workers = props?.workers ?? ['w1'];
   const isPending = props?.isPending ?? false;
-  render(
+  const result = render(
     <HumanEditDialog
       human={human}
       teams={teams}
@@ -83,7 +84,7 @@ const renderDialog = (props?: {
       onSubmit={onSubmit}
     />,
   );
-  return { onSubmit };
+  return { onSubmit, container: result.container };
 };
 
 describe('buildHumanUpdatePayload (merge-patch diff, #1209 semantics)', () => {
@@ -107,11 +108,17 @@ describe('buildHumanUpdatePayload (merge-patch diff, #1209 semantics)', () => {
     expect(buildHumanUpdatePayload(baseHuman, draft({ accessibleTeams: ' biz-team ,  ' }))).toEqual({});
   });
 
-  it('missing level field falls back to 1 (HumanResponse.permissionLevel is optional)', () => {
+  it('missing level defaults to 2 (团队成员) — draft 2 → no diff', () => {
     const { permissionLevel: _drop, ...rest } = baseHuman;
     const noLevel = rest as HumanResponse;
-    expect(buildHumanUpdatePayload(noLevel, draft({ permissionLevel: 2 }))).toEqual({
-      permissionLevel: 2,
+    expect(buildHumanUpdatePayload(noLevel, draft({ permissionLevel: 2 }))).toEqual({});
+  });
+
+  it('missing level defaults to 2 — draft 1 (管理员) → explicit change', () => {
+    const { permissionLevel: _drop, ...rest } = baseHuman;
+    const noLevel = rest as HumanResponse;
+    expect(buildHumanUpdatePayload(noLevel, draft({ permissionLevel: 1 }))).toEqual({
+      permissionLevel: 1,
     });
   });
 });
@@ -142,12 +149,68 @@ describe('HumanEditDialog', () => {
     expect(screen.getByRole('button', { name: '保存' })).toBeDisabled();
   });
 
+  it('level select offers the controller-correct labels (1=管理员 2=团队成员 3=Worker)', () => {
+    const { container } = renderDialog();
+    const levelSelect = container.querySelectorAll('select')[0] as HTMLSelectElement;
+    const labels = Array.from(levelSelect.options).map((o) => o.textContent);
+    expect(labels).toEqual(['1 - 管理员', '2 - 团队成员', '3 - Worker']);
+  });
+
   it('level change → save enabled, onSubmit receives the minimal diff', () => {
-    const { onSubmit } = renderDialog();
-    fireEvent.change(screen.getByTestId('level-select'), { target: { value: '3' } });
+    const { onSubmit, container } = renderDialog();
+    const levelSelect = container.querySelectorAll('select')[0] as HTMLSelectElement;
+    fireEvent.change(levelSelect, { target: { value: '3' } });
     const save = screen.getByRole('button', { name: '保存' });
     expect(save).toBeEnabled();
     fireEvent.click(save);
     expect(onSubmit).toHaveBeenCalledWith({ permissionLevel: 3 });
+  });
+
+  it('team picker: select → chip appears, payload is the changed list only', () => {
+    const { onSubmit, container } = renderDialog({
+      human: { ...baseHuman, accessibleTeams: [], accessibleWorkers: [] },
+      teams: ['biz-team', 'ops-team'],
+      workers: ['w1', 'w2'],
+    });
+    // DOM 顺序：权限等级 / 可访问团队 / 可访问 Workers
+    const teamPicker = container.querySelectorAll('select')[1] as HTMLSelectElement;
+    expect(Array.from(teamPicker.options).map((o) => o.value)).toEqual(['biz-team', 'ops-team']);
+
+    fireEvent.change(teamPicker, { target: { value: 'ops-team' } });
+    // chip 出现 = 有"移除 ops-team"按钮（option 里也有同名文本，不直接用 getByText）
+    expect(screen.getByRole('button', { name: '移除 ops-team' })).toBeInTheDocument();
+
+    const save = screen.getByRole('button', { name: '保存' });
+    expect(save).toBeEnabled();
+    fireEvent.click(save);
+    expect(onSubmit).toHaveBeenCalledWith({ accessibleTeams: ['ops-team'] });
+  });
+
+  it('team picker: chip × removes the member', () => {
+    const { container } = renderDialog({
+      human: { ...baseHuman, accessibleTeams: [], accessibleWorkers: [] },
+      teams: ['biz-team', 'ops-team'],
+      workers: ['w1', 'w2'],
+    });
+    const teamPicker = container.querySelectorAll('select')[1] as HTMLSelectElement;
+    fireEvent.change(teamPicker, { target: { value: 'ops-team' } });
+    expect(screen.getByRole('button', { name: '移除 ops-team' })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: '移除 ops-team' }));
+    expect(screen.queryByRole('button', { name: '移除 ops-team' })).toBeNull();
+  });
+
+  it('picker offers only existing names — ghost can never be selected', () => {
+    const { container } = renderDialog({
+      human: { ...baseHuman, accessibleTeams: [], accessibleWorkers: [] },
+      teams: ['biz-team'],
+      workers: ['w1'],
+    });
+    const selects = container.querySelectorAll('select');
+    for (const select of selects) {
+      for (const option of Array.from((select as HTMLSelectElement).options)) {
+        expect(option.value).not.toBe('ghost');
+      }
+    }
   });
 });
