@@ -12,7 +12,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import type { UpdateTeamRequest } from '@/lib/agentteams-api';
+import type { UpdateTeamRequest, WorkerResponse } from '@/lib/agentteams-api';
 import { workerNameError } from '@/lib/resource-name';
 import { parseWorkerNames } from './team-create-dialog';
 
@@ -26,6 +26,7 @@ export function TeamEditDialog({
   isPending,
   onOpenChange,
   onSubmit,
+  workers,
 }: {
   open: boolean;
   teamName: string | null;
@@ -34,6 +35,7 @@ export function TeamEditDialog({
   isPending: boolean;
   onOpenChange: (_open: boolean) => void;
   onSubmit: () => void;
+  workers: WorkerResponse[];
 }) {
   // Keep the raw worker list text locally so a trailing separator the user
   // types is preserved on screen; value.workerNames holds the parsed names.
@@ -49,6 +51,12 @@ export function TeamEditDialog({
   const workerNamesError = (value.workerNames ?? [])
     .map(workerNameError)
     .find((err) => err !== null) ?? null;
+  // Existence guard: team EDIT has no auto-provision semantics (only
+  // creation does), so a missing worker is a dangling reference — red mark +
+  // block submit instead of trusting the server to 400 it.
+  const missingWorkerNames = (value.workerNames ?? []).filter(
+    (name) => !workers.some((worker) => worker.name === name),
+  );
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-lg max-w-[95vw]">
@@ -88,6 +96,11 @@ export function TeamEditDialog({
               placeholder="worker1, worker2 或 worker1，worker2"
             />
             {workerNamesError && <p className="text-xs text-red-600 dark:text-red-400">{workerNamesError}</p>}
+            {missingWorkerNames.length > 0 && (
+              <p className="text-xs text-red-600 dark:text-red-400">
+                以下 Worker 不存在：{missingWorkerNames.join('、')}——团队编辑不能引用不存在的 Worker（如需新建请到 Worker 列表）
+              </p>
+            )}
           </div>
         </div>
         <DialogFooter>
@@ -96,7 +109,7 @@ export function TeamEditDialog({
           </Button>
           <Button
             onClick={onSubmit}
-            disabled={!!workerNamesError || isPending}
+            disabled={!!workerNamesError || missingWorkerNames.length > 0 || isPending}
             className="bg-gradient-to-r from-emerald-500 to-teal-500 text-white hover:from-emerald-600 hover:to-teal-600"
           >
             {isPending ? '更新中...' : '更新'}

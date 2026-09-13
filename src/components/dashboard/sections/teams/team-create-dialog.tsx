@@ -82,6 +82,13 @@ export function TeamCreateDialog({
   const workerNamesError = (value.workerNames ?? [])
     .map(workerNameError)
     .find((err) => err !== null) ?? null;
+  // Existence notice: names that do not exist yet are provisioned by the
+  // controller at creation (auto-provision with the defaults below) — surface
+  // it before submit so the user sees who is being created.
+  const missingMemberNames = [
+    ...(value.leader?.name ? [value.leader.name] : []),
+    ...(value.workerNames ?? []),
+  ].filter((name) => !workers.some((worker) => worker.name === name));
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -139,6 +146,11 @@ export function TeamCreateDialog({
               placeholder="worker1, worker2 或 worker1，worker2"
             />
             {workerNamesError && <p className="text-xs text-red-600 dark:text-red-400">{workerNamesError}</p>}
+            {missingMemberNames.length > 0 && (
+              <p className="text-xs text-amber-600 dark:text-amber-400">
+                以下成员尚不存在，创建时将按上方默认自动建站：{missingMemberNames.join('、')}
+              </p>
+            )}
           </div>
 
           <div className="space-y-2">

@@ -425,6 +425,7 @@ export function TeamsSection() {
         isPending={updateTeam.isPending}
         onOpenChange={(open) => !open && closeEdit()}
         onSubmit={handleUpdate}
+        workers={workersList}
       />
 
       <TeamDetailDialog
