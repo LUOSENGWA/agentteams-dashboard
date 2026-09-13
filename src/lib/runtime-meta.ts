@@ -40,7 +40,7 @@ export const RUNTIME_META: Record<WorkerRuntime, RuntimeMeta> = {
     badgeClass: 'bg-orange-500/10 text-orange-600 dark:text-orange-400 border-orange-500/30',
     description: '完整流式协议，思考以 Thinking: 前缀识别',
   },
-  deepseek_harness: {
+  'deepseek-harness': {
     icon: Workflow,
     badgeClass: 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border-cyan-500/30',
     description: '实验性 DeepSeek 工具调用 Harness，思考与工具以结构化流呈现',

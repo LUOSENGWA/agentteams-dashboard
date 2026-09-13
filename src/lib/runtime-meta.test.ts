@@ -20,8 +20,8 @@ describe('runtime metadata', () => {
   });
 
   it('recognises the experimental DeepSeek harness runtime end-to-end', () => {
-    expect(RUNTIME_LABELS.deepseek_harness).toBe('DeepSeek Harness');
-    const meta = getRuntimeMeta('deepseek_harness');
+    expect(RUNTIME_LABELS['deepseek-harness']).toBe('DeepSeek Harness');
+    const meta = getRuntimeMeta('deepseek-harness');
     expect(meta).not.toBeNull();
     expect(meta?.description).toMatch(/DeepSeek/);
   });

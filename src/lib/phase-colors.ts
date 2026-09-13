@@ -51,7 +51,7 @@ export const RUNTIME_LABELS: Record<string, string> = {
   hermes: 'Hermes',
   openhuman: 'OpenHuman',
   qwenpaw: 'QwenPaw',
-  deepseek_harness: 'DeepSeek Harness',
+  'deepseek-harness': 'DeepSeek Harness',
 };
 
 // ============ Tailwind Badge Classes (for Badge components) ============
