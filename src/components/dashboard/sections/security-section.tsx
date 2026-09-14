@@ -31,16 +31,18 @@ import { useInfrastructure } from '@/hooks/use-agentteams-infrastructure';
 
 import type { HumanResponse } from '@/lib/agentteams-api';
 
+// Controller 权限等级：1 = 管理员（L1，最高），2 = 团队成员（L2），
+// 3 = Worker（L3）；L1 > L2 > L3 包含式。颜色/图标与插件 LEVEL_META 对齐。
 const permissionLevelMap: Record<number, { label: string; color: string; icon: typeof Shield }> = {
-  3: { label: '管理员', color: 'bg-red-500/10 text-red-600 dark:text-red-400', icon: Shield },
-  2: { label: '操作者', color: 'bg-amber-500/10 text-amber-600 dark:text-amber-400', icon: UserCheck },
-  1: { label: '观察者', color: 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400', icon: Eye },
+  1: { label: '管理员', color: 'bg-red-500/10 text-red-600 dark:text-red-400', icon: Shield },
+  2: { label: '团队成员', color: 'bg-amber-500/10 text-amber-600 dark:text-amber-400', icon: UserCheck },
+  3: { label: 'Worker', color: 'bg-blue-500/10 text-blue-600 dark:text-blue-400', icon: Bot },
 };
 
 function getPermissionInfo(level: number | undefined) {
-  if (level === 3) return permissionLevelMap[3];
+  if (level === 1) return permissionLevelMap[1];
   if (level === 2) return permissionLevelMap[2];
-  return permissionLevelMap[1];
+  return permissionLevelMap[3];
 }
 
 function AccessMatrix({ humans, teams, workers }: {
@@ -197,12 +199,12 @@ export function SecuritySection() {
 
   // Dynamic permission levels from actual humans
   const permStats = useMemo(() => {
-    const stats = { admin: 0, operator: 0, observer: 0 };
+    const stats = { admin: 0, member: 0, worker: 0 };
     humans?.forEach((h) => {
       const level = h.permissionLevel;
-      if (level === 3) stats.admin++;
-      else if (level === 2) stats.operator++;
-      else stats.observer++;
+      if (level === 1) stats.admin++;
+      else if (level === 2) stats.member++;
+      else stats.worker++;
     });
     return stats;
   }, [humans]);
@@ -307,7 +309,7 @@ export function SecuritySection() {
           {
             icon: Key,
             title: '权限分级',
-            desc: `Human 用户分为 3 个权限等级：管理员(${permStats.admin})、操作者(${permStats.operator})、观察者(${permStats.observer})。`,
+            desc: `Human 用户分为 3 个权限等级（L1 > L2 > L3）：管理员(${permStats.admin})、团队成员(${permStats.member})、Worker(${permStats.worker})。`,
             color: 'text-amber-500',
           },
           {
@@ -368,11 +370,11 @@ export function SecuritySection() {
               <div className="p-3 rounded-lg bg-background/50 border border-border/50">
                 <div className="flex items-center gap-2 mb-2">
                   <Shield className="w-4 h-4 text-red-500" />
-                  <Badge className="bg-red-500/10 text-red-600 dark:text-red-400" variant="secondary">Level 3 · 管理员</Badge>
+                  <Badge className="bg-red-500/10 text-red-600 dark:text-red-400" variant="secondary">Level 1 · 管理员</Badge>
                 </div>
-                <p className="text-xs text-muted-foreground mb-2">可访问所有房间、所有 Worker</p>
+                <p className="text-xs text-muted-foreground mb-2">等同 Admin：可访问所有房间、所有 Worker</p>
                 <div className="space-y-1">
-                  {humans.filter((h) => h.permissionLevel === 3).map((h) => (
+                  {humans.filter((h) => h.permissionLevel === 1).map((h) => (
                     <div key={h.name} className="flex items-center gap-1.5 text-xs">
                       <CheckCircle2 className="w-3 h-3 text-red-500" />
                       <span>{h.displayName || h.name}</span>
@@ -381,11 +383,12 @@ export function SecuritySection() {
                   {permStats.admin === 0 && <p className="text-xs text-muted-foreground italic">无管理员用户</p>}
                 </div>
               </div>
-              {/* Level 2 - Operator */}
+              {/* Level 2 - 团队成员（L2 = 严格 permissionLevel 2：controller L2 门 `!= 2` 即拒，
+                  matrix_authenticator 实锤；未设级别归 L3 卡，与 permStats null→worker 口径一致） */}
               <div className="p-3 rounded-lg bg-background/50 border border-border/50">
                 <div className="flex items-center gap-2 mb-2">
                   <UserCheck className="w-4 h-4 text-amber-500" />
-                  <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400" variant="secondary">Level 2 · 操作者</Badge>
+                  <Badge className="bg-amber-500/10 text-amber-600 dark:text-amber-400" variant="secondary">Level 2 · 团队成员</Badge>
                 </div>
                 <p className="text-xs text-muted-foreground mb-2">指定团队 + 独立 Workers</p>
                 <div className="space-y-1">
@@ -395,27 +398,24 @@ export function SecuritySection() {
                       <span>{h.displayName || h.name}</span>
                     </div>
                   ))}
-                  {permStats.operator === 0 && <p className="text-xs text-muted-foreground italic">无操作者用户</p>}
+                  {permStats.member === 0 && <p className="text-xs text-muted-foreground italic">无团队成员用户</p>}
                 </div>
               </div>
-              {/* Level 1 - Observer */}
+              {/* Level 3 - Worker 级（最低） */}
               <div className="p-3 rounded-lg bg-background/50 border border-border/50">
                 <div className="flex items-center gap-2 mb-2">
-                  <Eye className="w-4 h-4 text-cyan-500" />
-                  <Badge className="bg-cyan-500/10 text-cyan-600 dark:text-cyan-400" variant="secondary">Level 1 · 观察者</Badge>
+                  <Bot className="w-4 h-4 text-blue-500" />
+                  <Badge className="bg-blue-500/10 text-blue-600 dark:text-blue-400" variant="secondary">Level 3 · Worker</Badge>
                 </div>
-                <p className="text-xs text-muted-foreground mb-2">仅指定独立 Workers</p>
+                <p className="text-xs text-muted-foreground mb-2">Worker 级（L3）：最低权限（含未设级别的 Human）</p>
                 <div className="space-y-1">
-                  {humans.filter((h) => {
-      const level = h.permissionLevel;
-                    return !level || level === 1;
-                  }).map((h) => (
+                  {humans.filter((h) => h.permissionLevel === 3 || !h.permissionLevel).map((h) => (
                     <div key={h.name} className="flex items-center gap-1.5 text-xs">
-                      <CheckCircle2 className="w-3 h-3 text-cyan-500" />
+                      <CheckCircle2 className="w-3 h-3 text-blue-500" />
                       <span>{h.displayName || h.name}</span>
                     </div>
                   ))}
-                  {permStats.observer === 0 && <p className="text-xs text-muted-foreground italic">无观察者用户</p>}
+                  {permStats.worker === 0 && <p className="text-xs text-muted-foreground italic">无 Worker 级用户</p>}
                 </div>
               </div>
             </div>
@@ -559,7 +559,7 @@ export function SecuritySection() {
               </p>
               <p className="text-xs text-muted-foreground mt-1">可访问所有 Worker 和团队</p>
               <div className="mt-1.5">
-                {humans?.filter((h) => h.permissionLevel === 3).map((h) => (
+                {humans?.filter((h) => h.permissionLevel === 1).map((h) => (
                   <Badge key={h.name} variant="outline" className="text-[10px] mr-1">{h.displayName || h.name}</Badge>
                 ))}
               </div>
@@ -577,7 +577,7 @@ export function SecuritySection() {
               </div>
             </div>
             <div className="p-3 rounded-lg bg-background/50">
-              <Badge className="bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 mb-2" variant="secondary">Observer</Badge>
+              <Badge className="bg-blue-500/10 text-blue-600 dark:text-blue-400 mb-2" variant="secondary">Worker (L3)</Badge>
               <p className="text-xs text-muted-foreground">
                 <code className="font-mono">groupAllowFrom: [&quot;worker-1&quot;]</code>
               </p>
@@ -585,7 +585,7 @@ export function SecuritySection() {
               <div className="mt-1.5">
                 {humans?.filter((h) => {
                   const level = h.permissionLevel;
-                  return !level || level === 1;
+                  return level === 3;
                 }).map((h) => (
                   <Badge key={h.name} variant="outline" className="text-[10px] mr-1">{h.displayName || h.name}</Badge>
                 ))}

@@ -6,7 +6,14 @@ import { Badge } from '@/components/ui/badge';
 import { CopyButton } from '@/components/dashboard/copy-button';
 import { StatusDot } from '@/components/dashboard/status-dot';
 import { PhaseBadge } from '@/components/dashboard/phase-badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
 import type { HumanResponse } from '@/lib/agentteams-api';
 import { PERMISSION_BADGE_CLASSES, PERMISSION_LABELS } from './human-types';
 import { getAccessSummary } from '@/lib/rbac-engine';
@@ -72,9 +79,11 @@ function TagList({ items, label }: { items: string[] | undefined; label: string 
 export function HumanDetailDialog({
   human,
   onOpenChange,
+  onEdit,
 }: {
   human: HumanResponse | null;
   onOpenChange: (_open: boolean) => void;
+  onEdit?: (_human: HumanResponse) => void;
 }) {
   return (
     <Dialog open={!!human} onOpenChange={onOpenChange}>
@@ -130,11 +139,11 @@ export function HumanDetailDialog({
               <Badge
                 variant="outline"
                 className={`text-xs ${
-                  PERMISSION_BADGE_CLASSES[human.permissionLevel || 1] || ''
+                  PERMISSION_BADGE_CLASSES[human.permissionLevel ?? 2] || ''
                 }`}
               >
                 <Shield className="w-3 h-3 mr-1" aria-hidden="true" />
-                {human.permissionLevel || 1} - {PERMISSION_LABELS[human.permissionLevel || 1]}
+                {human.permissionLevel ?? 2} - {PERMISSION_LABELS[human.permissionLevel ?? 2]}
               </Badge>
             </div>
             {human.message && (
@@ -156,6 +165,14 @@ export function HumanDetailDialog({
               </div>
             </div>
           </div>
+        )}
+        {human && onEdit && (
+          <DialogFooter>
+            <Button variant="outline" onClick={() => onEdit(human)}>
+              <Pencil className="w-3 h-3 mr-1" aria-hidden="true" />
+              编辑
+            </Button>
+          </DialogFooter>
         )}
       </DialogContent>
     </Dialog>
