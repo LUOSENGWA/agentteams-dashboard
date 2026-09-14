@@ -14,6 +14,7 @@ import { Badge } from '@/components/ui/badge';
 import { useWorkerSkills, useUploadWorkerSkill } from '@/hooks/use-agentteams-worker-skills';
 import { PluginDetailBlocks } from '@/components/plugins/plugin-detail-blocks';
 import { WorkerSkillAssign } from './worker-skill-assign';
+import { WorkerChannelsPanel } from '@/components/dashboard/sections/workers/worker-channels-panel';
 
 const DETAIL_FIELDS: Array<[string, (_w: WorkerResponse) => string]> = [
   ['名称', (w) => w.name],
@@ -160,6 +161,11 @@ export function WorkerDetailDialog({
 
               {/* Plugin-contributed blocks (extension point: detail-panel) */}
               <PluginDetailBlocks entity="worker" data={worker} />
+
+              {/* B4: 频道接入矩阵（#1219 消费；上游未合并时 404 占位横幅）。
+                  挂载在 PluginDetailBlocks 之后——与 B5（runtime-config，挂在其前）
+                  保持独立 PR 零 hunk 重叠 */}
+              <WorkerChannelsPanel key={`channels-${worker.name}`} workerName={worker.name} />
             </div>
           )}
         </DialogContent>
