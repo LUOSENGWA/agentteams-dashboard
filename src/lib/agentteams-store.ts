@@ -46,24 +46,15 @@ interface AgentTeamsState {
    * Deliberately NOT persisted (partialize) — identity must never survive
    * a page reload without a fresh session check.
    */
-  sessionUser: string | null;
+   sessionUser: string | null;
 
-  /**
-   * Whether the 项目 nav item is visible (beta feature). Defaults to true
-   * so the section is on out of the box; users can opt out in Settings.
-   * Hidden = the nav item is removed, the section route still works if
-   * navigated to directly.
-   */
-  projectsVisible: boolean;
-
-  setControllerUrl: (_url: string) => void;
+   setControllerUrl: (_url: string) => void;
   checkConnection: () => Promise<boolean>;
   openSettings: () => void;
   closeSettings: () => void;
   setAutoReconnect: (_val: boolean) => void;
   setReconnectInterval: (_ms: number) => void;
   setTaskBoardVisible: (_val: boolean) => void;
-  setProjectsVisible: (_val: boolean) => void;
   setUserLevel: (_val: number) => void;
   setSessionUser: (_val: string | null) => void;
   addConnectionAttempt: (_attempt: ConnectionAttempt) => void;
@@ -88,7 +79,6 @@ export const useAgentTeamsStore = create<AgentTeamsState>()(
       connectionLatency: null,
       connectionHistory: [],
       taskBoardVisible: true,
-      projectsVisible: true,
       userLevel: 3,
       sessionUser: null,
 
@@ -177,10 +167,6 @@ export const useAgentTeamsStore = create<AgentTeamsState>()(
         set({ sessionUser: val });
       },
 
-      setProjectsVisible: (val: boolean) => {
-        set({ projectsVisible: val });
-      },
-
       addConnectionAttempt: (attempt: ConnectionAttempt) => {
         const history = [attempt, ...get().connectionHistory].slice(0, MAX_HISTORY);
         set({ connectionHistory: history });
@@ -188,14 +174,13 @@ export const useAgentTeamsStore = create<AgentTeamsState>()(
     }),
     {
       name: 'agentteams-store',
-      version: 2,
+      version: 3,
       partialize: (state) => ({
         controllerUrl: state.controllerUrl,
         autoReconnect: state.autoReconnect,
         reconnectInterval: state.reconnectInterval,
         lastConnectedAt: state.lastConnectedAt,
         taskBoardVisible: state.taskBoardVisible,
-        projectsVisible: state.projectsVisible,
       }),
       migrate: (persistedState) => {
         // Clear the legacy hard-coded default so the dashboard falls back to
@@ -212,9 +197,9 @@ export const useAgentTeamsStore = create<AgentTeamsState>()(
         if (s.taskBoardVisible === undefined || s.taskBoardVisible === false) {
           s.taskBoardVisible = true;
         }
-        if (s.projectsVisible === undefined || s.projectsVisible === false) {
-          s.projectsVisible = true;
-        }
+        // v2 -> v3: the standalone 项目 section was merged into the task
+        // board's project view, so projectsVisible is dropped entirely.
+        // Unknown persisted keys are ignored by the merge; nothing to do.
         return s as AgentTeamsState;
       },
     }

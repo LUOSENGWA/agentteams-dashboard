@@ -363,7 +363,11 @@ function DegradedBanner({
 
 // ----- Workflow detail panel -----
 
-function WorkflowDetail({
+// Exported so the task board's project view can embed the governance panel
+// (pause / resume / replan / cancel / artifacts / timeline) for a selected
+// project. Internal helpers (TaskDetailRow, CancelTaskButton, ...) stay
+// module-private; only the panel itself crosses module boundaries.
+export function WorkflowDetail({
   projectId,
   teamId,
 }: {

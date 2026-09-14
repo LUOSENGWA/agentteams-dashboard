@@ -28,7 +28,9 @@ function formatRelativeTime(timestamp: number): string {
 
 function openProject(key: PendingProjectKey) {
   useHitlInboxStore.getState().setPendingProjectKey(key);
-  useSectionStore.getState().setActiveSection('projects');
+  // The projects section was merged into the task board (项目 view); the
+  // pending key is consumed there to open the selected project's workflow.
+  useSectionStore.getState().setActiveSection('tasks');
 }
 
 export function HitlInboxCard() {

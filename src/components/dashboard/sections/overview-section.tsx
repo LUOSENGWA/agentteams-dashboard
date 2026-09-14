@@ -18,13 +18,12 @@ import {
   XCircle,
   AlertTriangle,
   Info,
-  RefreshCw,
   Plus,
-  Crown,
   UserPlus,
   MessageCircle,
   ExternalLink,
-  ArrowUpCircle,
+  ListTodo,
+  ChevronRight,
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -39,7 +38,6 @@ import { useTeams } from '@/hooks/use-agentteams-teams';
 import { useManagers } from '@/hooks/use-agentteams-managers';
 import { useInfrastructure } from '@/hooks/use-agentteams-infrastructure';
 import { useLatestVersions } from '@/hooks/use-latest-versions';
-import { compareSemVer } from '@/lib/plugins/semver';
 import { DASHBOARD_REPOSITORY } from '@/lib/dashboard-runtime';
 import { computeInsights, type Insight } from '@/lib/insights-engine';
 import { useDeploymentMode } from '@/hooks/use-deployment-mode';
@@ -47,7 +45,8 @@ import { useAgentTeamsStore } from '@/lib/agentteams-store';
 import { WORKER_PHASE_COLORS } from '@/lib/phase-colors';
 import { useNotificationStore } from '@/lib/notification-store';
 import { useCounter } from '@/hooks/use-counter';
-import { useDashboardRuntime } from '@/hooks/use-dashboard-runtime';
+import { useApiTaskBoard } from '@/hooks/use-projects';
+import type { BoardTask, BoardProject } from '@/hooks/use-task-board';
 import { PieChart, Pie, Cell, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip as RechartsTooltip, ResponsiveContainer, Legend } from 'recharts';
 import { PluginWidgetsGrid } from '@/components/plugins/plugin-widgets';
 import { HitlInboxCard } from '@/components/dashboard/sections/hitl-inbox-card';
@@ -203,127 +202,123 @@ function HealthCard({ name, healthy, icon: Icon, detail }: { name: string; healt
   );
 }
 
-function formatUptime(seconds: number | undefined): string {
-  if (seconds === undefined) return '未知';
-  const days = Math.floor(seconds / 86_400);
-  const hours = Math.floor((seconds % 86_400) / 3_600);
-  const minutes = Math.floor((seconds % 3_600) / 60);
-  return days > 0 ? `${days} 天 ${hours} 小时` : hours > 0 ? `${hours} 小时 ${minutes} 分钟` : `${minutes} 分钟`;
-}
+// ----- Repo quick links (top status bar) -----
 
-/** "v1.2.3" style label; blank/unversioned renders as a muted 未知. */
-function displayVersion(v: string | null | undefined): string {
-  const trimmed = (v ?? '').trim();
-  return trimmed === '' ? '未知' : `v${trimmed.replace(/^v/i, '')}`;
-}
+const FALLBACK_AGENTTEAMS_REPO = 'https://github.com/agentscope-ai/AgentTeams';
 
-// ----- Runtime info card (AgentTeams + Dashboard) -----
-
-function ProjectRepoLink({ name, href }: { name: string; href: string }) {
-  return (
-    <a
-      className="inline-flex items-center gap-1 font-medium text-primary hover:underline underline-offset-2"
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      title={href}
-    >
-      {name}
-      <ExternalLink className="size-3 opacity-70" />
-    </a>
-  );
-}
-
-function LatestVersionBadge({
-  current,
-  latest,
-  latestUrl,
-  releaseHomeUrl,
-}: {
-  current: string | null | undefined;
-  latest: string | null | undefined;
-  latestUrl?: string;
-  releaseHomeUrl: string;
-}) {
-  if (!latest) {
-    return <span className="text-xs text-muted-foreground">最新版本：获取失败</span>;
-  }
-  const outdated =
-    !!current &&
-    current.trim() !== '' &&
-    compareSemVer(current.trim().replace(/^v/i, ''), latest) < 0;
-  return (
-    <span className="inline-flex items-center gap-1.5">
-      <span className="text-xs text-muted-foreground">最新版本：</span>
-      <a
-        className="inline-flex items-center gap-0.5 text-xs text-primary hover:underline underline-offset-2"
-        href={latestUrl ?? releaseHomeUrl}
-        target="_blank"
-        rel="noreferrer"
-      >
-        {displayVersion(latest)}
-        <ExternalLink className="size-2.5 opacity-70" />
-      </a>
-      {outdated && (
-        <Badge
-          variant="outline"
-          className="h-4 px-1.5 text-[10px] gap-0.5 border-amber-500/30 bg-amber-500/10 text-amber-600 dark:text-amber-400"
-        >
-          <ArrowUpCircle className="size-2.5" />
-          有新版本
-        </Badge>
-      )}
-    </span>
-  );
-}
-
-function RuntimeInfoCard({
-  agentteamsVersion,
-  agentteamsRepository,
-}: {
-  agentteamsVersion?: string;
-  agentteamsRepository: string;
-}) {
-  const { data: dashboardRuntime, isFetching: runtimeFetching, refetch: refetchRuntime } = useDashboardRuntime();
+function RepoLinks() {
   const { data: latestVersions } = useLatestVersions();
+  const repos = [
+    { name: 'AgentTeams', href: latestVersions?.repositories.agentteams ?? FALLBACK_AGENTTEAMS_REPO },
+    { name: 'Dashboard', href: latestVersions?.repositories.dashboard ?? DASHBOARD_REPOSITORY },
+  ];
+  return (
+    <div className="hidden sm:flex items-center gap-2">
+      {repos.map((repo) => (
+        <a
+          key={repo.name}
+          className="inline-flex items-center gap-0.5 text-xs text-muted-foreground hover:text-primary transition-colors"
+          href={repo.href}
+          target="_blank"
+          rel="noreferrer"
+          title={repo.href}
+        >
+          {repo.name}
+          <ExternalLink className="size-3 opacity-60" />
+        </a>
+      ))}
+    </div>
+  );
+}
 
-  const agentteamsRepo = latestVersions?.repositories.agentteams ?? agentteamsRepository;
-  const dashboardRepo = latestVersions?.repositories.dashboard ?? DASHBOARD_REPOSITORY;
+// ----- Active work panel (project-centric team view) -----
+
+const PROJECT_STATUS_META: Record<BoardProject['status'], { label: string; className: string }> = {
+  planning: { label: '规划中', className: 'border-slate-500/30 text-slate-500' },
+  active: { label: '进行中', className: 'border-violet-500/30 text-violet-600 dark:text-violet-400' },
+  paused: { label: '已暂停', className: 'border-amber-500/30 text-amber-600 dark:text-amber-400' },
+  completed: { label: '已完成', className: 'border-emerald-500/30 text-emerald-600 dark:text-emerald-400' },
+  unknown: { label: '未知', className: 'border-border text-muted-foreground' },
+};
+
+function ActiveWorkPanel({ projects, tasks, isLoading }: {
+  projects: BoardProject[];
+  tasks: BoardTask[];
+  isLoading: boolean;
+}) {
+  // Per-project progress: completed vs total tasks, newest / active first.
+  const rows = useMemo(() => {
+    const tasksByProject = new Map<string, { done: number; total: number }>();
+    for (const t of tasks) {
+      if (!t.projectId) continue;
+      const stat = tasksByProject.get(t.projectId) ?? { done: 0, total: 0 };
+      stat.total += 1;
+      if (t.status === 'completed') stat.done += 1;
+      tasksByProject.set(t.projectId, stat);
+    }
+    const rank: Record<BoardProject['status'], number> = { active: 0, planning: 1, paused: 2, unknown: 3, completed: 4 };
+    return projects
+      .map((p) => ({ project: p, stat: tasksByProject.get(p.runId) ?? { done: 0, total: 0 } }))
+      .sort((a, b) => rank[a.project.status] - rank[b.project.status])
+      .slice(0, 6);
+  }, [projects, tasks]);
+
+  const goTasks = () => { window.location.hash = 'tasks'; };
 
   return (
     <Card className="glass-card">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between gap-3">
-          <CardTitle className="text-base">运行信息</CardTitle>
-          <Button variant="ghost" size="sm" onClick={() => refetchRuntime()} disabled={runtimeFetching}>
-            <RefreshCw className={`h-3.5 w-3.5 mr-1 ${runtimeFetching ? 'animate-spin' : ''}`} />
-            刷新
+      <CardHeader className="pb-2">
+        <div className="flex items-center justify-between gap-2">
+          <CardTitle className="text-sm font-semibold flex items-center gap-2">
+            <ListTodo className="w-4 h-4 text-violet-500" />
+            进行中的工作
+          </CardTitle>
+          <Button variant="ghost" size="sm" className="h-7 text-xs gap-0.5" onClick={goTasks}>
+            任务看板
+            <ChevronRight className="w-3.5 h-3.5" />
           </Button>
         </div>
       </CardHeader>
-      <CardContent className="grid gap-4 text-sm md:grid-cols-2">
-        <div className="space-y-1.5">
-          <ProjectRepoLink name="AgentTeams" href={agentteamsRepo} />
-          <p className="text-xs text-muted-foreground">当前版本：{displayVersion(agentteamsVersion)}</p>
-          <LatestVersionBadge
-            current={agentteamsVersion}
-            latest={latestVersions?.agentteams?.version}
-            latestUrl={latestVersions?.agentteams?.url}
-            releaseHomeUrl={`${agentteamsRepo}/releases`}
-          />
-          <p className="text-xs text-muted-foreground">运行时长：接口未提供</p>
-        </div>
-        <div className="space-y-1.5">
-          <ProjectRepoLink name="AgentTeams Dashboard" href={dashboardRepo} />
-          <p className="text-xs text-muted-foreground">当前版本：{displayVersion(dashboardRuntime?.version)}</p>
-          <LatestVersionBadge
-            current={dashboardRuntime?.version}
-            latest={latestVersions?.dashboard?.version}
-            latestUrl={latestVersions?.dashboard?.url}
-            releaseHomeUrl={`${dashboardRepo}/releases`}
-          />
-          <p className="text-xs text-muted-foreground">运行时长：{formatUptime(dashboardRuntime?.uptimeSeconds)}</p>
-        </div>
+      <CardContent className="p-4 pt-0">
+        {isLoading ? (
+          <p className="py-4 text-center text-sm text-muted-foreground">加载项目数据...</p>
+        ) : rows.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-4 text-muted-foreground">
+            <ListTodo className="w-7 h-7 mb-1.5 opacity-30" />
+            <p className="text-sm">暂无进行中的项目</p>
+            <p className="text-xs">在聊天中向团队下达目标后，项目将在此跟踪</p>
+          </div>
+        ) : (
+          <div className="space-y-2.5">
+            {rows.map(({ project, stat }) => {
+              const meta = PROJECT_STATUS_META[project.status] ?? PROJECT_STATUS_META.unknown;
+              const pct = stat.total > 0 ? Math.round((stat.done / stat.total) * 100) : 0;
+              return (
+                <button
+                  key={project.runId}
+                  onClick={goTasks}
+                  className="w-full text-left flex items-center gap-3 p-2.5 rounded-lg bg-background/50 border border-border/50 hover:bg-accent/50 transition-colors"
+                >
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium truncate">{project.name}</span>
+                      <Badge variant="outline" className={`h-4 px-1.5 text-[10px] shrink-0 ${meta.className}`}>
+                        {meta.label}
+                      </Badge>
+                    </div>
+                    {stat.total > 0 && (
+                      <div className="flex items-center gap-2 mt-1.5">
+                        <Progress value={pct} className="h-1.5 flex-1" />
+                        <span className="text-[10px] text-muted-foreground shrink-0">{stat.done}/{stat.total} 任务</span>
+                      </div>
+                    )}
+                  </div>
+                  <ChevronRight className="w-4 h-4 text-muted-foreground/50 shrink-0" />
+                </button>
+              );
+            })}
+          </div>
+        )}
       </CardContent>
     </Card>
   );
@@ -340,8 +335,16 @@ export function OverviewSection() {
   const { data: infrastructure } = useInfrastructure();
   const { mode } = useDeploymentMode();
   const notifications = useNotificationStore((s) => s.notifications);
+  const taskBoard = useApiTaskBoard();
 
   // ---- Computed values ----
+
+  // Task board stats (API primary source; shared react-query cache with the
+  // task-board section so mounting this panel costs no extra workflow fetches)
+  const runningTasks = taskBoard.tasks.filter((t) => t.status === 'in_progress' || t.status === 'assigned').length;
+  const completedTasks = taskBoard.tasks.filter((t) => t.status === 'completed').length;
+  const totalTasks = taskBoard.tasks.length;
+  const activeProjects = taskBoard.projects.filter((p) => p.status === 'active' || p.status === 'planning').length;
 
   // Active Workers = Running or Ready
   const activeWorkers = isConnected ? (workers?.filter((w) => w.phase === 'Running' || w.phase === 'Ready').length ?? 0) : null;
@@ -370,12 +373,6 @@ export function OverviewSection() {
         ...(managers?.map((m) => m.roomID).filter(Boolean) ?? []),
       ]).size
     : null;
-
-  // Managers with online/offline split
-  const managersOnline = managers?.filter((m) => m.phase === 'Running').length ?? 0;
-  const managersTotal = managers?.length ?? 0;
-
-  // Unique skills count from workers
 
   // Worker Phase Distribution for PieChart
   const phaseData = useMemo(() => {
@@ -447,6 +444,9 @@ export function OverviewSection() {
           </Badge>
         )}
 
+        {/* Repo quick links */}
+        <RepoLinks />
+
         {/* Uptime / Last Connected */}
         <div className="flex items-center gap-1 text-xs text-muted-foreground ml-auto">
           <Clock className="w-3 h-3" />
@@ -454,11 +454,6 @@ export function OverviewSection() {
           <Activity className="w-3 h-3 ml-1 animate-pulse text-emerald-500" />
         </div>
       </motion.div>
-
-      <RuntimeInfoCard
-        agentteamsVersion={versionData?.controller}
-        agentteamsRepository="https://github.com/agentscope-ai/AgentTeams"
-      />
 
       {/* ===== Row 2: Key Metrics (4 cards) ===== */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
@@ -503,27 +498,27 @@ export function OverviewSection() {
 
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.15 }}>
           <AnimatedStat
-            value={matrixRooms}
-            label="Matrix 房间"
-            icon={MessageSquare}
-            color="text-cyan-500"
+            value={taskBoard.isLoading ? null : runningTasks}
+            label="进行中任务"
+            icon={ListTodo}
+            color="text-violet-500"
+            sub={
+              totalTasks > 0 ? (
+                <div className="flex gap-2 text-[10px] text-muted-foreground">
+                  <span className="text-emerald-500">完成 {completedTasks}/{totalTasks}</span>
+                  <span className="text-violet-500">活跃项目 {activeProjects}</span>
+                </div>
+              ) : undefined
+            }
           />
         </motion.div>
 
         <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.2 }}>
           <AnimatedStat
-            value={isConnected ? managersTotal : null}
-            label="Managers"
-            icon={Crown}
-            color="text-violet-500"
-            sub={
-              managersTotal > 0 ? (
-                <div className="flex gap-2 text-[10px] text-muted-foreground">
-                  <span className="text-emerald-500">在线 {managersOnline}</span>
-                  <span className="text-gray-400">离线 {managersTotal - managersOnline}</span>
-                </div>
-              ) : undefined
-            }
+            value={matrixRooms}
+            label="Matrix 房间"
+            icon={MessageSquare}
+            color="text-cyan-500"
           />
         </motion.div>
       </div>
@@ -536,6 +531,13 @@ export function OverviewSection() {
         infrastructure={infrastructure}
         isConnected={isConnected}
         mode={mode}
+      />
+
+      {/* ===== Active Work (project-centric) ===== */}
+      <ActiveWorkPanel
+        projects={taskBoard.projects}
+        tasks={taskBoard.tasks}
+        isLoading={taskBoard.isLoading}
       />
 
       <HitlInboxCard />

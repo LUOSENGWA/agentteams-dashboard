@@ -57,15 +57,12 @@ const ManagersSection = lazy(() => import('./sections/managers-section').then(m 
 const HumansSection = lazy(() => import('./sections/humans-section').then(m => ({ default: m.HumansSection })));
 const ModelsSection = lazy(() => import('./sections/models-section').then(m => ({ default: m.ModelsSection })));
 const ChatSection = lazy(() => import('./sections/chat/ChatSection').then(m => ({ default: m.ChatSection })));
-const DocsSection = lazy(() => import('./sections/docs-section').then(m => ({ default: m.DocsSection })));
 const TasksSection = lazy(() => import('./sections/tasks-section').then(m => ({ default: m.TasksSection })));
-const ProjectsSection = lazy(() => import('./sections/projects-section').then(m => ({ default: m.ProjectsSection })));
 const AuditSection = lazy(() => import('./sections/audit-section').then(m => ({ default: m.AuditSection })));
 
 export const sectionMap: Record<string, React.ComponentType> = {
   overview: OverviewSection,
   tasks: TasksSection,
-  projects: ProjectsSection,
   workers: WorkersSection,
   skills: ResourceCenterSection,
   teams: TeamsSection,
@@ -74,7 +71,6 @@ export const sectionMap: Record<string, React.ComponentType> = {
   models: ModelsSection,
   audit: AuditSection,
   chat: ChatSection,
-  docs: DocsSection,
 };
 
 export function AgentTeamsDashboard() {
@@ -86,7 +82,7 @@ export function AgentTeamsDashboard() {
   const [isRefreshingAll, setIsRefreshingAll] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
   const { isConnected, openSettings, controllerUrl, connectionLatency, reconnectInterval,
-    taskBoardVisible, projectsVisible, userLevel } = useAgentTeamsStore();
+    taskBoardVisible, userLevel } = useAgentTeamsStore();
   const { isLoggedIn: matrixLoggedIn, isSyncing: matrixSyncing } = useMatrixStore();
   const notifications = useNotificationStore((s) => s.notifications);
   const { searchQuery, setSearchQuery } = useSearch();
@@ -111,13 +107,13 @@ export function AgentTeamsDashboard() {
   const isPluginSection = isPluginSectionId(activeSection);
 
   const visibleNavItems = useMemo(
-    () => navItems.filter((item) => isNavItemVisible(item, mode, taskBoardVisible, projectsVisible, userLevel)),
-    [mode, taskBoardVisible, projectsVisible, userLevel]
+    () => navItems.filter((item) => isNavItemVisible(item, mode, taskBoardVisible, userLevel)),
+    [mode, taskBoardVisible, userLevel]
   );
 
   const visibleCreateActions = useMemo(
-    () => createActions.filter((action) => isCreateActionVisible(action, mode, taskBoardVisible, projectsVisible, userLevel)),
-    [mode, taskBoardVisible, projectsVisible, userLevel]
+    () => createActions.filter((action) => isCreateActionVisible(action, mode, taskBoardVisible, userLevel)),
+    [mode, taskBoardVisible, userLevel]
   );
 
   const checkConnection = useAgentTeamsStore((s) => s.checkConnection);
@@ -151,10 +147,12 @@ export function AgentTeamsDashboard() {
       return;
     }
     if (!visibleNavItems.some((n) => n.id === activeSection)) {
-      // Flag-hidden sections (taskBoard/projects beta toggles) keep their
-      // route reachable per the agentteams-store contract: "hidden = the
-      // nav item is removed, the section route still works if navigated
-      // to directly". Only mode-hidden or unknown sections fall back.
+      // Flag-hidden sections (taskBoard beta toggle) keep their route
+      // reachable per the agentteams-store contract: "hidden = the nav item
+      // is removed, the section route still works if navigated to directly".
+      // The projects section was merged into tasks (use-active-section
+      // aliases #projects -> #tasks), so it never reaches this check.
+      // Only mode-hidden or unknown sections fall back.
       const known = navItems.find((n) => n.id === activeSection);
       const modeHidden = !known || (!!known.modes && !!mode && !known.modes.includes(mode));
       if (modeHidden) {
@@ -173,14 +171,6 @@ export function AgentTeamsDashboard() {
       const isCmdOrCtrl = e.metaKey || e.ctrlKey;
 
       if (isCmdOrCtrl) {
-        // Ctrl+0: docs (persistent entry)
-        if (e.key === '0') {
-          e.preventDefault();
-          setActiveSection('docs');
-          setMobileMenuOpen(false);
-          return;
-        }
-
         // Ctrl+1..8: activate each navigation item.
         if (e.key >= '1' && e.key <= '8') {
           e.preventDefault();

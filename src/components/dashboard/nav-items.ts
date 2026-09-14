@@ -5,11 +5,9 @@ import {
   Crown,
   UserCheck,
   MessageSquare,
-  BookOpen,
   Brain,
   Sparkles,
   ListTodo,
-  GitBranch,
   ScrollText,
   type LucideIcon,
 } from 'lucide-react';
@@ -29,9 +27,7 @@ export interface NavItem {
   /** Visible in these modes only. Omit = visible everywhere. */
   modes?: DeploymentMode[];
   /** When true, the item is hidden if the matching feature flag is off. */
-  hiddenByFlag?: 'taskBoard' | 'projects';
-  /** Experimental feature — sidebar shows a small "Beta" pill on the label. */
-  isBeta?: boolean;
+  hiddenByFlag?: 'taskBoard';
   /**
    * Minimum dashboard rbac level required to see this item (M19).
    * 3 = Admin/L1 only. UI convenience gate; the Controller enforces the
@@ -44,8 +40,9 @@ export const navItems: NavItem[] = [
   { id: 'overview', label: '总览', icon: LayoutDashboard, group: 'core' },
   { id: 'chat', label: '聊天', icon: MessageSquare, group: 'core' },
   // 运行时分组
-  { id: 'tasks', label: '任务看板', icon: ListTodo, group: 'runtime', hiddenByFlag: 'taskBoard', isBeta: true },
-  { id: 'projects', label: '项目', icon: GitBranch, group: 'runtime', hiddenByFlag: 'projects', isBeta: true },
+  // The standalone projects section was merged into the task board's 项目
+  // view, so there is no longer a separate 'projects' nav item.
+  { id: 'tasks', label: '任务看板', icon: ListTodo, group: 'runtime', hiddenByFlag: 'taskBoard' },
   { id: 'workers', label: 'Workers', icon: Bot, group: 'runtime' },
   // L1-only (minLevel 3): the Controller's A2 chain 403s L2 (Matrix token)
   // reads on managers, and the humans list exposes sensitive fields
@@ -57,21 +54,18 @@ export const navItems: NavItem[] = [
   { id: 'skills', label: '市场', icon: Sparkles, group: 'resource' },
   { id: 'models', label: '模型', icon: Brain, group: 'resource' },
   { id: 'audit', label: '审计', icon: ScrollText, group: 'resource' },
-  { id: 'docs', label: '文档', icon: BookOpen, group: 'footer' },
 ];
 
 export const navGroups: { id: NavGroup; label: string }[] = [
   { id: 'core', label: '基础' },
   { id: 'runtime', label: '运行时' },
   { id: 'resource', label: '资源中心' },
-  { id: 'footer', label: '' },
 ];
 
 export function isNavItemVisible(
   item: NavItem,
   mode: DeploymentMode | null | undefined,
   taskBoardVisible?: boolean,
-  projectsVisible?: boolean,
   userLevel?: number
 ): boolean {
   // UI level gate (M19): admin-only sections for L2 users. Convenience
@@ -81,10 +75,6 @@ export function isNavItemVisible(
     // Prefer the caller-provided value (reactive); fall back to the live
     // zustand store for non-React call sites.
     const visible = taskBoardVisible ?? useAgentTeamsStore.getState().taskBoardVisible;
-    if (!visible) return false;
-  }
-  if (item.hiddenByFlag === 'projects') {
-    const visible = projectsVisible ?? useAgentTeamsStore.getState().projectsVisible;
     if (!visible) return false;
   }
   if (!item.modes) return true;
@@ -99,7 +89,7 @@ export interface CreateAction {
   section: string;
   group?: NavGroup;
   modes?: DeploymentMode[];
-  hiddenByFlag?: 'taskBoard' | 'projects';
+  hiddenByFlag?: 'taskBoard';
   /** Minimum dashboard rbac level required (M19), same as NavItem. */
   minLevel?: 1 | 2 | 3;
 }
@@ -115,16 +105,11 @@ export function isCreateActionVisible(
   action: CreateAction,
   mode: DeploymentMode | null | undefined,
   taskBoardVisible?: boolean,
-  projectsVisible?: boolean,
   userLevel?: number
 ): boolean {
   if (action.minLevel && (userLevel ?? 3) < action.minLevel) return false;
   if (action.hiddenByFlag === 'taskBoard') {
     const visible = taskBoardVisible ?? useAgentTeamsStore.getState().taskBoardVisible;
-    if (!visible) return false;
-  }
-  if (action.hiddenByFlag === 'projects') {
-    const visible = projectsVisible ?? useAgentTeamsStore.getState().projectsVisible;
     if (!visible) return false;
   }
   if (!action.modes) return true;

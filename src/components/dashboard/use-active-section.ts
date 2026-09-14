@@ -20,17 +20,34 @@ function isKnownSection(hash: string): boolean {
   return isPluginSectionId(hash);
 }
 
+/**
+ * Legacy section ids merged away from the nav: the standalone projects
+ * section was folded into the task board's 项目 view, so old #projects deep
+ * links and stored sections keep working by resolving to 'tasks'.
+ */
+const SECTION_ALIASES: Record<string, string> = {
+  projects: 'tasks',
+};
+
+function resolveSection(hash: string): string | null {
+  if (navItems.some((n) => n.id === hash)) return hash;
+  const alias = SECTION_ALIASES[hash];
+  if (alias && navItems.some((n) => n.id === alias)) return alias;
+  if (isPluginSectionId(hash)) return hash;
+  return null;
+}
+
 function resolveInitialSection(): string {
   if (typeof window === 'undefined') return 'overview';
 
   const hash = window.location.hash.slice(1);
-  if (hash && !hash.includes('/') && isKnownSection(hash)) return hash;
-  // Plugin section ids contain '/'; accept them verbatim.
-  if (hash && isPluginSectionId(hash)) return hash;
+  const known = hash ? resolveSection(hash) : null;
+  if (known) return known;
 
   try {
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored && isKnownSection(stored)) return stored;
+    if (stored && SECTION_ALIASES[stored]) return SECTION_ALIASES[stored];
   } catch {
     /* localStorage unavailable */
   }
@@ -73,12 +90,9 @@ export function useActiveSection() {
       // Pure echo of our own programmatic write — nothing to sync.
       if (hash === useSectionStore.getState().activeSection) return;
 
-      if (hash && !hash.includes('/') && isKnownSection(hash)) {
-        useSectionStore.getState().setActiveSection(hash);
-        return;
-      }
-      if (hash && isPluginSectionId(hash)) {
-        useSectionStore.getState().setActiveSection(hash);
+      const known = hash ? resolveSection(hash) : null;
+      if (known) {
+        useSectionStore.getState().setActiveSection(known);
         return;
       }
 

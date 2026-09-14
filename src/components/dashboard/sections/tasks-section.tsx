@@ -45,7 +45,12 @@ import {
   type PlanItem,
 } from '@/hooks/use-task-board';
 import { useApiTaskBoard } from '@/hooks/use-projects';
+// Project governance panel (pause / resume / replan / cancel / artifacts /
+// timeline) — defined in the (now-merged) projects section; only the panel
+// crosses the module boundary.
+import { WorkflowDetail } from './projects-section';
 import { useTaskStore } from '@/lib/task-store';
+import { useHitlInboxStore } from '@/lib/hitl-inbox';
 import { buildProjectDag } from '@/lib/project-dag';
 import { ProjectDagSvg, type DagNodeColor } from '@/components/dashboard/project-dag-svg';
 
@@ -571,6 +576,15 @@ export function TasksSection() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [reloadKey, setReloadKey] = useState(0);
 
+  // Atomically consume the pending project deep-link (HITL inbox card). The
+  // task board now owns the project view, so a deep link targets a project in
+  // this section rather than the removed standalone projects section.
+  const pendingProjectKey = useHitlInboxStore.getState().takePendingProjectKey();
+  if (pendingProjectKey?.id) {
+    setView('projects');
+    setSelectedProjectId(pendingProjectKey.id);
+  }
+
   const handleReload = useCallback(() => {
     clearTasks();
     setReloadKey((k) => k + 1);
@@ -639,7 +653,7 @@ export function TasksSection() {
           matrixLoggedIn
             ? apiBoard.degraded
               ? 'Controller 项目 API 降级 — 回退 MinIO 持久化 + Matrix 实时双数据源'
-              : 'Controller 项目 API 主源（#1169）— 项目/任务实时进度，Matrix 事件叠加'
+              : '项目/任务实时进度'
             : '需要先登录 Matrix 才能拉取实时数据'
         }
         actions={
@@ -881,16 +895,23 @@ export function TasksSection() {
                     project={selectedProject}
                     tasks={tasksForProject(selectedProject.runId)}
                   />
-                  <div>
-                    <p className="text-xs font-semibold text-muted-foreground mb-2">
-                      该项目的任务 ({tasksForProject(selectedProject.runId).length})
-                    </p>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
-                      {tasksForProject(selectedProject.runId).map((t) => (
-                        <TaskCard key={t.runId} task={t} />
-                      ))}
+                  {selectedProject.source === 'api' ? (
+                    <WorkflowDetail
+                      projectId={selectedProject.runId}
+                      teamId={selectedProject.teamId}
+                    />
+                  ) : (
+                    <div>
+                      <p className="text-xs font-semibold text-muted-foreground mb-2">
+                        该项目的任务 ({tasksForProject(selectedProject.runId).length})
+                      </p>
+                      <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                        {tasksForProject(selectedProject.runId).map((t) => (
+                          <TaskCard key={t.runId} task={t} />
+                        ))}
+                      </div>
                     </div>
-                  </div>
+                  )}
                 </CardContent>
               </Card>
             ) : (

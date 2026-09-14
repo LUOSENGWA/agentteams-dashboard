@@ -26,7 +26,6 @@ import {
 } from './nav-items';
 import { useAgentTeamsStore } from '@/lib/agentteams-store';
 import { PluginNavItems } from '@/components/plugins/plugin-nav-items';
-import { NavBetaBadge, NavBetaDot } from './nav-beta-badge';
 
 // ──────────────────────────────────────────
 // Props
@@ -79,8 +78,6 @@ function NavButton({
       {!collapsed && (
         <span className="truncate">{item.label}</span>
       )}
-      {!collapsed && item.isBeta && <NavBetaBadge />}
-      {collapsed && item.isBeta && <NavBetaDot />}
       {!collapsed && count > 0 && (
         <Badge
           variant="secondary"
@@ -110,7 +107,6 @@ function NavButton({
         <TooltipTrigger asChild>{button}</TooltipTrigger>
         <TooltipContent side="right">
           {item.label}
-          {item.isBeta && <span className="ml-1 text-[10px] font-semibold uppercase text-violet-500">Beta</span>}
           {count > 0 && ` (${count})`}
         </TooltipContent>
       </Tooltip>
@@ -147,11 +143,10 @@ export function Sidebar({
   mode,
 }: SidebarProps) {
   const taskBoardVisible = useAgentTeamsStore((s) => s.taskBoardVisible);
-  const projectsVisible = useAgentTeamsStore((s) => s.projectsVisible);
   const userLevel = useAgentTeamsStore((s) => s.userLevel);
   const visibleItems = useMemo(
-    () => navItems.filter((item) => isNavItemVisible(item, mode, taskBoardVisible, projectsVisible, userLevel)),
-    [mode, taskBoardVisible, projectsVisible, userLevel]
+    () => navItems.filter((item) => isNavItemVisible(item, mode, taskBoardVisible, userLevel)),
+    [mode, taskBoardVisible, userLevel]
   );
 
   // Group items by their group field

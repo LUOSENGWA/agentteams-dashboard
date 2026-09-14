@@ -64,8 +64,6 @@ export function SettingsDialog() {
     connectionHistory,
     taskBoardVisible,
     setTaskBoardVisible,
-    projectsVisible,
-    setProjectsVisible,
     userLevel,
   } = useAgentTeamsStore();
 
@@ -371,27 +369,6 @@ export function SettingsDialog() {
               <Switch
                 checked={taskBoardVisible}
                 onCheckedChange={setTaskBoardVisible}
-              />
-            </div>
-
-            {/* Projects visibility */}
-            <div className="flex items-center justify-between">
-              <div className="space-y-0.5">
-                <Label className="flex items-center gap-2">
-                  {projectsVisible ? (
-                    <Eye className="w-3.5 h-3.5" />
-                  ) : (
-                    <EyeOff className="w-3.5 h-3.5 text-muted-foreground" />
-                  )}
-                  项目
-                </Label>
-                <p className="text-xs text-muted-foreground">
-                  关闭后侧边栏的「项目」导航项会隐藏，直接访问 URL 仍然可以打开该 section
-                </p>
-              </div>
-              <Switch
-                checked={projectsVisible}
-                onCheckedChange={setProjectsVisible}
               />
             </div>
           </TabsContent>

@@ -55,6 +55,8 @@ export interface BoardProject {
   name: string;
   status: ProjectStatus;
   roomId: string;
+  /** Controller team scoping (D5 API source only); absent for MinIO boards. */
+  teamId?: string;
   leader?: string;
   workers: string[];
   phases: PhasePlan[];

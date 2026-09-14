@@ -59,32 +59,14 @@ export const useAuditStore = create<AuditState>()(
 );
 
 /**
- * Mirror an audit event to the server-side JSONL log so it survives
- * localStorage clears and is shared across sessions / devices. Failures are
- * swallowed: a transient audit write must never block the caller or surface
- * a visible error to the operator.
+ * Helper to record a mutation audit event.
+ *
+ * Server-side persistence is handled centrally by the Controller proxy
+ * (`proxy-helper.ts`), which records every dashboard-initiated mutation with
+ * server-resolved identity — the client no longer mirrors events via POST
+ * /api/agentteams/audit (that would double-record). This store only keeps a
+ * local, best-effort trail.
  */
-function reportServerAudit(input: {
-  entity_type: AuditEvent['entityType'];
-  entity_name: string;
-  action: string;
-  details?: string;
-  severity?: AuditEvent['severity'];
-}): void {
-  if (typeof fetch === 'undefined') return;
-  void fetch('/api/agentteams/audit', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(input),
-    credentials: 'same-origin',
-  }).catch((err) => {
-    if (process.env.NODE_ENV !== 'production') {
-      console.warn('[audit] server-side report failed', err);
-    }
-  });
-}
-
-/** Helper to record a mutation audit event */
 export function auditMutation(
   entityType: AuditEvent['entityType'],
   entityName: string,
@@ -99,12 +81,5 @@ export function auditMutation(
     details,
     severity,
     actor: 'dashboard-user',
-  });
-  reportServerAudit({
-    entity_type: entityType,
-    entity_name: entityName,
-    action,
-    details,
-    severity,
   });
 }

@@ -2,6 +2,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSessionFromRequest } from '@/lib/dashboard-session';
 import { markWorking, orderedCandidates, pickBackendUrl } from '@/lib/backend-config';
+import { appendAuditEvent } from '@/lib/audit-log';
+import { readServerIdentity } from '@/lib/server-auth';
 
 const TIMEOUT_MS = 10000;
 // Request-layer failover (plugin catch-all parity): a transport error retries
@@ -96,6 +98,63 @@ export function getControllerUrl(request: NextRequest): string {
   const override = getControllerOverride(request);
   if (override) return override;
   return getDefaultControllerUrl();
+}
+
+// ── Server-side audit for proxied mutations ─────────────────────────────
+// Every Controller write flows through proxyToAgentTeams, so hooking here
+// gives the audit page full coverage of dashboard-initiated mutations with
+// server-resolved identity (no client trust). Failures are fire-and-forget.
+
+const AUDITED_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE']);
+const METHOD_ACTION: Record<string, string> = {
+  POST: 'create',
+  PUT: 'update',
+  PATCH: 'update',
+  DELETE: 'delete',
+};
+const AUDIT_ENTITY_TYPES: Record<string, 'worker' | 'team' | 'manager' | 'human'> = {
+  workers: 'worker',
+  teams: 'team',
+  managers: 'manager',
+  humans: 'human',
+};
+// POST routes that are diagnostics / one-shot probes rather than governance
+// mutations — recording them would drown the audit log in noise.
+const AUDIT_PATH_DENYLIST = ['/probe', '/presign', '/test', '/ensure-ai', '/login', '/status'];
+
+function auditMutationFromPath(
+  path: string,
+  method: string,
+): { entity_type: 'worker' | 'team' | 'manager' | 'human' | 'system'; entity_name: string; action: string } | null {
+  if (!AUDITED_METHODS.has(method)) return null;
+  if (AUDIT_PATH_DENYLIST.some((fragment) => path.includes(fragment))) return null;
+
+  const segments = path.split('/').filter(Boolean);
+  const entityIdx = segments.findIndex((s) => AUDIT_ENTITY_TYPES[s] !== undefined);
+  const entityType = entityIdx >= 0 ? AUDIT_ENTITY_TYPES[segments[entityIdx]] : 'system';
+  const rest = entityIdx >= 0 ? segments.slice(entityIdx + 1) : [];
+  // /api/v1/workers/{id}/wake → entity {id}, action wake
+  // /api/v1/workers (create)   → entity {path}, action create
+  const resourceName = rest[0] && !AUDITED_METHODS.has(rest[0]) ? rest[0] : path;
+  const action = rest.length > 1 ? rest[rest.length - 1] : (METHOD_ACTION[method] ?? method.toLowerCase());
+  return { entity_type: entityType, entity_name: resourceName, action };
+}
+
+function auditProxiedMutation(request: NextRequest, path: string, method: string, upstreamStatus: number): void {
+  const mutation = auditMutationFromPath(path, method);
+  if (!mutation) return;
+  const identity = readServerIdentity(request);
+  if (!identity) return; // pre-login flows carry no auditable identity
+  void appendAuditEvent({
+    actor: identity.name,
+    actor_level: identity.level,
+    entity_type: mutation.entity_type,
+    entity_name: mutation.entity_name,
+    action: mutation.action,
+    details: `${method} ${path} → upstream ${upstreamStatus}`,
+    severity: upstreamStatus < 400 ? 'info' : 'warning',
+    source_ip: identity.sourceIp,
+  });
 }
 
 /**
@@ -208,6 +267,9 @@ export async function proxyToAgentTeams(
         const res = await fetch(targetUrl, { ...fetchOptions, signal: controller.signal });
         clearTimeout(timeout);
         if (res.status < 400) markWorking('controller', target);
+        // Governance audit: record proxied mutations (success=info, upstream
+        // 4xx/5xx=warning) with the server-resolved identity.
+        auditProxiedMutation(request, path, method, res.status);
 
         // For 204 No Content
         if (res.status === 204) {

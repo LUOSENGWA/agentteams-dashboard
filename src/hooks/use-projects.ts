@@ -209,6 +209,9 @@ export function workflowToBoard(
       name: proj.title,
       status: proj.status,
       roomId: wf?.source_room_id ?? '',
+      // Team scoping for the workflow detail panel: keeps useProjectWorkflow's
+      // queryKey ('any' fallback) identical to useApiTaskBoard's list query.
+      teamId: proj.team_id,
       leader: wf?.requester || undefined,
       workers: [],
       phases: [], // plan.md phases are MinIO-only; the API board renders tasks directly
