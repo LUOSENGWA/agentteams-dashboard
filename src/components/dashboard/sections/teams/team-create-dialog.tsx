@@ -43,12 +43,16 @@ const RUNTIME_OPTIONS: { value: WorkerRuntime; label: string }[] = [
   { value: 'deepseek-harness', label: 'DeepSeek Harness（实验）' },
 ];
 
-/** 建队内联新建 Worker 的空白表单（对齐插件 nw 初始态）。 */
+/** 建队内联新建 Worker 的空白表单（对齐插件 nw 初始态）。
+ * role：对齐插件 CrdManage 成员行 { name, role }——新建 Worker 后选择
+ * Leader（team_leader）还是普通 Worker（9/13 罗总：dashboard 建队 leader
+ * 只能从现有的选，应参考插件允许新建即 leader）。 */
 const EMPTY_NEW_WORKER = {
   name: '',
   runtime: 'openclaw' as WorkerRuntime,
   model: '',
   soul: '',
+  role: 'worker' as 'leader' | 'worker',
 };
 
 /**
@@ -82,23 +86,39 @@ export function TeamCreateDialog({
   onWorkerCreated?: (_name: string) => void;
 }) {
   const workerNames = value.workerNames ?? [];
-  const selectedWorkers = workers.filter((worker) => workerNames.includes(worker.name));
-  const workersWithoutModel = selectedWorkers.filter((worker) => !worker.model?.trim());
-  // Leader 也是从已有 Worker 里选；Worker 选项排除当前 Leader（不重复编入）。
-  const workerOptions = workers
-    .filter((worker) => worker.name !== value.leader?.name)
-    .map((worker) => ({
-      value: worker.name,
-      label: workerPickerLabel(worker.name, worker.model),
-    }));
 
   // ── 内联新建 Worker（对齐插件：显式 POST /workers 后入队，不靠隐式自动建站）──
   const [nwOpen, setNwOpen] = useState(false);
   const [nw, setNw] = useState(EMPTY_NEW_WORKER);
   const [nwBusy, setNwBusy] = useState(false);
   const [nwError, setNwError] = useState<string | null>(null);
+  /** 本会话内联新建成功、但父级 workers 查询尚未刷新的条目——并入选项列表，
+   *  让 Leader/Workers 下拉立即可选（否则新名字在下拉里缺席，role=leader
+   *  自动填入的 Leader 值在 Select 中显示空白）。 */
+  const [createdWorkers, setCreatedWorkers] = useState<{ name: string; model?: string }[]>([]);
+
+  // 选项条目 = 已有 Worker + 本会话新建（父级刷新前的补充项，携带创建时填的模型）。
+  const knownNames = new Set(workers.map((worker) => worker.name));
+  const createdExtras = createdWorkers
+    .filter((entry) => !knownNames.has(entry.name))
+    .map((entry) => entry);
+  const allWorkers: { name: string; model?: string }[] = [
+    ...workers.map((worker) => ({ name: worker.name, model: worker.model })),
+    ...createdExtras,
+  ];
+
+  const selectedWorkers = allWorkers.filter((worker) => workerNames.includes(worker.name));
+  const workersWithoutModel = selectedWorkers.filter((worker) => !worker.model?.trim());
+  // Leader 从已有（或本会话新建）Worker 里选；Worker 选项排除当前 Leader（不重复编入）。
+  const workerOptions = allWorkers
+    .filter((worker) => worker.name !== value.leader?.name)
+    .map((worker) => ({
+      value: worker.name,
+      label: workerPickerLabel(worker.name, worker.model),
+    }));
+
   const nwNameError = workerNameError(nw.name);
-  const nwDuplicate = workers.some((worker) => worker.name === nw.name.trim());
+  const nwDuplicate = allWorkers.some((worker) => worker.name === nw.name.trim());
   const nwInTeam = workerNames.includes(nw.name.trim());
 
   const submitNewWorker = async () => {
@@ -121,7 +141,17 @@ export function TeamCreateDialog({
         model: nw.model.trim() || undefined,
         soul: nw.soul.trim() || undefined,
       });
-      onChange({ ...value, workerNames: [...workerNames, name] });
+      // role=leader：新建 Worker 直接成为本团队 Leader（对齐插件成员行 role
+      // 选择；Controller team CRD 的 team_leader 引用该名字，就绪前保存合法）。
+      onChange({
+        ...value,
+        workerNames: [...workerNames, name],
+        ...(nw.role === 'leader' ? { leader: { name } } : {}),
+      });
+      setCreatedWorkers((prev) => [
+        ...prev,
+        { name, model: nw.model.trim() || undefined },
+      ]);
       onWorkerCreated?.(name);
       setNw(EMPTY_NEW_WORKER);
       setNwOpen(false);
@@ -149,16 +179,16 @@ export function TeamCreateDialog({
           </div>
           <div className="space-y-2">
             <Label>Leader *</Label>
-            {workers.length > 0 ? (
+            {allWorkers.length > 0 ? (
               <Select
                 value={value.leader?.name || undefined}
                 onValueChange={(name) => onChange({ ...value, leader: { name } })}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="选择 Leader（已有 Worker）" />
+                  <SelectValue placeholder="选择 Leader（已有或新建 Worker）" />
                 </SelectTrigger>
                 <SelectContent>
-                  {workers.map((worker) => (
+                  {allWorkers.map((worker) => (
                     <SelectItem key={worker.name} value={worker.name}>
                       {workerPickerLabel(worker.name, worker.model)}
                     </SelectItem>
@@ -167,7 +197,7 @@ export function TeamCreateDialog({
               </Select>
             ) : (
               <p className="text-xs text-muted-foreground">
-                暂无 Worker，先在下方「新建 Worker」创建，或到 Worker 列表创建后再建团队
+                暂无 Worker，先在下方「新建 Worker」创建（可创建后直接设为 Leader），或到 Worker 列表创建后再建团队
               </p>
             )}
           </div>
@@ -213,6 +243,28 @@ export function TeamCreateDialog({
                   />
                   {nwNameError && <p className="text-xs text-red-600 dark:text-red-400">{nwNameError}</p>}
                 </div>
+                {/* 对齐插件 CrdManage 成员行 { name, role }：新建 Worker 后
+                    选择 Leader（team_leader）还是普通 Worker。 */}
+                <div className="space-y-1">
+                  <Label className="text-xs">创建后</Label>
+                  <Select
+                    value={nw.role}
+                    onValueChange={(v) => setNw((p) => ({ ...p, role: v as 'leader' | 'worker' }))}
+                  >
+                    <SelectTrigger className="w-full min-w-0">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="worker">普通 Worker（加入 Workers 列表）</SelectItem>
+                      <SelectItem value="leader">团队 Leader（设为本团队 Leader）</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  {nw.role === 'leader' && (
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400">
+                      创建后该 Worker 将设为本团队 Leader（上方 Leader 选择自动填入）。
+                    </p>
+                  )}
+                </div>
                 <div className="space-y-1">
                   <Label className="text-xs">运行时</Label>
                   <Select
@@ -257,7 +309,7 @@ export function TeamCreateDialog({
                   onClick={() => void submitNewWorker()}
                 >
                   {nwBusy && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />}
-                  {nwBusy ? '创建中...' : '创建并加入团队'}
+                  {nwBusy ? '创建中...' : nw.role === 'leader' ? '创建并设为 Leader' : '创建并加入团队'}
                 </Button>
                 <p className="text-xs text-muted-foreground">
                   创建后由 Controller 调和器拉镜像起容器（数分钟就绪）；可先保存团队，Worker 就绪后自动生效。
