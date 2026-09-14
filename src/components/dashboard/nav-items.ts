@@ -12,6 +12,7 @@ import {
   type LucideIcon,
 } from 'lucide-react';
 import { ArtifactsBoxIcon } from '@/components/dashboard/artifacts-box-icon';
+import { KnowledgeBookIcon } from '@/components/dashboard/knowledge-book-icon';
 import { useAgentTeamsStore } from '@/lib/agentteams-store';
 
 export const STORAGE_KEY = 'agentteams-active-section';
@@ -59,6 +60,9 @@ export const navItems: NavItem[] = [
   // 资源中心分组
   { id: 'skills', label: '市场', icon: Sparkles, group: 'resource' },
   { id: 'models', label: '模型', icon: Brain, group: 'resource' },
+  // 知识库（#1208 workspace-files 消费：MEMORY.md/memory/**/digest/** 只读 +
+  // wikilink 2D 图谱）。图标=手绘 SVG 摊书（lucide 同款规格）。
+  { id: 'knowledge', label: '知识库', icon: KnowledgeBookIcon, group: 'resource' },
   { id: 'audit', label: '审计', icon: ScrollText, group: 'resource' },
 ];
 
