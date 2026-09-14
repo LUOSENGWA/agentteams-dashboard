@@ -275,10 +275,11 @@ export function TeamCreateDialog({
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="openclaw">OpenClaw</SelectItem>
-                      <SelectItem value="copaw">CoPaw</SelectItem>
-                      <SelectItem value="hermes">Hermes</SelectItem>
-                      <SelectItem value="qwenpaw">QwenPaw</SelectItem>
+                      {RUNTIME_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
                     </SelectContent>
                   </Select>
                 </div>

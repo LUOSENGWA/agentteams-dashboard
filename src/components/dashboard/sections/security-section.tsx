@@ -383,7 +383,8 @@ export function SecuritySection() {
                   {permStats.admin === 0 && <p className="text-xs text-muted-foreground italic">无管理员用户</p>}
                 </div>
               </div>
-              {/* Level 2 - 团队成员（未设级别的 Human 按 L2 展示，与 controller/插件默认一致） */}
+              {/* Level 2 - 团队成员（L2 = 严格 permissionLevel 2：controller L2 门 `!= 2` 即拒，
+                  matrix_authenticator 实锤；未设级别归 L3 卡，与 permStats null→worker 口径一致） */}
               <div className="p-3 rounded-lg bg-background/50 border border-border/50">
                 <div className="flex items-center gap-2 mb-2">
                   <UserCheck className="w-4 h-4 text-amber-500" />
@@ -391,7 +392,7 @@ export function SecuritySection() {
                 </div>
                 <p className="text-xs text-muted-foreground mb-2">指定团队 + 独立 Workers</p>
                 <div className="space-y-1">
-                  {humans.filter((h) => !h.permissionLevel || h.permissionLevel === 2).map((h) => (
+                  {humans.filter((h) => h.permissionLevel === 2).map((h) => (
                     <div key={h.name} className="flex items-center gap-1.5 text-xs">
                       <CheckCircle2 className="w-3 h-3 text-amber-500" />
                       <span>{h.displayName || h.name}</span>
@@ -406,9 +407,9 @@ export function SecuritySection() {
                   <Bot className="w-4 h-4 text-blue-500" />
                   <Badge className="bg-blue-500/10 text-blue-600 dark:text-blue-400" variant="secondary">Level 3 · Worker</Badge>
                 </div>
-                <p className="text-xs text-muted-foreground mb-2">Worker 级（L3）：最低权限</p>
+                <p className="text-xs text-muted-foreground mb-2">Worker 级（L3）：最低权限（含未设级别的 Human）</p>
                 <div className="space-y-1">
-                  {humans.filter((h) => h.permissionLevel === 3).map((h) => (
+                  {humans.filter((h) => h.permissionLevel === 3 || !h.permissionLevel).map((h) => (
                     <div key={h.name} className="flex items-center gap-1.5 text-xs">
                       <CheckCircle2 className="w-3 h-3 text-blue-500" />
                       <span>{h.displayName || h.name}</span>
