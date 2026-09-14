@@ -81,7 +81,7 @@ export function WorkerEditDialog({
                 <SelectItem value="copaw">CoPaw</SelectItem>
                 <SelectItem value="hermes">Hermes</SelectItem>
                 <SelectItem value="qwenpaw">QwenPaw</SelectItem>
-                <SelectItem value="deepseek_harness">DeepSeek Harness（实验）</SelectItem>
+                <SelectItem value="deepseek-harness">DeepSeek Harness（实验）</SelectItem>
               </SelectContent>
             </Select>
           </div>
