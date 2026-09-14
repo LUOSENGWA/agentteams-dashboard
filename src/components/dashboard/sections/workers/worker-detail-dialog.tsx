@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useWorkerSkills, useUploadWorkerSkill } from '@/hooks/use-agentteams-worker-skills';
 import { PluginDetailBlocks } from '@/components/plugins/plugin-detail-blocks';
+import { WorkerSkillAssign } from './worker-skill-assign';
 
 const DETAIL_FIELDS: Array<[string, (_w: WorkerResponse) => string]> = [
   ['名称', (w) => w.name],
@@ -33,9 +34,12 @@ const DETAIL_FIELDS: Array<[string, (_w: WorkerResponse) => string]> = [
 export function WorkerDetailDialog({
   worker,
   onOpenChange,
+  onSaved,
 }: {
   worker: WorkerResponse | null;
   onOpenChange: (_open: boolean) => void;
+  /** 技能分配保存后回调（父层刷新 Worker 列表） */
+  onSaved?: () => void;
 }) {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -146,6 +150,8 @@ export function WorkerDetailDialog({
                   </div>
                 </div>
               )}
+
+              <WorkerSkillAssign worker={worker} onSaved={onSaved} />
 
               {/* Plugin-contributed blocks (extension point: detail-panel) */}
               <PluginDetailBlocks entity="worker" data={worker} />
