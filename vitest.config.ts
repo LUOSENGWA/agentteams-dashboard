@@ -14,6 +14,9 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    // Node ≥25 webstorage 坏 stub 遮蔽 jsdom localStorage → persist store
+    // 测试批量失败；setup 把 jsdom 真 Storage 挂回 globalThis（见文件头注释）。
+    setupFiles: ['./vitest.setup.ts'],
     include: ['src/**/*.test.{ts,tsx}'],
     exclude: ['src/__tests__/integration/**'],
     coverage: {
