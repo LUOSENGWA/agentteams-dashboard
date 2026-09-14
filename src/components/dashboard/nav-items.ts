@@ -11,6 +11,7 @@ import {
   ScrollText,
   type LucideIcon,
 } from 'lucide-react';
+import { ArtifactsBoxIcon } from '@/components/dashboard/artifacts-box-icon';
 import { useAgentTeamsStore } from '@/lib/agentteams-store';
 
 export const STORAGE_KEY = 'agentteams-active-section';
@@ -43,6 +44,11 @@ export const navItems: NavItem[] = [
   // The standalone projects section was merged into the task board's 项目
   // view, so there is no longer a separate 'projects' nav item.
   { id: 'tasks', label: '任务看板', icon: ListTodo, group: 'runtime', hiddenByFlag: 'taskBoard' },
+  // 产物（项目→任务→产物文件树 + 预览/下载）。项目视图已并入任务看板，
+  // 数据依赖同样是 Controller 项目端点，故与任务看板同走 taskBoard 标志；
+  // 图标为手绘 SVG 箱子（lucide 同款规格）。
+  { id: 'artifacts', label: '产物', icon: ArtifactsBoxIcon, group: 'runtime', hiddenByFlag: 'taskBoard' },
+
   { id: 'workers', label: 'Workers', icon: Bot, group: 'runtime' },
   // L1-only (minLevel 3): the Controller's A2 chain 403s L2 (Matrix token)
   // reads on managers, and the humans list exposes sensitive fields

@@ -38,6 +38,10 @@ export interface ProjectSummary {
   plan_type?: 'dag' | 'loop';
   team_id?: string;
   mode?: 'project' | 'quick';
+  /** 排序用时间戳（controller projectSummary 已返回；旧版本可能缺省 →
+   *  产物 section 的时间排序对缺省条目垫底，自动退化为名称序）。 */
+  created_at?: string | number;
+  updated_at?: string | number;
 }
 
 export interface WorkflowNode {
