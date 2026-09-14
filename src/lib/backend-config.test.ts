@@ -113,6 +113,21 @@ describe('backendCandidates (order: config internal > config external > env)', (
     expect(config).toBeNull();
   });
 
+  it('sglang: full three-candidate order (config internal > external > env) with dedup', () => {
+    vi.stubEnv('AGENTTEAMS_SGLANG_URL', 'http://env:8000');
+    const from = backendCandidates('sglang', {
+      version: 1,
+      backends: { sglang: { internal: 'http://in:8000', external: 'http://out:8000' } },
+    });
+    expect(from).toEqual(['http://in:8000', 'http://out:8000', 'http://env:8000']);
+    // duplicate between the two config slots and env collapses to one entry
+    const dup = backendCandidates('sglang', {
+      version: 1,
+      backends: { sglang: { internal: 'http://env:8000', external: 'http://env:8000' } },
+    });
+    expect(dup).toEqual(['http://env:8000']);
+  });
+
   it('backendCandidatesSync reads the file', () => {
     fs.writeFileSync(
       configFilePath(),
@@ -306,7 +321,7 @@ describe('probeBackend', () => {
   beforeAll(async () => {
     server = createServer((req, res) => {
       paths.push(`${req.method} ${req.url}`);
-      if (req.url === '/ok' || req.url === '/healthz') {
+      if (req.url === '/ok' || req.url === '/healthz' || req.url === '/v1/models') {
         res.writeHead(200, { 'content-type': 'application/json' });
         res.end('{}');
       } else if (req.url === '/missing' || req.url === '/v1/chat/completions') {
@@ -333,6 +348,18 @@ describe('probeBackend', () => {
     expect(result.status).toBe(200);
     expect(result.latencyMs).toBeGreaterThanOrEqual(0);
     expect(paths[paths.length - 1]).toBe('GET /healthz');
+  });
+
+  it('sglang probes GET /v1/models (dual-address contract pin)', async () => {
+    // The dual-address mechanism (candidate order, working-cache election,
+    // hysteresis) is backend-generic; this pins that the sglang probe path is
+    // the model-list endpoint, so a future change to the probe table fails
+    // loudly instead of silently probing the wrong surface.
+    const result = await probeBackend('sglang', base);
+    expect(result.ok).toBe(true);
+    expect(result.httpOk).toBe(true);
+    expect(result.status).toBe(200);
+    expect(paths[paths.length - 1]).toBe('GET /v1/models');
   });
 
   it('treats a higress 404 as "gateway up, route missing" (connected, not httpOk)', async () => {
