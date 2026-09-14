@@ -13,6 +13,27 @@ import { BACKEND_NAMES, forgetWorking, readConfigSync } from '@/lib/backend-conf
 import { listAuditEvents, resetAuditLogForTests } from '@/lib/audit-log';
 import { GET, POST } from './route';
 
+// CI determinism: probeBackend performs a real network probe with one
+// 500ms-delayed retry, so a dropped (non-RST) address costs up to
+// 2×timeout+500ms per candidate — refreshEffective's 4000ms default can take
+// ~10.5s per saved backend, which blew vitest's 5000ms testTimeout on CI
+// runners whose firewall drops the embedded default addresses (2026-09-14,
+// 3× "Test timed out" in this file). Stub it to instant-unreachable: this
+// file's assertions already encode the "all unreachable in tests" semantics,
+// so behavior is unchanged — only the wall-clock cost is removed.
+vi.mock('@/lib/backend-config', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/lib/backend-config')>();
+  return {
+    ...original,
+    probeBackend: vi.fn(async () => ({
+      ok: false,
+      httpOk: false,
+      latencyMs: -1,
+      error: 'probe disabled in tests (network-independent)',
+    })),
+  };
+});
+
 let workDir: string;
 
 function configFile() {
