@@ -8,6 +8,7 @@ import type { WorkerResponse } from '@/lib/agentteams-api';
 // vi.mock 工厂会被提升到 import 之前，闭包只能引用 vi.hoisted 作用域
 const mocks = vi.hoisted(() => ({
   updateWorker: vi.fn(),
+  restartWorker: vi.fn(),
   state: {
     catalog: null as { skills: unknown[]; total: number } | null,
   },
@@ -25,6 +26,7 @@ const CATALOG = {
 vi.mock('@/lib/agentteams-api', () => ({
   agentteamsApi: {
     updateWorker: (...args: unknown[]) => mocks.updateWorker(...args),
+    restartWorker: (...args: unknown[]) => mocks.restartWorker(...args),
   },
 }));
 
@@ -60,6 +62,7 @@ describe('WorkerSkillAssign', () => {
     vi.clearAllMocks();
     mocks.state.catalog = CATALOG;
     mocks.updateWorker.mockResolvedValue({});
+    mocks.restartWorker.mockResolvedValue({ success: true, note: '' });
   });
   afterEach(() => {
     cleanup();
@@ -112,5 +115,53 @@ describe('WorkerSkillAssign', () => {
     mocks.state.catalog = { skills: [], total: 0 };
     renderAssign([]);
     expect(screen.getByText(/技能目录为空/)).toBeInTheDocument();
+  });
+
+  it('保存成功后基线归零：保存禁用 + 已保存徽章 + restartWorker 被调用', async () => {
+    renderAssign(['skill-a']);
+    fireEvent.click(screen.getByLabelText(/^skill-b/));
+    fireEvent.click(screen.getByRole('button', { name: '保存分配' }));
+    await waitFor(() => {
+      expect(mocks.updateWorker).toHaveBeenCalledWith('w1', {
+        skills: ['skill-a', 'skill-b'],
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByText('已保存（2 个技能）')).toBeInTheDocument();
+    });
+    expect(mocks.restartWorker).toHaveBeenCalledWith('w1');
+    // 基线已切到刚提交的集合 → dirty 归零
+    expect(screen.getByRole('button', { name: '保存分配' })).toBeDisabled();
+  });
+
+  it('保存后继续改选：徽章消失、保存按钮恢复，再保存提交新全集', async () => {
+    renderAssign(['skill-a']);
+    fireEvent.click(screen.getByLabelText(/^skill-b/));
+    fireEvent.click(screen.getByRole('button', { name: '保存分配' }));
+    await waitFor(() => {
+      expect(screen.getByText('已保存（2 个技能）')).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByLabelText(/^skill-c/));
+    expect(screen.queryByText(/已保存（/)).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '保存分配' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: '保存分配' }));
+    await waitFor(() => {
+      expect(mocks.updateWorker).toHaveBeenCalledWith('w1', {
+        skills: ['skill-a', 'skill-b', 'skill-c'],
+      });
+    });
+  });
+
+  it('restart 失败 = 软失败：保存仍成功，琥珀提示重启未确认', async () => {
+    mocks.restartWorker.mockRejectedValue(new Error('restart 500'));
+    renderAssign(['skill-a']);
+    fireEvent.click(screen.getByLabelText(/^skill-b/));
+    fireEvent.click(screen.getByRole('button', { name: '保存分配' }));
+    await waitFor(() => {
+      expect(screen.getByText('已保存（2 个技能）')).toBeInTheDocument();
+    });
+    expect(screen.getByText(/restart 500/)).toBeInTheDocument();
+    // 软失败不影响基线归零
+    expect(screen.getByRole('button', { name: '保存分配' })).toBeDisabled();
   });
 });
