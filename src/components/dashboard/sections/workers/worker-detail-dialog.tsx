@@ -140,7 +140,12 @@ export function WorkerDetailDialog({
               )}
               {currentSkills.length > 0 && (
                 <div className="pt-2">
-                  <p className="text-muted-foreground mb-1">已分发技能</p>
+                  <p
+                    className="text-muted-foreground mb-1"
+                    title="磁盘视角：列出 MinIO agents/{worker.name}/skills/ 下的已分发文件。与下方「技能分配」不是同一数据源——后者是 CR spec.skills（期望态）；取消勾选并保存只改 spec.skills，不会删除这里的磁盘文件。"
+                  >
+                    已分发技能（磁盘文件）
+                  </p>
                   <div className="flex flex-wrap gap-1">
                     {currentSkills.map((s) => (
                       <Badge key={s} variant="secondary" className="text-xs">

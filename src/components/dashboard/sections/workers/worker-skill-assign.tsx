@@ -8,17 +8,20 @@
 // 文案已注明「以本页为准」。
 // 目录 = GET /skills（技能中心同源，MinIO skills bucket）；勾选基线 =
 // 最近一次保存成功的集合（本地基线 savedBase），初始 = worker.skills
-// （CR spec.skills，含 nacos:// 前缀条目）。不在目录中的存量条目单列
-// （琥珀标记）——全量覆盖会清掉它们，必须让用户看得见。
+// （CR spec.skills）。不在目录中的存量条目单列（琥珀标记）——真实
+// 场景 = 目录里的技能条目被删除/改名后 spec.skills 的残留（目录技能名
+// 是纯 SkillEntry.name；nacos:// 在仓库里只作注册中心 URL，不是技能名
+// 形态）。全量覆盖会清掉残留，必须让用户看得见。
 // 保存成功后显式 restartWorker：controller 的 spec hash 不含 skills，
 // reconcile 不会重建容器，reconcileMemberSkills 只补文件不重启——与
 // useUploadWorkerSkill 同款：restart 失败 = 软失败（spec 已持久化）。
 import { useMemo, useState } from 'react';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { AlertCircle, Check, Loader2 } from 'lucide-react';
+import { useQueryClient } from '@tanstack/react-query';
+import { Check, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useSkills } from '@/hooks/use-skill-center';
+import { useUpdateWorker } from '@/hooks/use-agentteams-mutations';
 import { agentteamsApi } from '@/lib/agentteams-api';
 import type { WorkerResponse } from '@/lib/agentteams-api';
 
@@ -29,14 +32,25 @@ export function WorkerSkillAssign({
   worker: WorkerResponse;
   onSaved?: () => void;
 }) {
-  const { data: catalog = { skills: [], total: 0 } } = useSkills();
+  // 目录必须全量：stray 判定依赖完整集合。useSkills 默认 pageSize=200，
+  // 超过 200 条的技能会全部落进 strays 被标「不在目录」，全量覆盖语义下
+  // 可能被用户误判清掉——skills route 无硬上限（内存 slice），传大值一次取全。
+  const { data: catalog = { skills: [], total: 0 } } = useSkills(undefined, undefined, 1, 10000);
   const qc = useQueryClient();
+  // 仓库既有 worker 更新单一入口：统一失效集合（workers / worker-detail /
+  // cluster-status）+ toast + 通知，不再自建 useMutation。
+  const updateWorker = useUpdateWorker();
   const [checked, setChecked] = useState<Set<string>>(new Set());
   const [inited, setInited] = useState<string | null>(null);
   // 本地基线 = 最近一次保存成功的集合。保存成功后父级 detailWorker 快照
   // 不会刷新（onSaved 只 refetch 列表），若仍拿 worker.skills 当基线，
   // dirty 恒为 true、「已保存」徽章在继续改选时也不消失。
   const [savedBase, setSavedBase] = useState<string[] | null>(null);
+  // 成功提示的计数在保存成功瞬间锁定——checked 随后随用户操作继续变化，
+  // 直接渲染 [...checked].length 会把「未保存的当前勾选集」当已保存数。
+  const [savedCount, setSavedCount] = useState<number | null>(null);
+  const [restartNote, setRestartNote] = useState<string | null>(null);
+  const [restarting, setRestarting] = useState(false);
 
   // 勾选基线 = CR spec.skills。React 官方「reset state to respond to props
   // changes」模式：渲染期间按 name 重置（换 Worker / 重开详情时生效；保存
@@ -67,34 +81,50 @@ export function WorkerSkillAssign({
     return false;
   }, [checked, baseSkills, inited, worker.name]);
 
-  const save = useMutation({
-    mutationFn: async (skills: string[]) => {
-      await agentteamsApi.updateWorker(worker.name, { skills });
-      // spec.skills 变更不触发 controller 重建容器（qwenpaw spec hash 不含
-      // skills），必须显式 restart 才能让运行中的 Worker 加载新技能集合。
-      // restart 失败 = 软失败：spec 已持久化，下次重启/重建即生效
-      // （同 useUploadWorkerSkill 的软失败处理）。
-      let restartNote: string | undefined;
-      try {
-        const reload = await agentteamsApi.restartWorker(worker.name);
-        if (reload?.success === false) restartNote = reload?.note || 'Worker 重启未确认';
-      } catch (err) {
-        restartNote = err instanceof Error ? err.message : 'Worker 重启失败';
-      }
-      return { restartNote };
-    },
-    onSuccess: (_result, skills) => {
-      // 基线切到刚提交的集合 → dirty 归零，「已保存」徽章在继续改选时
-      // 随 save.reset() 消失；workers 列表一并失效（restart 后状态刷新）
-      setSavedBase(skills);
-      qc.invalidateQueries({ queryKey: ['agentteams-worker-skills', worker.name] });
-      qc.invalidateQueries({ queryKey: ['agentteams-workers'] });
-      onSaved?.();
-    },
-  });
+  const saving = updateWorker.isPending || restarting;
+
+  const handleSave = async () => {
+    const skills = [...checked];
+    setSavedCount(null);
+    setRestartNote(null);
+    try {
+      // PUT /workers skills 非 nil = 全表替换（controller 语义）
+      await updateWorker.mutateAsync({ name: worker.name, data: { skills } });
+    } catch {
+      // 失败 toast 已由 useUpdateWorker.onSuccess 之外的 onError 统一给出
+      return;
+    }
+    // spec.skills 变更不触发 controller 重建容器（qwenpaw spec hash 不含
+    // skills），必须显式 restart 才能让运行中的 Worker 加载新技能集合。
+    // restart 失败 = 软失败：spec 已持久化，下次重启/重建即生效
+    // （同 useUploadWorkerSkill 的软失败处理）。
+    setRestarting(true);
+    let note: string | null = null;
+    try {
+      const reload = await agentteamsApi.restartWorker(worker.name);
+      if (reload?.success === false) note = reload?.note || 'Worker 重启未确认';
+    } catch (err) {
+      note = err instanceof Error ? err.message : 'Worker 重启失败';
+    } finally {
+      setRestarting(false);
+    }
+    // 基线切到刚提交的集合 → dirty 归零，「已保存」徽章在继续改选时
+    // 随 setSavedCount(null) 消失
+    setSavedBase(skills);
+    setSavedCount(skills.length);
+    setRestartNote(note);
+    // chips（磁盘已分发文件）同步失效——useUpdateWorker 的失效集合不含此查询
+    qc.invalidateQueries({ queryKey: ['agentteams-worker-skills', worker.name] });
+    onSaved?.();
+  };
+
+  const clearSavedBadge = () => {
+    setSavedCount(null);
+    setRestartNote(null);
+  };
 
   const toggle = (name: string) => {
-    save.reset();
+    clearSavedBadge();
     setChecked((prev) => {
       const next = new Set(prev);
       if (next.has(name)) next.delete(name);
@@ -128,7 +158,7 @@ export function WorkerSkillAssign({
             variant="ghost"
             size="sm"
             className="h-6 px-2 text-xs"
-            onClick={() => { setChecked(new Set(allNames)); save.reset(); }}
+            onClick={() => { setChecked(new Set(allNames)); clearSavedBadge(); }}
           >
             全选
           </Button>
@@ -136,7 +166,7 @@ export function WorkerSkillAssign({
             variant="ghost"
             size="sm"
             className="h-6 px-2 text-xs"
-            onClick={() => { setChecked(new Set()); save.reset(); }}
+            onClick={() => { setChecked(new Set()); clearSavedBadge(); }}
           >
             清空
           </Button>
@@ -197,33 +227,27 @@ export function WorkerSkillAssign({
       <div className="flex items-center gap-2 mt-2">
         <Button
           size="sm"
-          disabled={!dirty || save.isPending}
-          onClick={() => save.mutate([...checked])}
+          disabled={!dirty || saving}
+          onClick={handleSave}
         >
-          {save.isPending ? (
+          {saving ? (
             <Loader2 className="w-3 h-3 mr-1 animate-spin" />
           ) : (
             <Check className="w-3 h-3 mr-1" />
           )}
           保存分配
         </Button>
-        {save.isSuccess && (
+        {savedCount !== null && (
           <span className="text-xs text-green-600 dark:text-green-400">
-            已保存（{[...checked].length} 个技能）
+            已保存（{savedCount} 个技能）
           </span>
         )}
-        {save.isSuccess && save.data?.restartNote && (
+        {savedCount !== null && restartNote && (
           <span className="text-xs text-amber-600 dark:text-amber-400">
-            {save.data.restartNote}（技能分配已保存，重启后生效）
+            {restartNote}（技能分配已保存，重启后生效）
           </span>
         )}
       </div>
-      {save.isError && (
-        <div className="flex items-start gap-2 mt-2 text-xs text-red-700 dark:text-red-300">
-          <AlertCircle className="h-3.5 w-3.5 shrink-0 mt-0.5" />
-          <span>{save.error?.message ?? '保存失败'}</span>
-        </div>
-      )}
     </div>
   );
 }

@@ -152,6 +152,46 @@ describe('WorkerSkillAssign', () => {
     });
   });
 
+  it('基线非空清空后保存 → 提交 { skills: [] }（全量替换最危险路径）', async () => {
+    renderAssign(['skill-a', 'skill-b']);
+    expect(screen.getByRole('button', { name: '保存分配' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: '清空' }));
+    expect(screen.getByLabelText(/^skill-a/)).not.toBeChecked();
+    expect(screen.getByLabelText(/^skill-b/)).not.toBeChecked();
+    expect(screen.getByRole('button', { name: '保存分配' })).toBeEnabled();
+    fireEvent.click(screen.getByRole('button', { name: '保存分配' }));
+    await waitFor(() => {
+      expect(mocks.updateWorker).toHaveBeenCalledWith('w1', { skills: [] });
+    });
+    await waitFor(() => {
+      expect(screen.getByText('已保存（0 个技能）')).toBeInTheDocument();
+    });
+    // 基线切到空集 → dirty 归零
+    expect(screen.getByRole('button', { name: '保存分配' })).toBeDisabled();
+    expect(mocks.restartWorker).toHaveBeenCalledWith('w1');
+  });
+
+  it('保存成功后继续改选再保存：徽章计数锁定在各自保存瞬间', async () => {
+    renderAssign(['skill-a']);
+    fireEvent.click(screen.getByRole('button', { name: '全选' }));
+    fireEvent.click(screen.getByRole('button', { name: '保存分配' }));
+    await waitFor(() => {
+      expect(screen.getByText('已保存（3 个技能）')).toBeInTheDocument();
+    });
+    // 改选后徽章消失（不拿当前未保存勾选集冒充已保存数）
+    fireEvent.click(screen.getByLabelText(/^skill-b/));
+    expect(screen.queryByText(/已保存（/)).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: '保存分配' }));
+    await waitFor(() => {
+      expect(mocks.updateWorker).toHaveBeenCalledWith('w1', {
+        skills: ['skill-a', 'skill-c'],
+      });
+    });
+    await waitFor(() => {
+      expect(screen.getByText('已保存（2 个技能）')).toBeInTheDocument();
+    });
+  });
+
   it('restart 失败 = 软失败：保存仍成功，琥珀提示重启未确认', async () => {
     mocks.restartWorker.mockRejectedValue(new Error('restart 500'));
     renderAssign(['skill-a']);
