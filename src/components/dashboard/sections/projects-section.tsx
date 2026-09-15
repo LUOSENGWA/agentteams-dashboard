@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import { GitBranch, FolderKanban, CircleAlert, Loader2, RefreshCw, Pause, Play, Map as MapIcon, Ban, List, LayoutGrid } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card, CardContent } from '@/components/ui/card';
@@ -914,67 +914,16 @@ function ProjectCard({
   );
 }
 
-// ----- View + selection persistence (localStorage) -----
-// 刷新/重开不丢当前视图与选中项目——同款设计对齐工作流插件的
-// workflow tab 记忆（读：try/catch JSON.parse 降级空对象；写：storage
-// 不可用（SSR/隐私模式）静默跳过）。
-const PROJECTS_VIEW_KEY = 'agentteams-projects-view';
-type ProjectsViewState = { view?: string; projectId?: string; team?: string };
-
-function readProjectsViewState(): ProjectsViewState {
-  try {
-    if (typeof window === 'undefined') return {};
-    const raw = window.localStorage.getItem(PROJECTS_VIEW_KEY);
-    if (!raw) return {};
-    const parsed = JSON.parse(raw) as ProjectsViewState;
-    return typeof parsed === 'object' && parsed ? parsed : {};
-  } catch {
-    return {};
-  }
-}
-
-type ViewMode = 'list' | 'card' | 'topo';
-
-function isViewMode(v: unknown): v is ViewMode {
-  return v === 'list' || v === 'card' || v === 'topo';
-}
-
 // ----- Main section -----
 
 export function ProjectsSection() {
   const { data, isLoading, isError, refetch, isRefetching } = useProjects();
   // (team, project_id) composite selection — the same project id can exist
-  // under two teams (identity scoping). Restored from localStorage.
-  const [selectedKey, setSelectedKey] = useState<{ id: string; team?: string } | null>(
-    () => {
-      const s = readProjectsViewState();
-      return typeof s.projectId === 'string' && s.projectId
-        ? { id: s.projectId, team: typeof s.team === 'string' && s.team ? s.team : undefined }
-        : null;
-    },
-  );
+  // under two teams (identity scoping).
+  const [selectedKey, setSelectedKey] = useState<{ id: string; team?: string } | null>(null);
   // Three views, aligned with the workbench plugin's WorkflowBoard:
-  // 列表 (list + detail) / 卡片 (card grid) / 拓扑 (DAG). Restored from
-  // localStorage (invalid/missing value falls back to 列表).
-  const [view, setView] = useState<ViewMode>(() => {
-    const v = readProjectsViewState().view;
-    return isViewMode(v) ? v : 'list';
-  });
-
-  useEffect(() => {
-    try {
-      window.localStorage.setItem(
-        PROJECTS_VIEW_KEY,
-        JSON.stringify({
-          view,
-          projectId: selectedKey?.id ?? '',
-          team: selectedKey?.team ?? '',
-        } satisfies ProjectsViewState),
-      );
-    } catch {
-      /* storage 不可用则跳过 */
-    }
-  }, [view, selectedKey]);
+  // 列表 (list + detail) / 卡片 (card grid) / 拓扑 (DAG).
+  const [view, setView] = useState<'list' | 'card' | 'topo'>('list');
 
   // Atomically consume the pending project deep-link during render.
   const pendingProjectKey = useHitlInboxStore.getState().takePendingProjectKey();
