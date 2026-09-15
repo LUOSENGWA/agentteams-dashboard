@@ -52,6 +52,7 @@ import { WorkflowDetail } from './projects-section';
 import { useTaskStore } from '@/lib/task-store';
 import { useHitlInboxStore } from '@/lib/hitl-inbox';
 import { buildProjectDag } from '@/lib/project-dag';
+import { usePersistentState } from '@/lib/use-persistent-state';
 import { ProjectDagSvg, type DagNodeColor } from '@/components/dashboard/project-dag-svg';
 
 // ----- Status config -----
@@ -512,6 +513,17 @@ function ProjectDagView({ project, tasks }: { project: BoardProject; tasks: Boar
 
 type ViewMode = 'kanban' | 'projects';
 
+const TASKS_VIEW_KEY = 'agentteams:tasks-view';
+const TASKS_PROJECT_KEY = 'agentteams:tasks-selected-project';
+
+const isTasksViewMode = (raw: unknown): raw is ViewMode =>
+  raw === 'kanban' || raw === 'projects';
+
+// null = no explicit selection (the board auto-shows the first project);
+// only non-empty strings are restored from storage.
+const isProjectIdOrNone = (raw: unknown): raw is string | null =>
+  raw === null || (typeof raw === 'string' && raw.length > 0);
+
 export function TasksSection() {
   const { setActiveSection } = useActiveSection();
   const matrixLoggedIn = useMatrixStore((s) => s.isLoggedIn);
@@ -571,9 +583,17 @@ export function TasksSection() {
   const { data: managers } = useManagers();
   const { data: workers } = useWorkers();
 
-  const [view, setView] = useState<ViewMode>('kanban');
+  // View + project selection survive section switches and refreshes
+  // (post-mount restore; a deep link consumed during first render wins).
+  const [view, setView] = usePersistentState<ViewMode>(
+    TASKS_VIEW_KEY,
+    'kanban',
+    isTasksViewMode,
+  );
   const [search, setSearch] = useState('');
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
+  const [selectedProjectId, setSelectedProjectId] = usePersistentState<
+    string | null
+  >(TASKS_PROJECT_KEY, null, isProjectIdOrNone);
   const [reloadKey, setReloadKey] = useState(0);
 
   // Atomically consume the pending project deep-link (HITL inbox card). The
