@@ -835,6 +835,7 @@ export function WorkersSection() {
       <WorkerDetailDialog
         worker={detailWorker}
         onOpenChange={(open) => !open && setDetailWorker(null)}
+        onSaved={() => refetch()}
       />
 
       <WorkerConfigDialog

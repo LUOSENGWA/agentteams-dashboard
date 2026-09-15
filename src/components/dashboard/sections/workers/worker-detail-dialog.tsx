@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useWorkerSkills, useUploadWorkerSkill } from '@/hooks/use-agentteams-worker-skills';
 import { PluginDetailBlocks } from '@/components/plugins/plugin-detail-blocks';
+import { WorkerSkillAssign } from './worker-skill-assign';
 
 const DETAIL_FIELDS: Array<[string, (_w: WorkerResponse) => string]> = [
   ['名称', (w) => w.name],
@@ -33,9 +34,12 @@ const DETAIL_FIELDS: Array<[string, (_w: WorkerResponse) => string]> = [
 export function WorkerDetailDialog({
   worker,
   onOpenChange,
+  onSaved,
 }: {
   worker: WorkerResponse | null;
   onOpenChange: (_open: boolean) => void;
+  /** 技能分配保存后回调（父层刷新 Worker 列表） */
+  onSaved?: () => void;
 }) {
   const [uploadOpen, setUploadOpen] = useState(false);
   const [file, setFile] = useState<File | null>(null);
@@ -136,7 +140,12 @@ export function WorkerDetailDialog({
               )}
               {currentSkills.length > 0 && (
                 <div className="pt-2">
-                  <p className="text-muted-foreground mb-1">已分发技能</p>
+                  <p
+                    className="text-muted-foreground mb-1"
+                    title="磁盘视角：列出 MinIO agents/{worker.name}/skills/ 下的已分发文件。与下方「技能分配」不是同一数据源——后者是 CR spec.skills（期望态）；取消勾选并保存只改 spec.skills，不会删除这里的磁盘文件。"
+                  >
+                    已分发技能（磁盘文件）
+                  </p>
                   <div className="flex flex-wrap gap-1">
                     {currentSkills.map((s) => (
                       <Badge key={s} variant="secondary" className="text-xs">
@@ -146,6 +155,8 @@ export function WorkerDetailDialog({
                   </div>
                 </div>
               )}
+
+              <WorkerSkillAssign worker={worker} onSaved={onSaved} />
 
               {/* Plugin-contributed blocks (extension point: detail-panel) */}
               <PluginDetailBlocks entity="worker" data={worker} />
