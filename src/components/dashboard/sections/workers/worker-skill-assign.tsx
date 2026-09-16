@@ -145,6 +145,9 @@ export function WorkerSkillAssign({
         <p className="text-xs text-muted-foreground">
           技能目录为空——先在「资源中心 → 技能」上传技能包，或直接在上方上传。
         </p>
+        <p className="text-[11px] text-muted-foreground">
+          此处改动不影响上方「已分发技能（磁盘文件）」列表。
+        </p>
       </div>
     );
   }
