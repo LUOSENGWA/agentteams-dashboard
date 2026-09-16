@@ -76,6 +76,13 @@ describe('WorkerSkillAssign', () => {
     expect(screen.getByRole('button', { name: '保存分配' })).toBeDisabled();
   });
 
+  it('矩阵旁注明双数据源（此处改动不影响上方磁盘文件列表）', () => {
+    renderAssign(['skill-a']);
+    expect(
+      screen.getByText(/此处改动不影响上方「已分发技能（磁盘文件）」列表/),
+    ).toBeInTheDocument();
+  });
+
   it('勾选新技能保存 = 全量替换（提交勾选全集）+ onSaved 回调', async () => {
     const onSaved = vi.fn();
     renderAssign(['skill-a'], onSaved);
