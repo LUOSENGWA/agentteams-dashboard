@@ -73,7 +73,7 @@ describe('B4 WorkerChannelsPanel（#1219 九端点消费）', () => {
   it('① 404（#1219 未合并）→ 占位横幅', async () => {
     mockRoutes([]);
     render(<WorkerChannelsPanel workerName="w1" />);
-    expect(await screen.findByText(/待上游 #1219 合并/)).toBeInTheDocument();
+    expect(await screen.findByText(/当前 Controller 版本未提供/)).toBeInTheDocument();
   });
 
   it('② 200 → 列表渲染（类型顺序 + schema 标签 + health 点）', async () => {
