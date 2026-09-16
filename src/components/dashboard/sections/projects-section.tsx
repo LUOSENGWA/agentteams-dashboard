@@ -15,6 +15,13 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Textarea } from '@/components/ui/textarea';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { SectionHeader } from '@/components/dashboard/section-header';
 import { ProjectDagSvg, type DagNodeColor } from '@/components/dashboard/project-dag-svg';
 import { buildWorkflowDag } from '@/lib/project-dag';
@@ -27,6 +34,7 @@ import {
   useCancelProjectTask,
 } from '@/hooks/use-projects';
 import { ApiError } from '@/lib/api-error';
+import { projectTs } from '@/lib/project-time';
 import { useHitlInboxStore } from '@/lib/hitl-inbox';
 import { ProjectTimelinePanel } from './project-timeline-panel';
 import {
@@ -914,6 +922,9 @@ function ProjectCard({
   );
 }
 
+// 拓扑视图左栏排序模式（9/16 装验反馈：左栏项目按时间排序）。
+type TopoSortMode = 'time_desc' | 'time_asc' | 'name';
+
 // ----- Main section -----
 
 export function ProjectsSection() {
@@ -924,6 +935,25 @@ export function ProjectsSection() {
   // Three views, aligned with the workbench plugin's WorkflowBoard:
   // 列表 (list + detail) / 卡片 (card grid) / 拓扑 (DAG).
   const [view, setView] = useState<'list' | 'card' | 'topo'>('list');
+  const projects = useMemo(() => data?.projects ?? [], [data]);
+  // 拓扑视图左栏排序（9/16 装验反馈：左栏项目按时间排序）。
+  const [topoSort, setTopoSort] = useState<TopoSortMode>('time_desc');
+  const topoProjects = useMemo(() => {
+    const list = [...projects];
+    list.sort((a, b) => {
+      if (topoSort === 'name') {
+        return (a.title || a.project_id).localeCompare(b.title || b.project_id);
+      }
+      const ta = projectTs(a);
+      const tb = projectTs(b);
+      // 无时间戳的条目垫底（与 artifacts-section 同款语义）
+      if (ta === 0 && tb === 0) return a.title.localeCompare(b.title);
+      if (ta === 0) return 1;
+      if (tb === 0) return -1;
+      return topoSort === 'time_desc' ? tb - ta : ta - tb;
+    });
+    return list;
+  }, [projects, topoSort]);
 
   // Atomically consume the pending project deep-link during render.
   const pendingProjectKey = useHitlInboxStore.getState().takePendingProjectKey();
@@ -931,7 +961,6 @@ export function ProjectsSection() {
     setSelectedKey(pendingProjectKey);
   }
 
-  const projects = data?.projects ?? [];
   const selected =
     projects.find((p) => isSameProject(p, selectedKey)) ?? null;
 
@@ -1063,14 +1092,31 @@ export function ProjectsSection() {
       )}
 
       {projects.length > 0 && view === 'topo' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 items-start">
           <Card className="glass-card lg:col-span-1">
             <CardContent className="p-3 space-y-1.5">
-              <p className="text-xs font-semibold text-muted-foreground mb-2 flex items-center gap-1.5">
-                <GitBranch className="h-3.5 w-3.5" />
-                选择项目（{projects.length}）
-              </p>
-              {projects.map((p) => (
+              <div className="flex items-center justify-between gap-2 mb-0.5">
+                <p className="text-xs font-semibold text-muted-foreground flex items-center gap-1.5">
+                  <GitBranch className="h-3.5 w-3.5" />
+                  选择项目（{projects.length}）
+                </p>
+                <Select
+                  value={topoSort}
+                  onValueChange={(v) => setTopoSort(v as TopoSortMode)}
+                >
+                  <SelectTrigger className="h-7 w-[108px] text-xs" aria-label="项目排序">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="time_desc">时间 新→旧</SelectItem>
+                    <SelectItem value="time_asc">时间 旧→新</SelectItem>
+                    <SelectItem value="name">名称</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {/* 左栏独立滚动（9/16 装验反馈：左右分栏、各自独立滚动） */}
+              <div className="max-h-[calc(100vh-280px)] overflow-y-auto pr-0.5 -mr-0.5">
+              {topoProjects.map((p) => (
                 <button
                   key={`${p.team_id ?? ''}:${p.project_id}`}
                   onClick={() => setSelectedKey({ id: p.project_id, team: p.team_id })}
@@ -1089,10 +1135,12 @@ export function ProjectsSection() {
                   </p>
                 </button>
               ))}
+              </div>
             </CardContent>
           </Card>
           <Card className="glass-card lg:col-span-2">
-            <CardContent className="p-4">
+            {/* 右栏独立滚动（9/16 装验反馈：左右分栏、各自独立滚动） */}
+            <CardContent className="p-4 max-h-[calc(100vh-280px)] overflow-y-auto">
               {selected ? (
                 <WorkflowDagView projectId={selected.project_id} teamId={selected.team_id} />
               ) : (
