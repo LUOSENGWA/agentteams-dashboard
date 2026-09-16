@@ -178,7 +178,7 @@ export function WorkerRuntimeConfigPanel({ workerName }: { workerName: string })
     return (
       <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-2.5 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
         <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-        <span>Runtime 配置端点待上游 #1231 合并（当前 404），合并并升级 Controller 后自动生效。</span>
+        <span>当前 Controller 版本未提供 Runtime 配置端点，升级 AgentTeams 后自动生效。</span>
       </div>
     );
   }

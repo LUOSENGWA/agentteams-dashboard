@@ -54,7 +54,7 @@ describe('B5 WorkerRuntimeConfigPanel（#1231 消费）', () => {
   it('② GET 404（#1231 未合并）→ 占位横幅不报错', async () => {
     mockFetch([{ status: 404, body: { error: 'not found' } }]);
     render(<WorkerRuntimeConfigPanel workerName="w1" />);
-    expect(await screen.findByText(/待上游 #1231 合并/)).toBeInTheDocument();
+    expect(await screen.findByText(/当前 Controller 版本未提供/)).toBeInTheDocument();
     expect(screen.queryByText('Runtime 配置（字段级保存）')).not.toBeInTheDocument();
   });
 

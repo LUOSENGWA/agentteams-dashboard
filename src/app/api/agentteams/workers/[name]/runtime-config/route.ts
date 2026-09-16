@@ -6,7 +6,7 @@ import { isValidNameSegment } from '@/lib/skill-package';
 // B5 worker runtime-config（#1231 消费，spec=方案与设计/.../PR/worker-runtime-config/scope.md）：
 // GET/PUT 透传，状态码原样回传（proxy-helper 既有语义）——
 // - PUT body = 仅改动字段（字段级合并在 Controller 侧完成，未改字段含 loop_config 原样往返）
-// - #1231 未合并 → Controller 404 透传 → 前端占位横幅（「待上游合并」）
+// - 旧 Controller 版本（未含 #1231 端点）→ 404 透传 → 前端占位横幅（中性文案，不裸露上游 PR 号）
 // - 409（per-file path lock）透传 status+body → 前端提示稍后重试
 // - 审计由 proxyToAgentTeams 统一挂接（action=runtime-config，entity=worker）
 
