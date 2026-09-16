@@ -190,7 +190,6 @@ export function WorkerCreateDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="openclaw">OpenClaw</SelectItem>
-                <SelectItem value="copaw">CoPaw</SelectItem>
                 <SelectItem value="hermes">Hermes</SelectItem>
                 <SelectItem value="qwenpaw">QwenPaw</SelectItem>
               </SelectContent>
