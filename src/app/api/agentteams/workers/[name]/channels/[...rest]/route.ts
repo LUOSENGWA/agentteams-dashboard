@@ -100,12 +100,16 @@ export async function POST(
   if (!isValidNameSegment(name)) {
     return NextResponse.json({ error: '非法 Worker 名' }, { status: 400 });
   }
-  if (rest.length !== 2 || !isValidNameSegment(rest[0]) || rest[1] !== 'restart') {
+  if (rest.length !== 2 || !isValidNameSegment(rest[0]) || !isValidNameSegment(rest[1])) {
+    return NextResponse.json({ error: '非法路径段' }, { status: 400 });
+  }
+  const ep = resolveEndpoint(rest);
+  if (!ep || ep.method !== 'POST') {
     return NextResponse.json({ error: '不支持的端点' }, { status: 400 });
   }
   const denied = await enforceServerSideRbac(request, 'update', 'worker', name);
   if (denied) return denied;
-  const path = `/api/v1/workers/${seg(name)}/channels/${seg(rest[0])}/restart`;
+  const path = `/api/v1/workers/${seg(name)}/channels/${seg(rest[0])}/${seg(rest[1])}`;
   const controllerUrl = getControllerUrl(request);
   return proxyToAgentTeams(request, controllerUrl, path, {
     forwardBody: true,
