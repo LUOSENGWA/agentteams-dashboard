@@ -102,8 +102,19 @@ describe('B4 /workers/[name]/channels/[...rest]（#1219 九端点白名单）', 
     );
   });
 
+  it('POST conflict-check：method=POST + RBAC', async () => {
+    proxyToAgentTeams.mockResolvedValue(NextResponse.json({ conflicts: [] }));
+    await call(POST, 'POST', 'w1', ['qq', 'conflict-check']);
+    expect(enforceServerSideRbac).toHaveBeenCalled();
+    expect(proxyToAgentTeams).toHaveBeenCalledWith(
+      expect.any(NextRequest), C,
+      '/api/v1/workers/w1/channels/qq/conflict-check',
+      { forwardBody: true, method: 'POST', passthroughHeaders: ['x-agentteams-minio-persisted'] },
+    );
+  });
+
   it.each([
-    ['conflict-check 已移出契约（2.2.x follow-up）', ['qq', 'conflict-check']],
+    ['conflict-check 仅收 POST（GET 走白名单拒绝）', ['qq', 'conflict-check']],
     ['未知子路径', ['qq', 'bogus']],
     ['超长段', ['qq', 'qrcode', 'status', 'x']],
   ])('白名单拒绝：%s → 400 零透传', async (_label, rest) => {

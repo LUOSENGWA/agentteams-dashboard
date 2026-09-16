@@ -4,7 +4,8 @@ import { enforceServerSideRbac } from '@/lib/server-auth';
 import { isValidNameSegment } from '@/lib/skill-package';
 
 // B4 worker 频道矩阵（#1219 消费，契约=方案与设计/AgentTeams/PR/1219-worker-channels-api/pr-body.md，
-// 9/14 定稿：9 端点——conflict-check 为 2.2.x-only 路由已移出，2.2.x pin 落地后一行加回）。
+// 9/14 定稿：9 端点；conflict-check（2.2.x-only 路由）当时移出，9/16 加回
+// （上游 #1269 conflict-check 代理已合入 + 生产 runtime 在 2.2.x 线）→ 第 10 端点。
 // 纪律（与上游同）：仅固定路径白名单转发，禁通用反代。
 //   - 上游 404 双语义：#1219 未合并 / qwenpaw 构建无 channel router（版本门）→ 前端占位横幅
 //   - PUT 读回校验头 X-AgentTeams-MinIO-Persisted（true/false/skipped）透传给前端展示
@@ -30,6 +31,7 @@ function resolveEndpoint(rest: string[]): Endpoint | null {
     if (rest[1] === 'health') return { method: 'GET', forwardBody: false, mutates: false };
     if (rest[1] === 'qrcode') return { method: 'GET', forwardBody: false, mutates: false };
     if (rest[1] === 'restart') return { method: 'POST', forwardBody: true, mutates: true };
+    if (rest[1] === 'conflict-check') return { method: 'POST', forwardBody: true, mutates: true };
     return null;
   }
   if (rest.length === 3 && rest[1] === 'qrcode' && rest[2] === 'status') {
