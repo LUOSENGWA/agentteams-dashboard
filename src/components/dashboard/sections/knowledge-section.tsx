@@ -430,7 +430,7 @@ export function KnowledgeSection() {
       {unavailable ? (
         <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-          <span>知识库端点待上游 #1208 合并（当前 404）。合并并升级 AgentTeams 后自动生效。</span>
+          <span>当前 Controller 版本未提供知识库端点，升级 AgentTeams 后自动生效。</span>
         </div>
       ) : loadError ? (
         <div className="flex items-center gap-2 rounded-md border border-red-300 bg-red-50 p-3 text-xs text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">

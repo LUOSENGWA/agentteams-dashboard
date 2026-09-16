@@ -68,7 +68,7 @@ describe('B7 KnowledgeSection（#1208 消费）', () => {
   it('① #1208 未合并（404）→ 占位横幅', async () => {
     mockFetch({ memory: 404, digest: 404 });
     render(<KnowledgeSection />);
-    expect(await screen.findByText(/待上游 #1208 合并/)).toBeInTheDocument();
+    expect(await screen.findByText(/当前 Controller 版本未提供/)).toBeInTheDocument();
   });
 
   it('② 200 → wikilink 图谱：节点+边+标签', async () => {
