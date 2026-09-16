@@ -36,7 +36,7 @@
 //                             → tasks_detail[]（deliverables[] + result_path）
 //   getTaskArtifactUrl(id, taskId, path?)  → 下载/预览 URL（白名单在 controller）
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   ChevronDown,
   ChevronRight,
@@ -71,6 +71,7 @@ import {
   SelectValue,
 } from '@/components/ui/select';
 import { SectionHeader } from '@/components/dashboard/section-header';
+import { projectTs } from '@/lib/project-time';
 import {
   getProjectWorkflow,
   getTaskArtifactUrl,
@@ -146,27 +147,8 @@ interface PreviewState {
 // 预览拉取上限（1MB）：更大的文件不做内联预览，引导下载。
 const PREVIEW_MAX_BYTES = 1024 * 1024;
 
-/** 项目时间戳（排序/树第二行共用）。
- *  插件 projectActivityTs 同款多源兜底：上游 ListProjects 的 projectSummary
- *  可能无时间戳字段（v1.2.3 实测全无 created_at/updated_at——插件注释实锤），
- *  此时用 project_id 内嵌日期近似（YYYYMMDD 段），时间排序不空转。
- *  （插件第三源=项目房间 last_ts，依赖 Matrix 房间缓存，本 section 不持有。） */
-function projectTs(p: ProjectSummary): number {
-  const raw = p.updated_at ?? p.created_at;
-  let best = 0;
-  if (typeof raw === 'string') best = Date.parse(raw) || 0;
-  else if (typeof raw === 'number') best = raw;
-  const m = String(p.project_id || '').match(/(20\d{6})/);
-  if (m) {
-    const approx = new Date(
-      Number(m[1].slice(0, 4)),
-      Number(m[1].slice(4, 6)) - 1,
-      Number(m[1].slice(6, 8)),
-    ).getTime();
-    if (approx > best) best = approx;
-  }
-  return best;
-}
+// projectTs（多源兜底时间戳）统一在 @/lib/project-time（9/16 抽出，
+// projects section 拓扑排序复用）。
 
 /** 时间标签（插件 formatTime 同款：当天 HH:MM，跨天 M月D日 HH:MM）。 */
 function formatTime(ts: number): string {
@@ -198,12 +180,17 @@ export function ArtifactsSection() {
   const [teamNames, setTeamNames] = useState<string[]>([]);
   const [preview, setPreview] = useState<PreviewState | null>(null);
 
+  // 已自动加载过 tasks_detail 的项目 id（防重复拉取；手动刷新时清空重拉）。
+  const loadedRef = useRef<Set<string>>(new Set());
+
   const refresh = useCallback(async () => {
     setLoading(true);
     setLoadError(null);
     try {
       const list = await listProjects();
       setData(list);
+      // 手动刷新 = 全量重拉（分类计数跟着刷新，不残留旧项目的 tasks_detail）。
+      loadedRef.current.clear();
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : '项目列表加载失败');
     } finally {
@@ -265,17 +252,36 @@ export function ArtifactsSection() {
     }
   }, []);
 
+  // 分类自动加载（9/16 装验反馈：分类计数需展开具体项目后才出现）：项目列表
+  // 就绪后自动拉全部项目的 tasks_detail（并发 3），类型分类计数/全部产物
+  // 立即可用，不再依赖手动展开。
+  useEffect(() => {
+    const pending = projects.filter((p) => !loadedRef.current.has(p.project_id));
+    if (pending.length === 0) return;
+    let i = 0;
+    const worker = async () => {
+      while (i < pending.length) {
+        const p = pending[i++];
+        loadedRef.current.add(p.project_id);
+        await loadTasks(p);
+      }
+    };
+    void Promise.all(
+      Array.from({ length: Math.min(3, pending.length) }, () => worker()),
+    );
+  }, [projects, loadTasks]);
+
   const toggleProject = useCallback(
     (project: ProjectSummary) => {
       setExpanded((prev) => {
         const next = { ...prev, [project.project_id]: !prev[project.project_id] };
-        if (next[project.project_id]) {
+        if (next[project.project_id] && !tasksByProject[project.project_id]) {
           void loadTasks(project);
         }
         return next;
       });
     },
-    [loadTasks],
+    [loadTasks, tasksByProject],
   );
 
   /** 全部产物文件条目（仅已展开/已加载的项目——对齐插件按需语义）。 */

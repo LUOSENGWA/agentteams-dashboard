@@ -93,24 +93,46 @@ describe('ArtifactsSection（9/14 UX 对齐插件）', () => {
     ).toBeTruthy();
   });
 
-  it('⑤ 类型分类节点带计数，点击按 kind 过滤', async () => {
+  it('⑤ 类型分类节点带计数，点击按 kind 过滤（自动预取后计数 = 全部项目）', async () => {
     render(<ArtifactsSection />);
-    // 文件尚未加载：「图片」唯一 = 树分类节点
-    fireEvent.click(await screen.findByText('图片'));
-    // 等项目列表就绪再展开 B 项目（排序后第一个 chevron）加载任务
-    await screen.findByText('B 项目');
-    fireEvent.click(screen.getAllByLabelText('展开')[0]);
-    await screen.findByText('pic.png');
+    // 自动预取：两个项目的产物无需手动展开即已加载
+    await waitFor(() => {
+      expect(mocks.getProjectWorkflow).toHaveBeenCalledTimes(2);
+    });
+    // 「图片」现有多处（右栏文件行也有 kind 徽章）——取树分类节点（非 badge）
+    const treeNode = (await screen.findAllByText('图片')).find(
+      (el) => el.closest('[data-slot="badge"]') === null,
+    ) as HTMLElement;
+    fireEvent.click(treeNode);
+    // 两个项目各一个 pic.png → 图片过滤后右栏 2 条
+    expect((await screen.findAllByText('pic.png')).length).toBe(2);
     await waitFor(() => {
       expect(screen.queryByText('report.md')).not.toBeInTheDocument();
     });
-    // 树分类行计数角标（图片/数据 各 1，仅 B 已加载）
+    // 树分类行计数角标（图片/数据 各 2，两项目合计）
     for (const label of ['图片', '数据']) {
       const treeRow = screen
         .getAllByText(label)
         .find((el) => el.textContent === label);
-      expect(treeRow?.closest('div')?.textContent).toContain('1');
+      expect(treeRow?.closest('div')?.textContent).toContain('2');
     }
+  });
+
+  it('⑥ 分类自动加载：项目列表就绪后自动拉全部项目（无需展开），展开不重拉', async () => {
+    render(<ArtifactsSection />);
+    await screen.findByText('B 项目');
+    await waitFor(() => {
+      expect(mocks.getProjectWorkflow).toHaveBeenCalledTimes(2);
+    });
+    // 分类计数 = 两项目合计（文档 4：report.md×2 + result.md×2）
+    const treeRow = screen
+      .getAllByText('文档')
+      .find((el) => el.textContent === '文档');
+    expect(treeRow?.closest('div')?.textContent).toContain('4');
+    // 展开项目 = 缓存命中，不重复拉取
+    fireEvent.click(screen.getAllByLabelText('展开')[0]);
+    await screen.findByText('t1');
+    expect(mocks.getProjectWorkflow).toHaveBeenCalledTimes(2);
   });
 
   it('② 点文件行直接开预览（不再只选中）', async () => {
