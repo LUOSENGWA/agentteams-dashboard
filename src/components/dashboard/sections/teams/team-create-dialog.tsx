@@ -37,7 +37,6 @@ export function parseWorkerNames(value: string): string[] {
 
 const RUNTIME_OPTIONS: { value: WorkerRuntime; label: string }[] = [
   { value: 'openclaw', label: 'OpenClaw（默认）' },
-  { value: 'copaw', label: 'CoPaw' },
   { value: 'hermes', label: 'Hermes' },
   { value: 'qwenpaw', label: 'QwenPaw' },
   { value: 'deepseek-harness', label: 'DeepSeek Harness（实验）' },

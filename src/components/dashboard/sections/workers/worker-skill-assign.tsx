@@ -145,6 +145,9 @@ export function WorkerSkillAssign({
         <p className="text-xs text-muted-foreground">
           技能目录为空——先在「资源中心 → 技能」上传技能包，或直接在上方上传。
         </p>
+        <p className="text-[11px] text-muted-foreground">
+          此处改动不影响上方「已分发技能（磁盘文件）」列表。
+        </p>
       </div>
     );
   }
@@ -175,6 +178,7 @@ export function WorkerSkillAssign({
       <p className="text-[11px] text-muted-foreground mb-2">
         勾选要分配给该 Worker 的技能；取消勾选即移除。保存将按勾选全集覆盖
         spec.skills 并重启 Worker——期间由其他入口（上传/分发）写入的技能会被覆盖。
+        此处改动不影响上方「已分发技能（磁盘文件）」列表。
         {strays.length > 0 && (
           <span className="text-amber-600 dark:text-amber-400">
             有 {strays.length} 个已分配技能不在目录中，保存前请确认是否保留。

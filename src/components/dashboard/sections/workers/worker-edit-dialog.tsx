@@ -78,7 +78,8 @@ export function WorkerEditDialog({
               </SelectTrigger>
               <SelectContent>
                 <SelectItem value="openclaw">OpenClaw</SelectItem>
-                <SelectItem value="copaw">CoPaw</SelectItem>
+                {/* legacy：存量 copaw Worker 编辑时保留可见（值能正常显示），但不可再选。 */}
+                <SelectItem value="copaw" disabled>CoPaw（legacy，不可选）</SelectItem>
                 <SelectItem value="hermes">Hermes</SelectItem>
                 <SelectItem value="qwenpaw">QwenPaw</SelectItem>
                 <SelectItem value="deepseek-harness">DeepSeek Harness（实验）</SelectItem>

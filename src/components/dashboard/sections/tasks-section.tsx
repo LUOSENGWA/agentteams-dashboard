@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useCallback } from 'react';
+import { useState, useMemo, useCallback, useEffect } from 'react';
 import { useShallow } from 'zustand/shallow';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
@@ -53,6 +53,7 @@ import { useTaskStore } from '@/lib/task-store';
 import { useHitlInboxStore } from '@/lib/hitl-inbox';
 import { buildProjectDag } from '@/lib/project-dag';
 import { usePersistentState } from '@/lib/use-persistent-state';
+import { isStaleProjectSelection } from './task-selectors';
 import { ProjectDagSvg, type DagNodeColor } from '@/components/dashboard/project-dag-svg';
 
 // ----- Status config -----
@@ -615,6 +616,16 @@ export function TasksSection() {
   // syncing state in an effect, so the first project shows until the user
   // picks one explicitly.
   const effectiveProjectId = selectedProjectId ?? board.projects[0]?.runId ?? null;
+
+  // 恢复的选中项目若已不在看板（项目被删/改名），清除持久化值——否则每次
+  // 刷新都会闪现第一个项目再兜底，脏 id 还会被反复重新持久化。等 board 有
+  // 数据再判定（加载中 projects 为空，不误清合法存储值；见
+  // task-selectors.isStaleProjectSelection）。
+  useEffect(() => {
+    if (isStaleProjectSelection(selectedProjectId, board.projects.map((p) => p.runId))) {
+      setSelectedProjectId(null);
+    }
+  }, [selectedProjectId, board.projects, setSelectedProjectId]);
 
   // ---- Filters ----
   const filteredTasks = useMemo(() => {

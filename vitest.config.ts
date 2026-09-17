@@ -1,6 +1,12 @@
 import path from 'node:path';
 import { defineConfig } from 'vitest/config';
 
+// 本环境 ambient NODE_ENV=production（容器继承）→ vitest worker 加载 React
+// 生产构建，而 `act` 是 dev/test-only API（生产构建剥掉）→ 322 个
+// "React.act is not a function" 批量失败（2026-09-16 实测）。这里强制
+// test 语义，worker 继承本进程 env，不受 ambient 值影响。
+process.env.NODE_ENV = 'test';
+
 export default defineConfig({
   resolve: {
     alias: {

@@ -76,6 +76,13 @@ describe('WorkerSkillAssign', () => {
     expect(screen.getByRole('button', { name: '保存分配' })).toBeDisabled();
   });
 
+  it('矩阵旁注明双数据源（此处改动不影响上方磁盘文件列表）', () => {
+    renderAssign(['skill-a']);
+    expect(
+      screen.getByText(/此处改动不影响上方「已分发技能（磁盘文件）」列表/),
+    ).toBeInTheDocument();
+  });
+
   it('勾选新技能保存 = 全量替换（提交勾选全集）+ onSaved 回调', async () => {
     const onSaved = vi.fn();
     renderAssign(['skill-a'], onSaved);
@@ -111,10 +118,11 @@ describe('WorkerSkillAssign', () => {
     expect(screen.getByRole('button', { name: '保存分配' })).toBeDisabled();
   });
 
-  it('目录为空且无存量技能 → 提示先上传', () => {
+  it('目录为空且无存量技能 → 提示先上传 + 双源提示语（空态也可见）', () => {
     mocks.state.catalog = { skills: [], total: 0 };
     renderAssign([]);
     expect(screen.getByText(/技能目录为空/)).toBeInTheDocument();
+    expect(screen.getByText(/此处改动不影响上方「已分发技能（磁盘文件）」列表/)).toBeInTheDocument();
   });
 
   it('保存成功后基线归零：保存禁用 + 已保存徽章 + restartWorker 被调用', async () => {

@@ -3,9 +3,12 @@ import * as React from 'react';
 /**
  * 产物 tab 图标（9/14 罗总：「看看别的图标是什么风格，然后用 SVG 画一个
  * 箱子之类的东西」）。侧边栏其余图标均为 lucide 线性风格——24×24 viewBox、
- * stroke=2、round linecap/linejoin、无填充。本图标为手绘同款规格：
- * 一个敞口的箱子（底框 + 前缝 + 两片张开的箱盖），区别于 lucide 现成的
- * Package（封箱+胶带）/Box（封闭立方体），语义=装着产物的开箱。
+ * stroke=2、round linecap/linejoin、无填充。
+ *
+ * 9/16 重画（verify-98a7109 装验反馈：「那个图标可以画得更像个箱子，
+ * 现在像本书」）：初版的敞口箱盖两片斜线视觉上读成了摊开的书，改为封闭
+ * 立方体（顶面菱形 + 箱体 + 前缝）——箱子语义一眼可辨，与知识库摊书
+ * 图标（knowledge-book-icon）拉开区分度。
  *
  * props 对齐 lucide 图标（SVGProps + size），可直接当 LucideIcon 用。
  */
@@ -30,15 +33,12 @@ export const ArtifactsBoxIcon = React.forwardRef<
     aria-hidden="true"
     {...props}
   >
-    {/* 箱盖（两片，张开） */}
-    <path d="M3 9.5 6 5.5l6 3" />
-    <path d="M21 9.5 18 5.5l-6 3" />
-    {/* 箱口（前缘 V） */}
-    <path d="M3 9.5 12 14l9-4.5" />
+    {/* 顶面（菱形） */}
+    <path d="M12 3.5 3 8.5l9 5 9-5-9-5" />
     {/* 箱体 */}
-    <path d="M3 9.5v7l9 4 9-4v-7" />
+    <path d="M3 8.5v8l9 5 9-5v-8" />
     {/* 前缝 */}
-    <path d="M12 14v7" />
+    <path d="M12 13.5v8" />
   </svg>
 ));
 
