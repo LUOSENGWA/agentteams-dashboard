@@ -872,10 +872,13 @@ export function TasksSection() {
         </div>
       )}
 
-      {/* View: Projects (cards + selected project plan) */}
+      {/* View: Projects (cards + selected project plan)
+          9/17 装验反馈 G4：row 容器固定撑满剩余屏高（round-4 同 220px
+          顶部偏移常量）——双栏各自内部滚动，滚到底不再带着整页往下滚
+          （overscroll-contain 双保险）。 */}
       {view === 'projects' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-1 space-y-3">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:h-[calc(100vh-220px)]">
+          <div className="lg:col-span-1 space-y-3 lg:h-full lg:overflow-y-auto lg:overscroll-contain lg:pr-1">
             {board.projects.length === 0 ? (
               <Card className="glass-card">
                 <CardContent className="p-8 text-center">
@@ -899,14 +902,14 @@ export function TasksSection() {
               ))
             )}
           </div>
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-2 lg:h-full">
             {selectedProject ? (
-              <Card className="glass-card">
-                {/* 9/17 装验反馈：右栏详情独立滚动——滚动只动详情内容，
-                    不带着整个页面滚。max-h 顶格、内部滚动；底边与左栏
-                    滚动区对齐（左栏 round-4 修复的 max-h calc(100vh-220px)
-                    + 左卡头部偏移 ≈ 40px → 260px）。 */}
-                <div className="max-h-[calc(100vh-260px)] overflow-y-auto">
+              <Card className="glass-card lg:h-full lg:min-h-0">
+                {/* G4（9/17 装验反馈）：row 已固定撑满屏高 → 右栏详情
+                    直接 h-full 顶满行高（Card py-6 自带上下留白），
+                    内部滚动 + overscroll-contain 止滚轮连锁。移动端
+                    保持旧 max-h（无固定行高）。 */}
+                <div className="max-h-[calc(100vh-260px)] lg:max-h-none lg:h-full overflow-y-auto overscroll-contain">
                 <CardContent className="p-5 space-y-4">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2 flex-wrap">
