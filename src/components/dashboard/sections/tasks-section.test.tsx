@@ -1,0 +1,94 @@
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
+
+// 9/17 装验反馈回归：任务看板项目视图**右栏详情独立滚动**——
+// 详情卡内层必须有 overflow-y-auto + max-h 容器（滚动只动详情，
+// 不带着整个页面滚）。mock 面=数据 hooks（组件逻辑不动）。
+
+const FAKE_PROJECT = {
+  runId: 'proj-1',
+  name: '测试项目',
+  status: 'in_progress' as const,
+  roomId: '!room:example.org',
+  workers: ['w1'],
+  phases: [],
+  createdAt: 1,
+  source: 'minio', // minio 源 → 右栏渲染任务网格（不拉 WorkflowDetail API）
+};
+
+vi.mock('@/lib/matrix-store', () => ({
+  useMatrixStore: (fn: (_s: unknown) => unknown) => fn({ isLoggedIn: true }),
+}));
+vi.mock('@/components/dashboard/use-active-section', () => ({
+  useActiveSection: () => ({ setActiveSection: vi.fn() }),
+}));
+vi.mock('@/hooks/use-agentteams-managers', () => ({
+  useManagers: () => ({ data: [] }),
+}));
+vi.mock('@/hooks/use-agentteams-workers', () => ({
+  useWorkers: () => ({ data: [] }),
+}));
+vi.mock('@/hooks/use-projects', () => ({
+  useApiTaskBoard: () => ({
+    projects: [FAKE_PROJECT],
+    tasks: [],
+    degraded: false,
+    refetch: vi.fn(),
+  }),
+}));
+vi.mock('@/hooks/use-task-board', () => ({
+  useMergedTaskBoard: () => ({
+    projects: [],
+    tasks: [],
+    scannedKeys: [],
+    matchedPrefixes: [],
+    bucket: 'b',
+    error: null,
+    refetch: vi.fn(),
+  }),
+  useLogTaskBoardScan: vi.fn(),
+}));
+vi.mock('@/lib/task-store', () => ({
+  useTaskStore: (sel?: (_s: unknown) => unknown) =>
+    sel
+      ? sel({ tasks: {}, clearTasks: vi.fn() })
+      : { tasks: {}, clearTasks: vi.fn() },
+}));
+vi.mock('@/lib/hitl-inbox', () => ({
+  useHitlInboxStore: { getState: () => ({ takePendingProjectKey: () => null }) },
+}));
+// 视图模式/选中项目持久化：直接给 projects 视图 + 选中 proj-1
+vi.mock('@/lib/use-persistent-state', () => ({
+  usePersistentState: (key: string, initial: unknown) => {
+    if (key === 'agentteams:tasks-view') return ['projects', vi.fn()];
+    if (key === 'agentteams:tasks-selected-project') return ['proj-1', vi.fn()];
+    return [initial, vi.fn()];
+  },
+}));
+
+import { TasksSection } from './tasks-section';
+
+describe('任务看板项目视图：右栏详情独立滚动（9/17 验收反馈）', () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it('详情卡内容包在 overflow-y-auto + max-h 容器内（滚动不带动整页）', async () => {
+    render(<TasksSection />);
+    // 右栏详情落地（项目名多处出现：左栏看板卡 + 右栏详情 h3——取 h3）
+    const all = await screen.findAllByText('测试项目');
+    const h3 = all.find((el) => el.tagName === 'H3');
+    expect(h3).toBeDefined();
+    const card = (h3 as Element).closest('[class*="glass-card"]') as HTMLElement | null;
+    expect(card).not.toBeNull();
+    // 卡片内层滚动容器：overflow-y-auto 且 max-h 封顶（100vh-260px）
+    const scroller = card!.querySelector(
+      '[class*="overflow-y-auto"][class*="max-h-[calc(100vh-260px)]"]',
+    );
+    expect(scroller).not.toBeNull();
+    // 详情内容在滚动容器内部
+    expect(scroller!.contains(h3 as Element)).toBe(true);
+  });
+});

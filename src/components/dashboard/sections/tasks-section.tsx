@@ -902,6 +902,11 @@ export function TasksSection() {
           <div className="lg:col-span-2">
             {selectedProject ? (
               <Card className="glass-card">
+                {/* 9/17 装验反馈：右栏详情独立滚动——滚动只动详情内容，
+                    不带着整个页面滚。max-h 顶格、内部滚动；底边与左栏
+                    滚动区对齐（左栏 round-4 修复的 max-h calc(100vh-220px)
+                    + 左卡头部偏移 ≈ 40px → 260px）。 */}
+                <div className="max-h-[calc(100vh-260px)] overflow-y-auto">
                 <CardContent className="p-5 space-y-4">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -944,6 +949,7 @@ export function TasksSection() {
                     </div>
                   )}
                 </CardContent>
+                </div>
               </Card>
             ) : (
               <Card className="glass-card">
