@@ -16,7 +16,7 @@ function dataRequest(path: string, cookie?: string) {
   return new NextRequest(`http://dashboard.test${path}`, { headers });
 }
 
-function l2Cookie(user = 'sunzong') {
+function l2Cookie(user = 'bob') {
   const { cookieValue } = createSession({
     user,
     crLevel: 2,
@@ -27,7 +27,7 @@ function l2Cookie(user = 'sunzong') {
 }
 
 function l1Cookie() {
-  const { cookieValue } = createSession({ user: 'luo', crLevel: 1, credential: { kind: 'sa' } });
+  const { cookieValue } = createSession({ user: 'carol', crLevel: 1, credential: { kind: 'sa' } });
   return cookieValue;
 }
 
@@ -58,7 +58,7 @@ describe('middleware auth gate (M19 dashboard session)', () => {
   });
 
   it('401 on a cookie from a destroyed session (restart semantics)', async () => {
-    const { cookieValue } = createSession({ user: 'sunzong', crLevel: 2, credential: { kind: 'matrix', token: 't' } });
+    const { cookieValue } = createSession({ user: 'bob', crLevel: 2, credential: { kind: 'matrix', token: 't' } });
     __resetSessionStoreForTests(); // simulate container restart
     const res = await middleware(dataRequest('/api/agentteams/teams', `${SESSION_COOKIE_NAME}=${cookieValue}`));
     expect(res.status).toBe(401);

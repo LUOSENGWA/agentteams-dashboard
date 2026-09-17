@@ -185,7 +185,7 @@ describe('proxyToAgentTeams per-session credential (M19 dual track)', () => {
   it('L2 session → forwards the session Matrix token; browser Authorization is ignored', async () => {
     process.env.AGENTTEAMS_AUTH_TOKEN = 'sa-admin-token';
     const { cookieValue } = createSession({
-      user: 'sunzong',
+      user: 'bob',
       crLevel: 2,
       credential: { kind: 'matrix', token: 'syt_l2_token' },
     });
@@ -195,7 +195,7 @@ describe('proxyToAgentTeams per-session credential (M19 dual track)', () => {
 
   it('L1 session (SA credential) → forwards the SA env token; browser Authorization is ignored', async () => {
     process.env.AGENTTEAMS_AUTH_TOKEN = 'sa-admin-token';
-    const { cookieValue } = createSession({ user: 'luo', crLevel: 1, credential: { kind: 'sa' } });
+    const { cookieValue } = createSession({ user: 'carol', crLevel: 1, credential: { kind: 'sa' } });
     await proxy(requestWith(`${SESSION_COOKIE_NAME}=${cookieValue}`, { authorization: 'Bearer browser-forged' }));
     expect(captured[0].authorization).toBe('Bearer sa-admin-token');
   });
@@ -212,19 +212,19 @@ describe('proxyToAgentTeams per-session credential (M19 dual track)', () => {
   });
 
   it('forwards the server-resolved x-agentteams identity headers', async () => {
-    const { cookieValue } = createSession({ user: 'sunzong', crLevel: 2, credential: { kind: 'matrix', token: 't' } });
+    const { cookieValue } = createSession({ user: 'bob', crLevel: 2, credential: { kind: 'matrix', token: 't' } });
     await proxy(requestWith(`${SESSION_COOKIE_NAME}=${cookieValue}`, {
-      'x-agentteams-user': 'sunzong',
+      'x-agentteams-user': 'bob',
       'x-agentteams-user-level': '2',
     }));
-    expect(captured[0].user).toBe('sunzong');
+    expect(captured[0].user).toBe('bob');
     expect(captured[0].level).toBe('2');
   });
 
   it('a forged cookie for a destroyed session sends no session token (SA fallback only)', async () => {
     process.env.AGENTTEAMS_AUTH_TOKEN = 'sa-admin-token';
     const { sessionId, cookieValue } = createSession({
-      user: 'sunzong',
+      user: 'bob',
       crLevel: 2,
       credential: { kind: 'matrix', token: 'syt_l2_token' },
     });
@@ -276,12 +276,12 @@ describe('getControllerUrl ?controllerUrl= override gating (F1b)', () => {
   }
 
   it('L1 (level 3, sa credential): allowed-host override is honored', () => {
-    const cookie = cookieFor('luo', 1, { kind: 'sa' });
+    const cookie = cookieFor('carol', 1, { kind: 'sa' });
     expect(getControllerUrl(withCookie(cookie, `?controllerUrl=${encodeURIComponent(OVERRIDE)}`))).toBe(OVERRIDE);
   });
 
   it('L2 (level 2, matrix credential): override is dropped, default used', () => {
-    const cookie = cookieFor('sunzong', 2, { kind: 'matrix', token: 'syt_l2_token' });
+    const cookie = cookieFor('bob', 2, { kind: 'matrix', token: 'syt_l2_token' });
     expect(getControllerUrl(withCookie(cookie, `?controllerUrl=${encodeURIComponent(OVERRIDE)}`))).toBe(DEFAULT_URL);
   });
 
@@ -295,12 +295,12 @@ describe('getControllerUrl ?controllerUrl= override gating (F1b)', () => {
   });
 
   it('L1 session: non-allowed host is still rejected by the SSRF list', () => {
-    const cookie = cookieFor('luo', 1, { kind: 'sa' });
+    const cookie = cookieFor('carol', 1, { kind: 'sa' });
     expect(getControllerUrl(withCookie(cookie, '?controllerUrl=http%3A%2F%2Fevil.example.com'))).toBe(DEFAULT_URL);
   });
 
   it('L2 session: no override parameter → default (unchanged behavior)', () => {
-    const cookie = cookieFor('sunzong', 2, { kind: 'matrix', token: 'syt_l2_token' });
+    const cookie = cookieFor('bob', 2, { kind: 'matrix', token: 'syt_l2_token' });
     expect(getControllerUrl(withCookie(cookie, ''))).toBe(DEFAULT_URL);
   });
 });

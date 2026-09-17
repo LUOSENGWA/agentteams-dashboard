@@ -91,7 +91,7 @@ function l1Cookie(): string {
 
 function l2Cookie(): string {
   const { cookieValue } = createSession({
-    user: 'sunzong',
+    user: 'bob',
     crLevel: 2, // CRD 2 -> dashboard level 2 (own-scope L2)
     credential: { kind: 'matrix', token: 'dummy-matrix-token' },
   });
@@ -385,7 +385,7 @@ describe('POST /api/agentteams/setup/backends', () => {
   });
 });
 
-describe('F1f shared mode (DASHBOARD_SHARED_MODE=1, e.g. Node1 multi-user)', () => {
+describe('F1f shared mode (DASHBOARD_SHARED_MODE=1, e.g. a shared multi-user deployment)', () => {
   beforeEach(async () => {
     vi.stubEnv('DASHBOARD_SHARED_MODE', '1');
     vi.stubEnv('AGENTTEAMS_AUDIT_LOG_PATH', path.join(workDir, 'audit-shared.jsonl'));

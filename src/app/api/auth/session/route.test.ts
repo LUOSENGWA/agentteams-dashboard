@@ -33,21 +33,21 @@ describe('GET /api/auth/session (M19 dashboard session)', () => {
   });
 
   it('reports the L1 (Console) session as level 3 / higress mode', async () => {
-    const { cookieValue } = createSession({ user: 'luo', crLevel: 1, credential: { kind: 'sa' } });
+    const { cookieValue } = createSession({ user: 'carol', crLevel: 1, credential: { kind: 'sa' } });
     const data = await (await GET(requestWith(`${SESSION_COOKIE_NAME}=${cookieValue}`))).json();
-    expect(data).toEqual({ authenticated: true, username: 'luo', level: 3, mode: 'higress' });
+    expect(data).toEqual({ authenticated: true, username: 'carol', level: 3, mode: 'higress' });
   });
 
   it('reports the L2 (Matrix) session as level 2 / matrix mode with the human name', async () => {
     const { cookieValue } = createSession({
-      user: 'sunzong',
+      user: 'bob',
       crLevel: 2,
       teams: ['biz-team'],
       credential: { kind: 'matrix', token: 'syt_secret' },
     });
     const res = await GET(requestWith(`${SESSION_COOKIE_NAME}=${cookieValue}`));
     const data = await res.json();
-    expect(data).toEqual({ authenticated: true, username: 'sunzong', level: 2, mode: 'matrix' });
+    expect(data).toEqual({ authenticated: true, username: 'bob', level: 2, mode: 'matrix' });
     // The Matrix token must never leave the server.
     expect(JSON.stringify(data)).not.toContain('syt_secret');
   });

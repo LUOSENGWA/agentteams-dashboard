@@ -18,9 +18,9 @@ function matchesPattern(value: string, pattern: string): boolean {
 }
 
 // 精确匹配 predicate 的 matchType 有**两种写法**：dashboard 建路由写 `EXACT`
-// （models-section.tsx 下拉），Higress Console 原生建路由写 `EQUAL`（Node1
+// （models-section.tsx 下拉），Higress Console 原生建路由写 `EQUAL`（shared-deployment
 // 活体数据实锤）。只收 EXACT 会让 Console 建的路由 alias 全部漏收（2026-09-10
-// 罗总实报：deepseek-v4-pro 自定义模型不见）。两种都收。
+// 装验实报：deepseek-v4-pro 自定义模型不见）。两种都收。
 function isExactMatchType(matchType: string | undefined): boolean {
   return matchType === 'EXACT' || matchType === 'EQUAL';
 }

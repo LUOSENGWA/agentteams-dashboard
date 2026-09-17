@@ -243,7 +243,7 @@ async function attemptConsoleLogin(
     // F1g: surface the failure in docker logs. A silently-failing Console
     // track sends admin-password users down the Matrix track into the
     // confusing "paste a Controller token" error with no trace of WHY the
-    // password path died (Luo-zong 9/9: only the token worked).
+    // password path died (install-verify 9/9: only the token worked).
     console.error(
       `Console track fetch failed (${consoleUrl}): ${err instanceof Error ? err.message : String(err)}`,
     );

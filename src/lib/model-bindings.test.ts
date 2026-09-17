@@ -93,7 +93,7 @@ describe('model bindings', () => {
   });
 
   it('collects aliases from Console-native EQUAL predicates (not just EXACT)', () => {
-    // 2026-09-10 Node1 live data: Higress Console-created routes use
+    // 2026-09-10 shared-deployment live data: Higress Console-created routes use
     // matchType 'EQUAL' (dashboard-created routes use 'EXACT'). The
     // deepseek-v4-pro custom-model route was invisible to the selector
     // because collection only accepted EXACT.

@@ -218,7 +218,7 @@ describe('isTestTargetAllowed SSRF filter (PR-91 review)', () => {
     const { isTestTargetAllowed } = await import('@/lib/backend-config');
     vi.unstubAllEnvs();
     expect(isTestTargetAllowed('http://127.0.0.1:8090')).toBe(true);
-    expect(isTestTargetAllowed('http://192.168.54.107:8090')).toBe(true);
+    expect(isTestTargetAllowed('http://192.168.1.107:8090')).toBe(true);
   });
 
   it('a set allowlist stays strict', async () => {

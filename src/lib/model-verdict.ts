@@ -1,5 +1,5 @@
 /**
- * model 字段写前校验（对齐插件 G2 纪律，9/13 罗总验收反馈「创建 worker 参考插件」）。
+ * model 字段写前校验（对齐插件 G2 纪律，9/13 装验反馈「创建 worker 参考插件」）。
  *
  * 纯函数——WorkerCreateDialog 与建队内联新建 Worker 共用，同一套候选与
  * 判定，行为零分叉。候选 = 网关 alias 组（configured ∪ builtin 16）；

@@ -35,7 +35,7 @@ describe('POST /api/auth/logout server-side session destruction', () => {
     __resetSessionStoreForTests();
 
     const { cookieValue } = createSession({
-      user: 'sunzong',
+      user: 'bob',
       crLevel: 2,
       credential: { kind: 'matrix', token: 'syt_test' },
     });
