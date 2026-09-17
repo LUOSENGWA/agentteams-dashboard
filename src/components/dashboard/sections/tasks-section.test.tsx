@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { cleanup, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 
@@ -69,6 +70,21 @@ vi.mock('@/lib/use-persistent-state', () => ({
 
 import { TasksSection } from './tasks-section';
 
+// 真实 react-query 环境（项目视图的 room 时间戳兜底 hook 走 useQueries；
+// 此处 query 均为空列表/不启用，零网络）。
+const makeQueryClient = () =>
+  new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  });
+const renderSection = () => {
+  const qc = makeQueryClient();
+  return render(
+    <QueryClientProvider client={qc}>
+      <TasksSection />
+    </QueryClientProvider>,
+  );
+};
+
 describe('任务看板项目视图：右栏详情独立滚动（9/17 验收反馈）', () => {
   afterEach(() => {
     cleanup();
@@ -76,7 +92,7 @@ describe('任务看板项目视图：右栏详情独立滚动（9/17 验收反�
   });
 
   it('详情卡内容包在 overflow-y-auto + max-h 容器内（滚动不带动整页）', async () => {
-    render(<TasksSection />);
+    renderSection();
     // 右栏详情落地（项目名多处出现：左栏看板卡 + 右栏详情 h3——取 h3）
     const all = await screen.findAllByText('测试项目');
     const h3 = all.find((el) => el.tagName === 'H3');
@@ -93,7 +109,7 @@ describe('任务看板项目视图：右栏详情独立滚动（9/17 验收反�
   });
 
   it('项目视图 grid 有显式行轨道 minmax(0,1fr)：h-full 子元素才解析为定高、右栏可滚动（验收第六轮「右边无法滚动」根因回归）', async () => {
-    render(<TasksSection />);
+    renderSection();
     await screen.findAllByText('测试项目');
     // 外层 grid 容器：固定剩余屏高
     const grid = document.querySelector(
