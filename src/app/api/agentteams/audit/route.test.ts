@@ -13,13 +13,77 @@ let controllerUrl: string;
 let tmpDir: string;
 let logPath: string;
 const received: Array<{ method: string; url: string; body?: string }> = [];
+type AuditBehavior = 'ok' | 'not-found' | 'unreachable-502' | 'garbage' | 'bad-range';
+let auditBehavior: AuditBehavior = 'ok';
+let teamsStatus = 200;
+
+const CONTROLLER_EVENTS = [
+  {
+    ts: '2026-09-16T08:00:00.000Z',
+    kind: 'capability',
+    actor: 'ctrl-admin',
+    target: 'h1',
+    targetTeam: 'alpha-team',
+    action: 'capability_grant',
+    capability: 'approval_policy',
+    before: ['approval_policy'],
+    after: ['approval_policy', 'channel_secrets'],
+  },
+  {
+    ts: '2026-09-16T09:00:00.000Z',
+    kind: 'channel',
+    actor: 'ctrl-admin',
+    target: 'w1',
+    targetTeam: 'alpha-team',
+    action: 'channel_update',
+  },
+];
 
 beforeAll(async () => {
   server = createServer((req, res) => {
     let body = '';
     req.on('data', (chunk) => { body += chunk; });
     req.on('end', () => {
-      received.push({ method: req.method ?? '', url: req.url ?? '', body });
+      const url = req.url ?? '';
+      received.push({ method: req.method ?? '', url, body });
+
+      if (req.method === 'GET' && url.startsWith('/api/v1/audit')) {
+        if (auditBehavior === 'ok') {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end(JSON.stringify({ events: CONTROLLER_EVENTS }));
+          return;
+        }
+        if (auditBehavior === 'not-found') {
+          res.writeHead(404, { 'content-type': 'application/json' });
+          res.end('{"message":"no such endpoint"}');
+          return;
+        }
+        if (auditBehavior === 'unreachable-502') {
+          res.writeHead(502, { 'content-type': 'application/json' });
+          res.end('{"message":"storage read failure"}');
+          return;
+        }
+        if (auditBehavior === 'garbage') {
+          res.writeHead(200, { 'content-type': 'application/json' });
+          res.end('this is not json');
+          return;
+        }
+        res.writeHead(400, { 'content-type': 'application/json' });
+        res.end('{"message":"from is after to"}');
+        return;
+      }
+
+      if (req.method === 'GET' && url.startsWith('/api/v1/teams')) {
+        if (teamsStatus !== 200) {
+          res.writeHead(teamsStatus, { 'content-type': 'application/json' });
+          res.end('{"message":"teams unavailable"}');
+          return;
+        }
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ teams: [{ name: 'alpha-team' }] }));
+        return;
+      }
+
       res.writeHead(204);
       res.end();
     });
@@ -40,6 +104,8 @@ afterAll(async () => {
 
 afterEach(() => {
   received.length = 0;
+  auditBehavior = 'ok';
+  teamsStatus = 200;
 });
 
 function makeRequest(pathSuffix: string, init: { method?: string; body?: string; admin?: boolean; actor?: string; level?: number } = {}) {
@@ -58,7 +124,7 @@ function makeRequest(pathSuffix: string, init: { method?: string; body?: string;
   });
 }
 
-describe('GET /api/agentteams/audit', () => {
+describe('GET /api/agentteams/audit (identity gate)', () => {
   it('returns 403 when the caller has no identity (dev / auth disabled)', async () => {
     const res = await GET(makeRequest('/api/agentteams/audit', { admin: false }));
     expect(res.status).toBe(403);
@@ -82,26 +148,167 @@ describe('GET /api/agentteams/audit', () => {
     expect(body.observedLevel).toBe(1);
     expect(body.requiredLevel).toBe(2);
   });
+});
 
-  it('returns 200 with the full log when admin (L3)', async () => {
+describe('GET /api/agentteams/audit (B6 controller data plane)', () => {
+  it('serves normalized controller events for admin (source=controller, scope=all)', async () => {
     const res = await GET(makeRequest('/api/agentteams/audit', { actor: 'admin', level: 3 }));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.success).toBe(true);
+    expect(body.source).toBe('controller');
+    expect(body.scope).toBe('all');
+    expect(body.events.length).toBe(2);
+    expect(body.events[0]).toMatchObject({
+      entity_type: 'human',
+      entity_name: 'h1',
+      team: 'alpha-team',
+      kind: 'capability',
+      actor: 'ctrl-admin',
+    });
+    expect(body.events[0].timestamp).toBe(Date.parse('2026-09-16T08:00:00.000Z'));
+    expect(body.events[1].entity_type).toBe('worker');
+  });
+
+  it('maps from/to (epoch ms) to RFC3339 and caps limit at 200', async () => {
+    const from = Date.parse('2026-09-16T00:00:00.000Z');
+    const to = Date.parse('2026-09-17T00:00:00.000Z');
+    const res = await GET(
+      makeRequest(`/api/agentteams/audit?from=${from}&to=${to}&limit=5000`),
+    );
+    expect(res.status).toBe(200);
+    const auditCall = received.find((r) => r.url.startsWith('/api/v1/audit'));
+    expect(auditCall).toBeDefined();
+    const qs = new URL(`http://x${auditCall!.url}`).searchParams;
+    expect(qs.get('from')).toBe('2026-09-16T00:00:00.000Z');
+    expect(qs.get('to')).toBe('2026-09-17T00:00:00.000Z');
+    expect(qs.get('limit')).toBe('200');
+  });
+
+  it('L2 without ?team= auto-resolves the first accessible team and scopes the query', async () => {
+    const res = await GET(makeRequest('/api/agentteams/audit', { actor: 'ops-l2', level: 2 }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.source).toBe('controller');
+    expect(body.scope).toBe('team');
+    expect(body.team).toBe('alpha-team');
+    const teamsCall = received.find((r) => r.url.startsWith('/api/v1/teams'));
+    expect(teamsCall).toBeDefined();
+    const auditCall = received.find((r) => r.url.startsWith('/api/v1/audit'));
+    const qs = new URL(`http://x${auditCall!.url}`).searchParams;
+    expect(qs.get('team')).toBe('alpha-team');
+  });
+
+  it('L2 with explicit ?team= does not re-resolve the team list', async () => {
+    await GET(makeRequest('/api/agentteams/audit?team=beta-team', { actor: 'ops-l2', level: 2 }));
+    expect(received.some((r) => r.url.startsWith('/api/v1/teams'))).toBe(false);
+    const auditCall = received.find((r) => r.url.startsWith('/api/v1/audit'));
+    const qs = new URL(`http://x${auditCall!.url}`).searchParams;
+    expect(qs.get('team')).toBe('beta-team');
+  });
+
+  it('degrades to the local log when the controller 404s (build without #1270)', async () => {
+    auditBehavior = 'not-found';
+    await POST(
+      makeRequest('/api/agentteams/audit', {
+        method: 'POST',
+        body: JSON.stringify({ entity_type: 'worker', entity_name: 'w-local', action: 'create' }),
+        actor: 'admin',
+        level: 3,
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 20));
+
+    const res = await GET(makeRequest('/api/agentteams/audit', { actor: 'admin', level: 3 }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.source).toBe('local');
+    expect(body.note).toContain('本地日志');
+    expect(body.events.some((ev: { entity_name: string }) => ev.entity_name === 'w-local')).toBe(true);
+  });
+
+  it('degrades to the local log when the controller 502s (unreachable / storage failure)', async () => {
+    auditBehavior = 'unreachable-502';
+    const res = await GET(makeRequest('/api/agentteams/audit', { actor: 'admin', level: 3 }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.source).toBe('local');
+    expect(body.note).toContain('不可达');
+  });
+
+  it('degrades to the local log when the controller response is unparseable', async () => {
+    auditBehavior = 'garbage';
+    const res = await GET(makeRequest('/api/agentteams/audit', { actor: 'admin', level: 3 }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.source).toBe('local');
+    expect(body.note).toContain('无法解析');
+  });
+
+  it('L2 degrades to the local self-scoped log when no accessible team resolves', async () => {
+    teamsStatus = 500;
+    await POST(
+      makeRequest('/api/agentteams/audit', {
+        method: 'POST',
+        body: JSON.stringify({ entity_type: 'team', entity_name: 't-by-l2', action: 'update' }),
+        actor: 'ops-l2',
+        level: 2,
+      }),
+    );
+    await new Promise((r) => setTimeout(r, 20));
+
+    const res = await GET(makeRequest('/api/agentteams/audit', { actor: 'ops-l2', level: 2 }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.source).toBe('local');
+    expect(body.scope).toBe('self');
+    expect(body.note).toContain('团队');
+    for (const ev of body.events) {
+      expect(ev.actor).toBe('ops-l2');
+    }
+  });
+
+  it('surfaces controller validation errors (400) instead of silently switching source', async () => {
+    auditBehavior = 'bad-range';
+    const res = await GET(makeRequest('/api/agentteams/audit', { actor: 'admin', level: 3 }));
+    expect(res.status).toBe(502);
+    const body = await res.json();
+    expect(body.success).toBe(false);
+    expect(body.source).toBe('controller');
+    expect(body.upstreamStatus).toBe(400);
+    expect(body.error).toContain('from is after to');
+  });
+
+  it('applies the entity filter to controller-sourced events via the kind mapping', async () => {
+    const res = await GET(
+      makeRequest('/api/agentteams/audit?entityType=worker', { actor: 'admin', level: 3 }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.source).toBe('controller');
+    expect(body.events.length).toBe(1);
+    expect(body.events[0].kind).toBe('channel');
+    expect(body.events[0].entity_type).toBe('worker');
+  });
+});
+
+describe('GET /api/agentteams/audit (local fallback contract)', () => {
+  it('admin local view is source=local scope=all with a provenance note after 404', async () => {
+    auditBehavior = 'not-found';
+    const res = await GET(makeRequest('/api/agentteams/audit', { actor: 'admin', level: 3 }));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.source).toBe('local');
     expect(body.scope).toBe('all');
     expect(Array.isArray(body.events)).toBe(true);
   });
 
-  it('returns 200 scoped to the auditor for an L2 caller', async () => {
-    // Seed two events: one by admin, one by auditor-l2; auditor should only see their own.
+  it('L2 local view is scoped to the auditor (self) when the controller is unavailable', async () => {
+    auditBehavior = 'not-found';
     await POST(
       makeRequest('/api/agentteams/audit', {
         method: 'POST',
-        body: JSON.stringify({
-          entity_type: 'worker',
-          entity_name: 'w-by-admin',
-          action: 'create',
-        }),
+        body: JSON.stringify({ entity_type: 'worker', entity_name: 'w-by-admin', action: 'create' }),
         actor: 'admin',
         level: 3,
       }),
@@ -109,23 +316,18 @@ describe('GET /api/agentteams/audit', () => {
     await POST(
       makeRequest('/api/agentteams/audit', {
         method: 'POST',
-        body: JSON.stringify({
-          entity_type: 'worker',
-          entity_name: 'w-by-l2',
-          action: 'create',
-        }),
+        body: JSON.stringify({ entity_type: 'worker', entity_name: 'w-by-l2', action: 'create' }),
         actor: 'auditor-l2',
         level: 2,
       }),
     );
     await new Promise((r) => setTimeout(r, 20));
 
-    const res = await GET(
-      makeRequest('/api/agentteams/audit', { actor: 'auditor-l2', level: 2 }),
-    );
+    const res = await GET(makeRequest('/api/agentteams/audit', { actor: 'auditor-l2', level: 2 }));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.success).toBe(true);
+    expect(body.source).toBe('local');
     expect(body.scope).toBe('self');
     expect(Array.isArray(body.events)).toBe(true);
     for (const ev of body.events) {

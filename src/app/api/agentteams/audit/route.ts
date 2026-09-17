@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { appendAuditEvent, listAuditEvents, type AuditEventInput, type AuditEventRecord } from '@/lib/audit-log';
+import { appendAuditEvent, listAuditEvents, type AuditEventInput, type AuditEventRecord, type AuditQuery } from '@/lib/audit-log';
+import { normalizeControllerEvents, type NormalizedAuditEvent } from '@/lib/audit-normalize';
+import { getControllerUrl, proxyToAgentTeams } from '../proxy-helper';
 import { readServerIdentity, SERVER_USER_LEVEL_HEADER } from '@/lib/server-auth';
 
 export const runtime = 'nodejs';
@@ -24,13 +26,71 @@ function isAuditorLevel(value: string | null): boolean {
   return Number.isFinite(level) && level >= 2;
 }
 
+/** The controller's audit endpoint caps pages at 200 (upstream #1270). */
+const CONTROLLER_LIMIT_CAP = 200;
+
 /**
- * GET /api/agentteams/audit?from=&to=&entityType=&limit=
+ * The Controller requires L2 (team-scoped) callers to pass ?team= (400
+ * otherwise); cross-team reads are hidden as 404 (anti-probing). When the
+ * client did not pick a team, resolve the caller's first accessible team
+ * from the Controller's own scoped list — the user's token is already the
+ * scope boundary, so this read cannot leak other teams.
+ */
+async function resolveFirstAccessibleTeam(request: NextRequest): Promise<string | null> {
+  try {
+    const res = await proxyToAgentTeams(
+      request,
+      getControllerUrl(request),
+      '/api/v1/teams',
+      { method: 'GET', forwardBody: false },
+    );
+    if (!res.ok) return null;
+    const data = (await res.json()) as { teams?: { name?: string }[] };
+    return (data.teams ?? []).map((t) => t.name ?? '').find(Boolean) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Local-log fallback (this instance's own JSONL). `note` explains why the
+ * controller data plane was not used — the UI surfaces it next to the
+ * source badge instead of failing silently. */
+async function localAuditResponse(
+  query: AuditQuery,
+  actorName: string,
+  isAdmin: boolean,
+  note?: string,
+): Promise<NextResponse> {
+  if (!isAdmin) {
+    // Non-admins can only audit themselves; server enforces the scope so a
+    // tampered client cannot bypass by omitting the filter.
+    query.actor = actorName;
+  }
+  const events = await listAuditEvents(query);
+  return NextResponse.json({
+    success: true,
+    source: 'local',
+    scope: isAdmin ? 'all' : 'self',
+    note,
+    events,
+  });
+}
+
+/**
+ * GET /api/agentteams/audit?from=&to=&entityType=&limit=[&team=]
  *
  * Lists recent audit events. Admin (L3+) sees every event; auditors (L2+)
  * are restricted to events they themselves performed so they can review
  * their own actions without seeing other operators' traffic. L1 and below
- * are denied. The dashboard is the canonical viewer for this data.
+ * are denied.
+ *
+ * Data plane (B6): Controller-first — GET /api/v1/audit (upstream #1270)
+ * is the durable, cross-entry source (MinIO JSONL, all entry points). When
+ * the controller 404s (builds without #1270) or is unreachable (502), the
+ * route degrades to this instance's local log with `source: 'local'` and a
+ * human-readable `note`; the response always carries `source` so the UI can
+ * badge the provenance. L2 on the controller path is team-scoped by the
+ * Controller itself (?team= mandatory; team auto-resolved when omitted).
  */
 export async function GET(request: NextRequest) {
   const levelHeader = request.headers.get(SERVER_USER_LEVEL_HEADER);
@@ -60,8 +120,9 @@ export async function GET(request: NextRequest) {
   const to = params.get('to');
   const entityType = params.get('entityType');
   const limitRaw = params.get('limit');
+  const teamParam = params.get('team');
 
-  const query: Parameters<typeof listAuditEvents>[0] = {};
+  const query: AuditQuery = {};
   if (from) {
     const ts = Number(from);
     if (!Number.isFinite(ts)) return badRequest('from 不是合法时间戳');
@@ -72,25 +133,94 @@ export async function GET(request: NextRequest) {
     if (!Number.isFinite(ts)) return badRequest('to 不是合法时间戳');
     query.to = ts;
   }
+  let filterEntity: AuditEventInput['entity_type'] | null = null;
   if (entityType) {
     if (!ALLOWED_ENTITIES.has(entityType as AuditEventInput['entity_type'])) {
       return badRequest('entityType 非法');
     }
-    query.entityType = entityType as AuditEventInput['entity_type'];
+    filterEntity = entityType as AuditEventInput['entity_type'];
+    query.entityType = filterEntity; // server-side filter for the local path
   }
+  let limit = 200;
   if (limitRaw) {
-    const limit = Number(limitRaw);
-    if (!Number.isFinite(limit) || limit <= 0) return badRequest('limit 必须为正整数');
-    query.limit = limit;
-  }
-  if (!isAdmin) {
-    // Non-admins can only audit themselves; server enforces the scope so a
-    // tampered client cannot bypass by omitting the filter.
-    query.actor = identity.name;
+    const parsed = Number(limitRaw);
+    if (!Number.isFinite(parsed) || parsed <= 0) return badRequest('limit 必须为正整数');
+    limit = Math.floor(parsed);
   }
 
-  const events = await listAuditEvents(query);
-  return NextResponse.json({ success: true, events, scope: isAdmin ? 'all' : 'self' });
+  // ── Controller data plane (durable, cross-entry) ───────────────────
+  let effectiveTeam: string | null = null;
+  if (isAdmin) {
+    effectiveTeam = teamParam; // null = every team + global events
+  } else {
+    effectiveTeam = teamParam || (await resolveFirstAccessibleTeam(request));
+    if (!effectiveTeam) {
+      return localAuditResponse(query, identity.name, isAdmin, '无法解析你可访问的团队，显示本实例本地日志');
+    }
+  }
+
+  const auditQuery = new URLSearchParams();
+  if (from) auditQuery.set('from', new Date(Number(from)).toISOString());
+  if (to) auditQuery.set('to', new Date(Number(to)).toISOString());
+  if (effectiveTeam) auditQuery.set('team', effectiveTeam);
+  auditQuery.set('limit', String(Math.min(limit, CONTROLLER_LIMIT_CAP)));
+
+  let res: NextResponse;
+  try {
+    res = await proxyToAgentTeams(
+      request,
+      getControllerUrl(request),
+      `/api/v1/audit?${auditQuery.toString()}`,
+      { method: 'GET', forwardBody: false },
+    );
+  } catch {
+    return localAuditResponse(query, identity.name, isAdmin, 'Controller 审计查询异常，显示本实例本地日志');
+  }
+
+  if (res.status === 200) {
+    let page: unknown;
+    try {
+      page = await res.json();
+    } catch {
+      return localAuditResponse(query, identity.name, isAdmin, 'Controller 审计响应无法解析，显示本实例本地日志');
+    }
+    const events = normalizeControllerEvents(page);
+    if (events === null) {
+      return localAuditResponse(query, identity.name, isAdmin, 'Controller 审计响应无法解析，显示本实例本地日志');
+    }
+    const filtered = filterEntity ? events.filter((e) => e.entity_type === filterEntity) : events;
+    return NextResponse.json({
+      success: true,
+      source: 'controller',
+      scope: isAdmin ? 'all' : 'team',
+      team: effectiveTeam ?? undefined,
+      events: filtered as NormalizedAuditEvent[],
+    });
+  }
+
+  if (res.status === 404) {
+    // Old controller build (no #1270 route) or an L2 team read hidden as
+    // 404 (W8 anti-probing) — degrade to the local log either way.
+    return localAuditResponse(query, identity.name, isAdmin, 'Controller 版本暂不支持审计查询，显示本实例本地日志');
+  }
+  if (res.status === 502) {
+    return localAuditResponse(query, identity.name, isAdmin, 'Controller 不可达，显示本实例本地日志');
+  }
+
+  // Any other upstream status (400 validation, 403 scope, 500/5xx):
+  // surface the controller's message rather than silently switching source.
+  let detail = `Controller 审计查询失败 (HTTP ${res.status})`;
+  try {
+    const body = (await res.json()) as { message?: unknown; error?: unknown };
+    if (typeof body.message === 'string' && body.message) detail = body.message;
+    else if (typeof body.error === 'string' && body.error) detail = body.error;
+  } catch {
+    // keep the generic detail
+  }
+  return NextResponse.json(
+    { success: false, source: 'controller', error: detail, upstreamStatus: res.status },
+    { status: 502 },
+  );
 }
 
 /**

@@ -11,6 +11,11 @@ export interface AuditEvent {
   details?: string;
   severity: 'info' | 'warning' | 'error';
   source_ip?: string;
+  /** Controller-sourced events only: event category (capability /
+   * approval_level / channel / source / exact action for unknown kinds). */
+  kind?: string;
+  /** Controller-sourced events only: team attribution (targetTeam). */
+  team?: string;
 }
 
 export interface AuditQuery {
@@ -26,7 +31,15 @@ export interface AuditEventsResponse {
   error?: string;
   observedLevel?: number | null;
   requiredLevel?: number;
-  scope?: 'all' | 'self';
+  scope?: 'all' | 'self' | 'team';
+  /** B6 data-plane provenance: 'controller' (durable cross-entry store,
+   * upstream #1270) or 'local' (this instance's JSONL fallback). */
+  source?: 'controller' | 'local';
+  /** L2 controller-scope: the team the view is restricted to. */
+  team?: string;
+  /** Human-readable reason the local fallback was used. */
+  note?: string;
+  upstreamStatus?: number;
 }
 
 /**

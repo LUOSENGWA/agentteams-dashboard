@@ -117,4 +117,64 @@ describe('AuditSection', () => {
     expect(screen.getAllByText('worker').length).toBeGreaterThan(0);
     expect(screen.getAllByText('system').length).toBeGreaterThan(0);
   });
+
+  it('renders the controller source badge, kind badge and team attribution (B6)', async () => {
+    mockedUseAuditEvents.mockReturnValue({
+      data: {
+        success: true,
+        source: 'controller',
+        scope: 'team',
+        team: 'alpha-team',
+        events: [
+          {
+            id: 'ctrl-0',
+            timestamp: Date.UTC(2026, 8, 16, 8, 0, 0),
+            actor: 'ctrl-admin',
+            entity_type: 'human',
+            entity_name: 'h1',
+            action: 'capability_grant',
+            severity: 'info',
+            kind: 'capability',
+            team: 'alpha-team',
+          },
+        ],
+      },
+      isLoading: false,
+      isFetching: false,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useAuditEvents>);
+    render(<AuditSection />, { wrapper: makeWrapper() });
+    await waitFor(() => {
+      expect(screen.getByText('数据源：Controller')).toBeInTheDocument();
+    });
+    // kind badge replaces the entity-type badge; team line is attributed.
+    expect(screen.getByText('capability')).toBeInTheDocument();
+    expect(screen.getByText('团队：alpha-team')).toBeInTheDocument();
+    // team-scoped description (appears in the header description AND the row
+    // team line — assert the exact description string instead)
+    expect(screen.getByText(/MinIO 持久存储/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/你的视图限定在团队「alpha-team」/),
+    ).toBeInTheDocument();
+  });
+
+  it('renders the local fallback badge plus the provenance note (B6)', async () => {
+    mockedUseAuditEvents.mockReturnValue({
+      data: {
+        success: true,
+        source: 'local',
+        scope: 'all',
+        note: 'Controller 不可达，显示本实例本地日志',
+        events: [],
+      },
+      isLoading: false,
+      isFetching: false,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useAuditEvents>);
+    render(<AuditSection />, { wrapper: makeWrapper() });
+    await waitFor(() => {
+      expect(screen.getByText('数据源：本地日志')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Controller 不可达，显示本实例本地日志')).toBeInTheDocument();
+  });
 });
