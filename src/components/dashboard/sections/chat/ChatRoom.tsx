@@ -36,6 +36,8 @@ import { parseOutboundCommand } from './composer-commands';
 import { TypingIndicator } from './typing-indicator';
 import { AgentActivityTrack } from './agent-activity-track';
 import { useMatrixTypingUsers, useTypingNotification, useMatrixUploadMedia } from '@/hooks/use-matrix';
+import { useChatRoomSessionState } from '@/hooks/use-worker-session-state';
+import { WorkerSessionDot } from '@/components/worker-session-dot';
 import { FilesBrowserPanel } from './views/worker-files-panel';
 import { useRuntimeMap } from './runtime-map-context';
 import type { TeamResponse } from '@/lib/agentteams-api';
@@ -55,6 +57,10 @@ interface ChatRoomProps {
   roomPhase?: string;
   /** Worker runtime shown in the conversation header. */
   roomRuntime?: string;
+  /** Worker MXIDs of this room — drives the session dot (A17):
+   *  one MXID = 1:1 room (three states), several = team room (running
+   *  only). Omitted for manager/human rooms (no dot). */
+  workerMatrixUserIds?: string[];
   topic?: string;
   avatar?: string;
   members?: RoomMember[];
@@ -70,6 +76,7 @@ export function ChatRoom({
   defaultWorkerName,
   roomPhase,
   roomRuntime,
+  workerMatrixUserIds,
   topic,
   avatar,
   members: initialMembers = [],
@@ -109,6 +116,8 @@ export function ChatRoom({
   const readMarkerQuery = useMatrixReadMarker(roomId);
   const { notifyTyping, stopTyping } = useTypingNotification(roomId);
   const typingUsers = useMatrixTypingUsers(roomId);
+  // Session dot (A17): 1:1 rooms three states, team rooms running-only.
+  const sessionDot = useChatRoomSessionState(roomId, workerMatrixUserIds);
   // Live typing indicators, read receipts and room meta are fed by the global
   // useGlobalMatrixSync loop mounted at dashboard level — no per-room loop here.
   const scrollRef = useRef<ScrollPanelHandle>(null);
@@ -654,6 +663,13 @@ export function ChatRoom({
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-1.5">
           <h3 className="font-semibold text-sm truncate">{roomName}</h3>
+          {workerMatrixUserIds && workerMatrixUserIds.length > 0
+            ? sessionDot.runningOnly
+              ? sessionDot.state === 'running'
+                ? <WorkerSessionDot state="running" />
+                : null
+              : <WorkerSessionDot state={sessionDot.state} />
+            : null}
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="实时同步" />
           {roomPhase && (
             <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 shrink-0">
@@ -719,7 +735,7 @@ export function ChatRoom({
         <FolderTree className="w-4 h-4" />
       </Button>
     </div>
-  ), [roomName, team, topic, avatar, roomMembers.length, showMembers, showWorkers, roomPhase, roomRuntime]);
+  ), [roomName, team, topic, avatar, roomMembers.length, showMembers, showWorkers, roomPhase, roomRuntime, workerMatrixUserIds, sessionDot.state, sessionDot.runningOnly]);
 
   return (
     <div

@@ -398,6 +398,18 @@ html[data-surface-transparency]:not([data-surface-transparency="1"]) [class*="bg
   );
 }
 
+/* Worker session dot (A17): the "running" state breathes — 1.2s
+   ease-in-out, opacity 1↔0.35 + box-shadow bloom (same values as the
+   workbench plugin's wbSessionPulse; one source of truth, two
+   implementations). */
+@keyframes wtSessionPulse {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(59, 130, 246, 0.5); }
+  50% { opacity: 0.35; box-shadow: 0 0 0 4px rgba(59, 130, 246, 0); }
+}
+.wt-session-pulse {
+  animation: wtSessionPulse 1.2s ease-in-out infinite;
+}
+
 /* Reduced motion: kill all decorative animations */
 @media (prefers-reduced-motion: reduce) {
   .bg-gradient, .bg-mesh, .bg-noise::before, .bg-particles::before {
@@ -406,6 +418,9 @@ html[data-surface-transparency]:not([data-surface-transparency="1"]) [class*="bg
   }
   .bg-noise::before, .bg-particles::before {
     display: none;
+  }
+  .wt-session-pulse {
+    animation: none;
   }
 }
 
