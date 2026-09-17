@@ -369,36 +369,43 @@ function ArtifactLink({ href, label }: { href: string; label: string }) {
   };
   return (
     <>
-      <button
-        type="button"
-        onClick={openPreview}
-        className="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded border border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-400 hover:bg-amber-500/15 transition-colors"
-        title={`预览：${href}`}
-      >
-        <FolderKanban className="h-3 w-3" />
-        {label}
-      </button>
-      <button
-        type="button"
-        onClick={() => void handleDownload()}
-        disabled={downloading}
-        className="inline-flex items-center justify-center h-5 w-5 rounded border border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-400 hover:bg-amber-500/15 transition-colors disabled:opacity-50"
-        title="下载"
-      >
-        {downloading ? (
-          <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-        ) : (
-          <Download className="h-3 w-3" aria-hidden="true" />
-        )}
-      </button>
+      {/* 9/17 装验第 7 轮：下载图标并入产物芯片（一体两键）——独立小按钮
+          挨在芯片旁分不清下载的是哪个产物；现在下载键与产物名同框。 */}
+      <span className="inline-flex items-center overflow-hidden rounded border border-amber-500/30 bg-amber-500/5 text-amber-700 dark:text-amber-400 transition-colors">
+        <button
+          type="button"
+          onClick={openPreview}
+          className="inline-flex items-center gap-1 px-1.5 py-0.5 text-[10px] hover:bg-amber-500/15"
+          title={`预览：${href}`}
+        >
+          <FolderKanban className="h-3 w-3" />
+          {label}
+        </button>
+        <button
+          type="button"
+          onClick={() => void handleDownload()}
+          disabled={downloading}
+          className="inline-flex h-[22px] w-5 items-center justify-center border-l border-amber-500/30 hover:bg-amber-500/15 disabled:opacity-50"
+          title={`下载：${label}`}
+        >
+          {downloading ? (
+            <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+          ) : (
+            <Download className="h-3 w-3" aria-hidden="true" />
+          )}
+        </button>
+      </span>
       <Dialog open={!!preview} onOpenChange={(open) => !open && setPreview(null)}>
-        <DialogContent className="sm:max-w-5xl max-w-[95vw]">
+        {/* 9/17 装验第 7 轮：对话框 90vh 封顶 + 自身可滚——内容再高也不
+            超出窗口（此前超高内容把对话框顶破视口）。 */}
+        <DialogContent className="sm:max-w-5xl max-w-[95vw] max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle className="truncate">{label} — 预览</DialogTitle>
             <DialogDescription className="truncate font-mono">{href}</DialogDescription>
           </DialogHeader>
+          {/* 双轴滚动：宽内容（代码/表格/长 URL）横向滚而不撑破对话框 */}
           {preview && (
-            <div className="max-h-[70vh] overflow-y-auto rounded-md border bg-muted/20 p-3">
+            <div className="max-h-[70vh] min-w-0 overflow-auto rounded-md border bg-muted/20 p-3">
               {preview.status === 'loading' && (
                 <div className="flex items-center justify-center gap-2 py-8 text-xs text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
@@ -422,7 +429,7 @@ function ArtifactLink({ href, label }: { href: string; label: string }) {
                   <img
                     src={href}
                     alt={label}
-                    className="max-w-full rounded-md"
+                    className="max-w-full max-h-[60vh] rounded-md object-contain"
                   />
                 ) : ['md', 'markdown'].includes(artifactExt(label)) ? (
                   <MarkdownMessage content={preview.text ?? ''} formattedContent={undefined} />
