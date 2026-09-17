@@ -446,3 +446,82 @@ describe('proxyToAgentTeams failover (F1c — plugin catch-all parity)', () => {
     expect(goodCalls).toBe(1);
   });
 });
+
+// ── F7 stateless mode: the browser bearer IS the credential (the SA env
+// token must NOT shadow it — that would silently upgrade a scoped request
+// to full admin). ─────────────────────────────────────────────────────────
+describe('proxyToAgentTeams (F7 stateless mode)', () => {
+  let staticServer: import('node:http').Server;
+  let staticUrl: string;
+  const captured: Array<{ authorization: string | null }> = [];
+
+  beforeAll(async () => {
+    staticServer = createServer((req, res) => {
+      captured.push({ authorization: (req.headers['authorization'] as string) ?? null });
+      res.writeHead(204);
+      res.end();
+    });
+    await new Promise<void>((resolve) => staticServer.listen(0, '127.0.0.1', resolve));
+    const address = staticServer.address();
+    if (!address || typeof address === 'string') throw new Error('no address');
+    staticUrl = `http://127.0.0.1:${address.port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => staticServer.close(() => resolve()));
+  });
+
+  beforeEach(() => {
+    captured.length = 0;
+    vi.stubEnv('DASHBOARD_STATELESS', '1');
+    // Deliberately set: proves the SA env token does NOT shadow the
+    // browser's chosen credential in stateless mode.
+    vi.stubEnv('AGENTTEAMS_AUTH_TOKEN', 'sa-env-token');
+    __resetSessionStoreForTests();
+  });
+
+  afterEach(() => {
+    vi.unstubAllEnvs();
+    delete process.env.AGENTTEAMS_AUTH_TOKEN;
+  });
+
+  it('uses the browser bearer verbatim (never the SA env token)', async () => {
+    const request = new NextRequest('http://localhost/api/agentteams/teams', {
+      headers: { authorization: 'Bearer client-chosen-token' },
+    });
+    await proxyToAgentTeams(request, staticUrl, '/api/v1/teams', {
+      method: 'GET',
+      forwardBody: false,
+    });
+    expect(captured[0].authorization).toBe('Bearer client-chosen-token');
+  });
+
+  it('a valid stateful session is IGNORED in stateless mode (no cookie model)', async () => {
+    const { cookieValue: sessionCookie } = createSession({
+      user: 'syt-l2',
+      crLevel: 2,
+      credential: { kind: 'matrix', token: 'syt_session_token' },
+    });
+    const request = new NextRequest('http://localhost/api/agentteams/teams', {
+      headers: {
+        [SESSION_COOKIE_NAME]: sessionCookie,
+        authorization: 'Bearer client-chosen-token',
+      },
+    });
+    await proxyToAgentTeams(request, staticUrl, '/api/v1/teams', {
+      method: 'GET',
+      forwardBody: false,
+    });
+    // stateless: the cookie is not a credential — the browser bearer wins.
+    expect(captured[0].authorization).toBe('Bearer client-chosen-token');
+  });
+
+  it('no bearer → no authorization header (Controller 401s upstream)', async () => {
+    const request = new NextRequest('http://localhost/api/agentteams/teams');
+    await proxyToAgentTeams(request, staticUrl, '/api/v1/teams', {
+      method: 'GET',
+      forwardBody: false,
+    });
+    expect(captured[0].authorization).toBeNull();
+  });
+});

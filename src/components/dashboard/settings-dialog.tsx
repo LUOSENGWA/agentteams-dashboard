@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useAgentTeamsStore } from '@/lib/agentteams-store';
 import { apiUrl } from '@/lib/api-base';
 import {
@@ -27,6 +27,7 @@ import {
   Loader2,
   RotateCcw,
   Clock,
+  Cpu,
   Server,
   History,
   Eye,
@@ -39,6 +40,7 @@ import { useInfrastructure } from '@/hooks/use-agentteams-infrastructure';
 import { ThemeTab } from './settings/theme-tab';
 import { PluginsTab } from './settings/plugins-tab';
 import { BackendTab } from './settings/backend-tab';
+import { ClientConfigTab } from './settings/client-config-tab';
 
 // Empty default means "use the server-side AGENTTEAMS_CONTROLLER_URL" so the same
 // image works in embedded (localhost) and Kubernetes (in-cluster) modes.
@@ -76,6 +78,16 @@ export function SettingsDialog() {
   const { data: infrastructure } = useInfrastructure();
 
   const [tempUrl, setTempUrl] = useState(controllerUrl);
+  // F7: the "客户端" tab only exists in stateless deployments (the browser
+  // credential surface — at_cfg + the Matrix account + device revoke). The
+  // probe is the public mode endpoint (no session needed).
+  const [isStateless, setIsStateless] = useState(false);
+  useEffect(() => {
+    fetch(apiUrl('/api/agentteams/mode'), { credentials: 'same-origin' })
+      .then((res) => res.json().catch(() => null))
+      .then((data) => setIsStateless(data?.authMode === 'stateless'))
+      .catch(() => setIsStateless(false));
+  }, []);
   const [testResult, setTestResult] = useState<{
     success: boolean;
     latency: number | null;
@@ -145,8 +157,14 @@ export function SettingsDialog() {
         </DialogHeader>
 
         <Tabs defaultValue="connection" className="w-full">
-          <TabsList className="grid w-full grid-cols-5">
+          <TabsList className={`grid w-full ${isStateless ? 'grid-cols-6' : 'grid-cols-5'}`}>
             <TabsTrigger value="connection">连接</TabsTrigger>
+            {isStateless && (
+              <TabsTrigger value="client">
+                <Cpu className="w-3.5 h-3.5 mr-1" />
+                客户端
+              </TabsTrigger>
+            )}
             <TabsTrigger value="backends">
               <Server className="w-3.5 h-3.5 mr-1" />
               后端
@@ -164,6 +182,12 @@ export function SettingsDialog() {
               插件
             </TabsTrigger>
           </TabsList>
+
+          {isStateless && (
+            <TabsContent value="client" className="py-4">
+              <ClientConfigTab />
+            </TabsContent>
+          )}
 
           <TabsContent value="connection" className="space-y-5 py-4">
             {/* Controller URL — L1 only (F1b): the per-request ?controllerUrl=

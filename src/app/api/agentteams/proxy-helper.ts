@@ -4,6 +4,7 @@ import { getSessionFromRequest } from '@/lib/dashboard-session';
 import { markWorking, orderedCandidates, pickBackendUrl } from '@/lib/backend-config';
 import { appendAuditEvent } from '@/lib/audit-log';
 import { readServerIdentity } from '@/lib/server-auth';
+import { isStatelessAuthMode } from '@/lib/static-mode';
 
 const TIMEOUT_MS = 10000;
 // Request-layer failover (plugin catch-all parity): a transport error retries
@@ -206,17 +207,30 @@ export async function proxyToAgentTeams(
   // Authorization header (token-injection protection, upstream #89). The
   // browser header is only a fallback when no server-side credential exists
   // at all (legacy dev setups).
-  const session = getSessionFromRequest(request);
-  const sessionToken =
-    session?.credential.kind === 'matrix' || session?.credential.kind === 'controller-token'
-      ? session.credential.token
-      : undefined;
-  const saToken = await getAuthToken();
-  const authToken = sessionToken || saToken || (
-    request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') || undefined
-  );
-  if (authToken) {
-    (fetchOptions.headers as Record<string, string>)['authorization'] = `Bearer ${authToken}`;
+  // F7 stateless mode: the browser bearer token IS the credential — the
+  // client decides which one to present (its Matrix token, or its optional
+  // Controller admin token for the L1 view). There is no server session, and
+  // a server-side SA env token must NOT shadow the user's chosen credential
+  // (that would silently upgrade a scoped L2 request to full admin). The
+  // Controller applies native per-token RBAC on this bearer either way.
+  if (isStatelessAuthMode()) {
+    const browserAuth = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
+    if (browserAuth) {
+      (fetchOptions.headers as Record<string, string>)['authorization'] = `Bearer ${browserAuth}`;
+    }
+  } else {
+    const session = getSessionFromRequest(request);
+    const sessionToken =
+      session?.credential.kind === 'matrix' || session?.credential.kind === 'controller-token'
+        ? session.credential.token
+        : undefined;
+    const saToken = await getAuthToken();
+    const authToken = sessionToken || saToken || (
+      request.headers.get('authorization')?.replace(/^Bearer\s+/i, '') || undefined
+    );
+    if (authToken) {
+      (fetchOptions.headers as Record<string, string>)['authorization'] = `Bearer ${authToken}`;
+    }
   }
 
   // Forward the server-resolved identity (set by middleware from the

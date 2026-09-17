@@ -1,6 +1,8 @@
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
 import { getSessionFromRequest } from './lib/dashboard-session';
+import { isStatelessAuthMode, statelessDegradedResponse } from './lib/static-mode';
+import { resolveStaticIdentity } from './lib/static-identity';
 
 // Force Node.js runtime because api-auth.ts imports higress/proxy-helper which
 // uses AbortController/timeout patterns that are safer under Node runtime.
@@ -15,6 +17,9 @@ const PUBLIC_PATHS = [
   // before any session exists. Writes are token-gated (pre-login one-shot)
   // or level-3 session-gated (post-login) inside the route itself.
   '/api/agentteams/setup/backends',
+  // F7: the mode probe must be reachable pre-login so the client can pick
+  // the right login flow (discloses no secrets — only the deployment shape).
+  '/api/agentteams/mode',
 ];
 
 const USER_NAME_HEADER = 'x-agentteams-user';
@@ -84,6 +89,44 @@ export async function middleware(request: NextRequest) {
       });
       const res = NextResponse.next({ request: { headers } });
       res.headers.set('x-agentteams-auth-mode', 'disabled');
+      return res;
+    }
+
+    // ── F7 stateless mode: the browser bearer token IS the credential ──
+    // No server session. Identity is derived per token (cached) from the
+    // controller + homeserver; any client-claimed identity headers are
+    // overwritten by withUserHeaders (anti-forgery — the token, not the
+    // header, is the credential, and the Controller re-authenticates every
+    // data call natively).
+    if (isStatelessAuthMode()) {
+      // Route families that need server-side credentials degrade with an
+      // actionable 501 instead of an opaque upstream failure.
+      const degraded = statelessDegradedResponse(pathname);
+      if (degraded) return degraded;
+
+      const bearer = request.headers.get('authorization')?.replace(/^Bearer\s+/i, '')?.trim();
+      if (!bearer) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+      const result = await resolveStaticIdentity(request);
+      if (result === null) {
+        return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      }
+      if (result.ok === 'unreachable') {
+        return NextResponse.json(
+          { error: '无法解析身份（后端不可达）', detail: result.detail },
+          { status: 503 },
+        );
+      }
+      if (result.ok === 'invalid') {
+        return NextResponse.json(
+          { error: '凭据无效或已失效，请重新登录', detail: result.detail },
+          { status: 401 },
+        );
+      }
+      const headers = withUserHeaders(request, { name: result.identity.name, level: result.identity.level });
+      const res = NextResponse.next({ request: { headers } });
+      res.headers.set('x-agentteams-auth-mode', 'stateless');
       return res;
     }
 
