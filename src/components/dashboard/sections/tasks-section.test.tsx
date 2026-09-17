@@ -91,4 +91,21 @@ describe('任务看板项目视图：右栏详情独立滚动（9/17 验收反�
     // 详情内容在滚动容器内部
     expect(scroller!.contains(h3 as Element)).toBe(true);
   });
+
+  it('项目视图 grid 有显式行轨道 minmax(0,1fr)：h-full 子元素才解析为定高、右栏可滚动（验收第六轮「右边无法滚动」根因回归）', async () => {
+    render(<TasksSection />);
+    await screen.findAllByText('测试项目');
+    // 外层 grid 容器：固定剩余屏高
+    const grid = document.querySelector(
+      '[class*="lg:h-[calc(100vh-220px)]"]',
+    ) as HTMLElement | null;
+    expect(grid).not.toBeNull();
+    // 显式单行轨道（缺了它，隐式 auto 轨道让 h-full 百分比解析失败）
+    expect(grid!.className).toContain('lg:grid-rows-[minmax(0,1fr)]');
+    // 右栏 scroller：lg 下定高滚动（h-full + max-h-none），非 max-h 封顶
+    const scroller = grid!.querySelector(
+      '[class*="lg:max-h-none"][class*="lg:h-full"][class*="overflow-y-auto"]',
+    ) as HTMLElement | null;
+    expect(scroller).not.toBeNull();
+  });
 });
