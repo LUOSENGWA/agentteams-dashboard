@@ -1,7 +1,25 @@
 'use client';
 
-import { useSyncExternalStore, useState } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { MessageSquare, PanelLeftClose, Search } from 'lucide-react';
+
+/** Element-style resizable room list: drag the right edge to change width. */
+const SIDEBAR_DEFAULT_W = 224;
+const SIDEBAR_MIN_W = 176;
+const SIDEBAR_MAX_W = 448;
+const SIDEBAR_W_KEY = 'agentteams.chatSidebarWidth';
+
+function loadSidebarWidth(): number {
+  if (typeof window === 'undefined') return SIDEBAR_DEFAULT_W;
+  try {
+    const raw = window.localStorage.getItem(SIDEBAR_W_KEY);
+    const n = raw ? Number.parseInt(raw, 10) : NaN;
+    if (Number.isFinite(n)) return Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, n));
+  } catch {
+    /* storage unavailable — fall through to default */
+  }
+  return SIDEBAR_DEFAULT_W;
+}
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { RoomListItem } from './room-list-item';
@@ -81,8 +99,55 @@ export function ChatRoomSidebar({
   const timeOrdered = sortRoomsByRecency(visible);
   const shortId = shortUserId(userId);
 
+  // Resizable width (persisted). Hydrate from localStorage after mount so
+  // SSR and the first paint agree on the default.
+  const [width, setWidth] = useState(SIDEBAR_DEFAULT_W);
+  const [isResizing, setIsResizing] = useState(false);
+  const widthRef = useRef(SIDEBAR_DEFAULT_W);
+  useEffect(() => {
+    const w = loadSidebarWidth();
+    widthRef.current = w;
+    setWidth(w);
+  }, []);
+  useEffect(() => {
+    widthRef.current = width;
+  }, [width]);
+
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = widthRef.current;
+    setIsResizing(true);
+    const onMove = (ev: PointerEvent) => {
+      setWidth(Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, startW + ev.clientX - startX)));
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      setIsResizing(false);
+      try {
+        window.localStorage.setItem(SIDEBAR_W_KEY, String(widthRef.current));
+      } catch {
+        /* non-persistent environment — width still applied for this session */
+      }
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
   return (
-    <div className="w-56 shrink-0 flex flex-col border-r border-border bg-muted/20 overflow-hidden">
+    <div
+      className={`relative shrink-0 flex flex-col border-r border-border bg-muted/20 overflow-hidden ${isResizing ? 'select-none' : ''}`}
+      style={{ width }}
+    >
+      {/* Drag handle: right edge, Element-style col-resize */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="调整会话列表宽度"
+        onPointerDown={startResize}
+        className={`absolute top-0 right-[-2px] w-1 h-full cursor-col-resize z-10 transition-colors ${isResizing ? 'bg-primary/60' : 'bg-transparent hover:bg-primary/40'}`}
+      />
       <div className="px-3 pt-3 pb-2 border-b border-border shrink-0">
         <div className="flex items-center justify-between mb-2">
           <span className="text-xs font-semibold tracking-wide">会话</span>
