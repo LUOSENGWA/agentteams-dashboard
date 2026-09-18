@@ -12,6 +12,7 @@ import { Upload, Check, AlertCircle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useWorkerSkills, useUploadWorkerSkill } from '@/hooks/use-agentteams-worker-skills';
+import { useWorkerApproval, APPROVAL_LEVELS, APPROVAL_LEVEL_LABELS } from '@/hooks/use-worker-approval';
 import { PluginDetailBlocks } from '@/components/plugins/plugin-detail-blocks';
 import { WorkerSkillAssign } from './worker-skill-assign';
 
@@ -157,6 +158,8 @@ export function WorkerDetailDialog({
               )}
 
               <WorkerSkillAssign worker={worker} onSaved={onSaved} />
+
+              <WorkerApprovalControl workerName={worker.name} />
 
               {/* Plugin-contributed blocks (extension point: detail-panel) */}
               <PluginDetailBlocks entity="worker" data={worker} />
@@ -319,6 +322,57 @@ function WorkerHealthBreakdown({ worker }: { worker: WorkerResponse }) {
         <HealthBar label="稳定性" value={health.stability} />
         <HealthBar label="就绪度" value={health.readiness} />
       </div>
+    </div>
+  );
+}
+
+// 审批模式（上游 #1216，Controller 只读/写，worker only）——L2 团队 scope 用户
+// 可读写本团队 Worker 的审批级别（关闭需 L1）；team leader 只读；旧 Controller
+// 404 → 整节隐藏。
+function WorkerApprovalControl({ workerName }: { workerName: string }) {
+  const { off, noAccess, loading, level, saving, error, setLevel } = useWorkerApproval(workerName);
+  // draft = 用户暂选（null = 跟随当前 level）。不用 effect 同步（避免
+  // set-state-in-effect 级联）：value=draft??level，保存成功后重置 draft=null。
+  const [draft, setDraft] = useState<string | null>(null);
+  if (off) return null;
+  const effective = draft ?? level;
+  const changed = draft !== null && effective !== level;
+  return (
+    <div className="pt-2">
+      <div className="flex items-center justify-between mb-1">
+        <p className="text-muted-foreground" title="工具调用审批级别（Controller 审批端点，无需重启，live 生效）">审批模式</p>
+        {noAccess && <Badge variant="secondary" className="text-[10px]">只读（team leader / 无权限）</Badge>}
+      </div>
+      {loading ? (
+        <p className="text-xs text-muted-foreground">加载审批级别...</p>
+      ) : (
+        <div className="flex items-center gap-2">
+          <select
+            className="flex-1 rounded-md border border-border bg-background px-2 py-1.5 text-xs"
+            value={effective ?? ''}
+            disabled={noAccess || saving}
+            onChange={(e) => setDraft(e.target.value)}
+          >
+            {APPROVAL_LEVELS.map((lv) => (
+              <option key={lv} value={lv}>{APPROVAL_LEVEL_LABELS[lv]}（{lv}）</option>
+            ))}
+          </select>
+          <Button
+            size="sm"
+            disabled={noAccess || saving || !changed}
+            onClick={async () => {
+              if (effective) {
+                const ok = await setLevel(effective as (typeof APPROVAL_LEVELS)[number]);
+                if (ok) setDraft(null);
+              }
+            }}
+          >
+            {saving ? <Loader2 className="mr-1 h-3 w-3 animate-spin" /> : null}
+            保存
+          </Button>
+        </div>
+      )}
+      {error && <p className="mt-1 text-xs text-destructive">{error}</p>}
     </div>
   );
 }
