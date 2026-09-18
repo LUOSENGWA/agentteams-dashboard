@@ -140,7 +140,7 @@ function auditMutationFromPath(
   return { entity_type: entityType, entity_name: resourceName, action };
 }
 
-function auditProxiedMutation(request: NextRequest, path: string, method: string, upstreamStatus: number): void {
+export function auditProxiedMutation(request: NextRequest, path: string, method: string, upstreamStatus: number): void {
   const mutation = auditMutationFromPath(path, method);
   if (!mutation) return;
   const identity = readServerIdentity(request);

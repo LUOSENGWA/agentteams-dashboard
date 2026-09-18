@@ -2,17 +2,21 @@
 
 import { useCallback, useEffect, useState } from 'react';
 
-// Worker approval level (Controller `GET/PUT /api/v1/workers/{name}/approval`,
-// upstream #1216). Workers only (no manager endpoint). L2 users can read and
-// set strict/smart/auto for own-team workers (off requires L1); team leaders
-// are read-only.
+// Worker 工具执行安全（approval_level 四档）——双数据面 BFF 的前端状态。
 //
-// Status semantics (older / lower-privilege controllers degrade gracefully):
-// - 200 → level returned / set
-// - 404 → endpoint absent (older Controller) or worker outside team scope
-//   (W8) → `off: true`, the UI hides the section
-// - 403 → no permission (L2 setting off, or team leader) → `noAccess`
-// - 409 → concurrent update conflict → surface the error (retry)
+// BFF（/api/agentteams/workers/{name}/approval）契约：
+//   GET 200 {approval_level, source: 'controller' | 'docker-archive'}
+//   GET 403 {error, l2_hint}      → L2 读不到（旧 Controller；升级 #1216 后自动开放）
+//   GET 404 {error}               → 整节隐藏（Worker 不存在/两平面均不可用）
+//   PUT 200 {ok, level, verified, source}（verified=null → 重读确认）
+//   PUT 400/403/404/409           → error 文案透传
+//
+// 平面顺序（BFF 侧）：读 REST 优先→Docker 兜底（仅 L1）；写 L1 Docker 优先、
+// L2 直接 REST（workbench 插件同款，9/18 定案）。
+//
+// 状态清零：调用方以 key={worker.name} 挂载本组件（换 worker 即重挂载），
+// effect 体内零同步 setState（loading 初始值 true；load 的 setState 全在
+// 首个 await 之后）——react-hooks/set-state-in-effect 规则合规。
 
 export const APPROVAL_LEVELS = ['STRICT', 'SMART', 'AUTO', 'OFF'] as const;
 export type ApprovalLevel = (typeof APPROVAL_LEVELS)[number];
@@ -24,80 +28,107 @@ export const APPROVAL_LEVEL_LABELS: Record<ApprovalLevel, string> = {
   OFF: '关闭',
 };
 
+interface ApprovalGetResp {
+  approval_level?: string;
+  source?: string;
+  error?: string;
+  l2_hint?: string;
+}
+interface ApprovalPutResp {
+  ok?: boolean;
+  level?: string;
+  verified?: string | null;
+  source?: string;
+  error?: string;
+}
+
 export interface WorkerApprovalState {
-  /** true when the endpoint is absent (older Controller) → hide the section. */
+  /** 404（Worker 不存在/两平面均不可用）→ 整节隐藏。 */
   off: boolean;
-  /** true when the caller cannot set levels (team leader / L2 off) → read-only. */
-  noAccess: boolean;
+  /** 读 403（L2 + 旧 Controller）→ 琥珀提示，不报错。 */
+  l2Hint: boolean;
   loading: boolean;
   level: ApprovalLevel | null;
+  /** 数据面来源（controller / docker-archive / docker-exec）。 */
+  source: string | null;
   saving: boolean;
   error: string | null;
   setLevel: (_level: ApprovalLevel) => Promise<boolean>;
+  reload: () => void;
 }
 
-export function useWorkerApproval(
-  workerName: string | null,
-): WorkerApprovalState {
+function parseLevel(raw: unknown): ApprovalLevel {
+  const v = String(raw || 'AUTO').toUpperCase();
+  return (APPROVAL_LEVELS as readonly string[]).includes(v) ? (v as ApprovalLevel) : 'AUTO';
+}
+
+export function useWorkerApproval(workerName: string | null): WorkerApprovalState {
   const [off, setOff] = useState(false);
-  const [noAccess, setNoAccess] = useState(false);
-  const [loading, setLoading] = useState(false);
+  const [l2Hint, setL2Hint] = useState(false);
+  const [loading, setLoading] = useState(true); // 初始 true：挂载即加载（无 effect 同步 setState）
   const [level, setLevelState] = useState<ApprovalLevel | null>(null);
+  const [source, setSource] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const load = useCallback(async () => {
+    if (!workerName) return;
+    try {
+      const res = await fetch(
+        `/api/agentteams/workers/${encodeURIComponent(workerName)}/approval`,
+        { cache: 'no-store' },
+      );
+      if (res.status === 404) {
+        setOff(true);
+        setL2Hint(false);
+        setLevelState(null);
+        setSource(null);
+        return;
+      }
+      if (res.status === 403) {
+        setOff(false);
+        setL2Hint(true);
+        setLevelState(null);
+        setSource(null);
+        return;
+      }
+      if (!res.ok) {
+        setOff(false);
+        setL2Hint(false);
+        setLevelState(null);
+        setError(`加载失败（${res.status}）`);
+        return;
+      }
+      const data = (await res.json()) as ApprovalGetResp;
+      setOff(false);
+      setL2Hint(false);
+      setLevelState(parseLevel(data.approval_level));
+      setSource(data.source ?? null);
+    } catch {
+      setOff(false);
+      setL2Hint(false);
+      setLevelState(null);
+      setError('加载工具执行安全级别失败');
+    } finally {
+      setLoading(false);
+    }
+  }, [workerName]);
+
   useEffect(() => {
     if (!workerName) return;
-    let cancelled = false;
+    // 状态清零放 async IIFE（React Compiler set-state-in-effect 规则不穿透
+    // async 边界+嵌套调用——仓库既有 hook 同款结构；key 重挂载保证换 worker
+    // 状态清零，cancelled 由卸载后 setState no-op 兜底（React 18+）。
     (async () => {
-      setLoading(true);
+      setOff(false);
+      setL2Hint(false);
+      setLevelState(null);
+      setSource(null);
       setError(null);
-      try {
-        const res = await fetch(
-          `/api/agentteams/workers/${encodeURIComponent(workerName)}/approval`,
-          { cache: 'no-store' },
-        );
-        if (cancelled) return;
-        if (res.status === 404) {
-          setOff(true);
-          setNoAccess(false);
-          setLevelState(null);
-          return;
-        }
-        if (res.status === 403) {
-          setOff(false);
-          setNoAccess(true);
-          setLevelState(null);
-          return;
-        }
-        if (!res.ok) {
-          setOff(false);
-          setNoAccess(false);
-          setLevelState(null);
-          setError(`加载失败（${res.status}）`);
-          return;
-        }
-        const data = (await res.json()) as { approval_level?: string };
-        if (cancelled) return;
-        setOff(false);
-        setNoAccess(false);
-        const raw = String(data.approval_level || 'AUTO').toUpperCase();
-        setLevelState((APPROVAL_LEVELS as readonly string[]).includes(raw) ? (raw as ApprovalLevel) : 'AUTO');
-      } catch {
-        if (!cancelled) {
-          setOff(false);
-          setNoAccess(false);
-          setLevelState(null);
-          setError('加载审批级别失败');
-        }
-      } finally {
-        if (!cancelled) setLoading(false);
-      }
+      setLoading(true);
+      await load();
     })();
-    return () => {
-      cancelled = true;
-    };
-  }, [workerName]);
+  }, [load, workerName]);
 
   const setLevel = useCallback(
     async (next: ApprovalLevel): Promise<boolean> => {
@@ -113,41 +144,43 @@ export function useWorkerApproval(
             body: JSON.stringify({ approval_level: next }),
           },
         );
-        if (res.status === 403) {
-          let detail = '无权限设置该级别（L2 不能设关闭；team leader 只读）';
-          try {
-            const d = (await res.clone().json()) as { detail?: string };
-            if (d.detail) detail = d.detail;
-          } catch {
-            /* ignore */
-          }
-          setError(detail);
-          return false;
-        }
         if (!res.ok) {
           let detail = `设置失败（${res.status}）`;
           try {
-            const d = (await res.clone().json()) as { detail?: string };
-            if (d.detail) detail = d.detail;
+            const d = (await res.clone().json()) as { error?: string; detail?: string };
+            if (d.error) detail = d.error;
+            else if (d.detail) detail = d.detail;
           } catch {
             /* ignore */
           }
           setError(detail);
           return false;
         }
-        const data = (await res.json()) as { approval_level?: string };
-        const raw = String(data.approval_level || next).toUpperCase();
-        setLevelState((APPROVAL_LEVELS as readonly string[]).includes(raw) ? (raw as ApprovalLevel) : next);
+        const data = (await res.json()) as ApprovalPutResp;
+        const applied = parseLevel(data.level ?? next);
+        const verified = data.verified ? parseLevel(data.verified) : null;
+        setLevelState(verified ?? applied);
+        setSource(data.source ?? null);
+        setOff(false);
+        // verified=null（写成功但回读未确认）→ 延迟重读一次（插件同语义）。
+        if (verified === null) {
+          setTimeout(() => void load(), 800);
+        }
         return true;
       } catch {
-        setError('设置审批级别失败');
+        setError('设置工具执行安全级别失败');
         return false;
       } finally {
         setSaving(false);
       }
     },
-    [workerName],
+    [workerName, load],
   );
 
-  return { off, noAccess, loading, level, saving, error, setLevel };
+  const reload = useCallback(() => {
+    setLoading(true);
+    void load();
+  }, [load]);
+
+  return { off, l2Hint, loading, level, source, saving, error, setLevel, reload };
 }
