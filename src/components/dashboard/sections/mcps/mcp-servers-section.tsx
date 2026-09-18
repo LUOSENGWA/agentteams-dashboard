@@ -18,6 +18,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { McpServerDialog } from './mcp-server-dialog';
 import { useMcpServers, useDeleteMcpServer } from '@/hooks/use-agentteams-mcps';
+import { useMcpCatalog } from '@/hooks/use-mcp-catalog';
 import type { McpServerConfig } from '@/lib/agentteams-api';
 
 export function McpServersSection() {
@@ -30,6 +31,9 @@ export function McpServersSection() {
 
   const { data: servers = [], refetch, isRefetching } = useMcpServers();
   const deleteMutation = useDeleteMcpServer();
+  // 「谁接了它」列（上游 #1250 部署目录，Controller 只读）——MinIO 注册表不带
+  // 接线关系，此目录是权威源。旧 Controller 404 → catalog.off=true → 隐藏列。
+  const catalog = useMcpCatalog();
 
   const handleRefresh = useCallback(() => {
     refetch();
@@ -135,6 +139,16 @@ export function McpServersSection() {
                         <p className="text-xs text-muted-foreground mt-0.5 truncate max-w-[400px]">
                           {server.description}
                         </p>
+                      )}
+                      {!catalog.off && (catalog.workersByServer.get(server.name) ?? []).length > 0 && (
+                        <div className="mt-1.5 flex items-center gap-1.5 flex-wrap">
+                          <span className="text-[10px] text-muted-foreground shrink-0">接入 Worker：</span>
+                          {(catalog.workersByServer.get(server.name) ?? []).map((w, wi) => (
+                            <Badge key={`${server.name}-w-${w.name}-${w.team ?? ''}-${wi}`} variant="secondary" className="text-[10px]">
+                              {w.name}{w.team ? ` · ${w.team}` : ''}
+                            </Badge>
+                          ))}
+                        </div>
                       )}
                     </div>
                   </div>
