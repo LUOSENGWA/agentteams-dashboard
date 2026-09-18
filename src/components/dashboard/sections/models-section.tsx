@@ -58,6 +58,7 @@ import {
 } from '@/lib/higress-api';
 import { buildModelBindings } from '@/lib/model-bindings';
 import { useHigressConsoleAccess } from '@/hooks/use-higress-console-access';
+import { useGatewayRouteCatalog } from '@/hooks/use-gateway-route-catalog';
 import { useInfrastructure } from '@/hooks/use-agentteams-infrastructure';
 import type { HigressStatus } from '@/lib/agentteams-api';
 import { formatErrorMessage } from '@/lib/api-error';
@@ -386,7 +387,7 @@ export function ModelsSection() {
     if (deleteTarget.type === 'provider') deleteProvider.mutate(deleteTarget.name, { onSuccess, onError });
     else deleteRoute.mutate(deleteTarget.name, { onSuccess, onError });
   };
-  if (!consoleAccess.canManage) return <div className="space-y-4"><SectionHeader title="Higress Console 管理" description="模型提供商和 AI 路由由外部 Higress Console 管理" /><div className="rounded-lg border border-border/50 bg-muted/30 p-4 text-sm text-muted-foreground">{consoleAccess.isLoading ? '正在检查 Higress Console 状态...' : consoleAccess.reason}</div></div>;
+  if (!consoleAccess.canManage) return <ModelsSessionFallback reason={consoleAccess.reason} isLoading={consoleAccess.isLoading} />;
   return <div className="space-y-6">
     <SectionHeader title="模型管理" description="管理 Higress 提供商、路由、模型别名与 Consumer 凭证" />
     <div className="flex items-start gap-2 rounded-lg border border-cyan-500/20 bg-cyan-500/5 p-3 text-xs text-muted-foreground">
@@ -402,6 +403,24 @@ export function ModelsSection() {
     <HigressReferencePanel />
     <ProviderDialog key={`provider-${providerDialog?.name ?? 'new'}-${providerDialog !== undefined}`} open={providerDialog !== undefined} provider={providerDialog ?? null} onOpenChange={(open) => !open && setProviderDialog(undefined)} /><RouteDialog key={`route-${routeDialog?.name ?? 'new'}-${routeDialog !== undefined}`} open={routeDialog !== undefined} route={routeDialog ?? null} providerNames={providerNames} fallbackConfigWritable={routes.some((item) => item.fallbackConfigWritable)} onOpenChange={(open) => !open && setRouteDialog(undefined)} /><RouteProviderSwitchDialog key={`switch-${switchRoute?.name ?? 'none'}`} open={switchRoute !== null} route={switchRoute} providers={providers} onOpenChange={(open) => !open && setSwitchRoute(null)} />
     <AlertDialog open={Boolean(deleteTarget)} onOpenChange={(open) => !open && !deleting && setDeleteTarget(null)}><AlertDialogContent><AlertDialogHeader><AlertDialogTitle>确认删除{deleteTarget?.type === 'provider' ? '提供商' : '路由'}</AlertDialogTitle><AlertDialogDescription>{deleteTarget?.type === 'provider' && providerInUse.length > 0 ? `以下路由仍引用该提供商：${providerInUse.join('、')}。删除后这些路由将失效。` : `将删除 ${deleteTarget?.name ?? ''}，此操作无法撤销。`}</AlertDialogDescription>{(deleteProvider.isError || deleteRoute.isError) && <p className="text-sm text-destructive">{(deleteProvider.error ?? deleteRoute.error)?.message}</p>}</AlertDialogHeader><AlertDialogFooter><AlertDialogCancel disabled={deleting}>取消</AlertDialogCancel><AlertDialogAction disabled={deleting} onClick={confirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">{deleting && <Loader2 className="mr-1 inline size-4 animate-spin" />}删除</AlertDialogAction></AlertDialogFooter></AlertDialogContent></AlertDialog>
+  </div>;
+}
+
+// Console 会话不可用时的降级视图：保留原因说明 + 追加只读模型网关路由目录
+// （Controller #1242，token 鉴权，L1 可读）——治「Console 会话反复失效 → 模型
+// 面整块不可用」的实痛：即使 Console 会话挂了，L1 仍能看到已配置的路由/
+// 提供商/授权 consumer（编辑仍需有效 Console 会话）。旧 Controller 404 → 隐藏；
+// L2 403 → 权限提示。
+function ModelsSessionFallback({ reason, isLoading }: { reason?: string; isLoading: boolean }) {
+  const catalog = useGatewayRouteCatalog();
+  return <div className="space-y-4">
+    <SectionHeader title="Higress Console 管理" description="模型提供商和 AI 路由由外部 Higress Console 管理" />
+    <div className="rounded-lg border border-border/50 bg-muted/30 p-4 text-sm text-muted-foreground">{isLoading ? '正在检查 Higress Console 状态...' : (reason || '需要有效的 Higress Console 会话')}</div>
+    {catalog.off ? null : catalog.noAccess ? (
+      <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 text-xs text-amber-600">仅 L1 管理员可查看只读路由目录（当前会话无权限）。恢复 Console 会话后即可管理。</div>
+    ) : (
+      <Card className="glass-card"><CardHeader><CardTitle className="text-base">模型网关路由（只读降级视图）</CardTitle><CardDescription>来自 Controller 只读路由目录（Console 会话不可用时的降级展示；路由名=网关 /v1 入口，非模型 ID。编辑仍需有效 Console 会话）</CardDescription></CardHeader><CardContent>{catalog.loading ? <p className="text-sm text-muted-foreground"><Loader2 className="mr-2 inline size-4 animate-spin" />加载中...</p> : catalog.routes.length === 0 ? <p className="text-sm text-muted-foreground">暂无 AI 路由（网关未配置路由）</p> : <Table><TableHeader><TableRow><TableHead>路由名</TableHead><TableHead>上游提供商</TableHead><TableHead>授权 Consumer</TableHead></TableRow></TableHeader><TableBody>{catalog.routes.map((route) => <TableRow key={route.name}><TableCell className="font-mono text-xs">{route.name}</TableCell><TableCell><div className="flex flex-wrap gap-1">{(route.upstreams ?? []).map((upstream, index) => <Badge key={`${route.name}-${upstream.provider}-${index}`} variant="secondary" className="text-[10px]">{upstream.provider}{typeof upstream.weight === 'number' ? ` (${upstream.weight}%)` : ''}</Badge>)}</div></TableCell><TableCell><div className="flex flex-wrap gap-1">{(route.allowedConsumers ?? []).map((consumer) => <Badge key={`${route.name}-c-${consumer}`} variant="outline" className="text-[10px]">{consumer}</Badge>)}</div></TableCell></TableRow>)}</TableBody></Table>}</CardContent></Card>
+    )}
   </div>;
 }
 
