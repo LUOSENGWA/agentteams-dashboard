@@ -416,12 +416,11 @@ function KnowledgeGraph({
     }
     return set;
   }, [hover, edges]);
-  // 聚合模式节点多（≤240）：标签只给悬停/选中 + 度数 top14（插件 labeledIds 同规则）
+  // 9/17 验收第六轮：全节点挂标签（与插件同标准；旧聚合 top14 被「不是每个
+  // 点都有标题」否决）。悬停仍补显示全名。
   const labeledIds = useMemo(() => {
     if (!agentPalette) return null;
-    const s = new Set<number>();
-    [...nodes.keys()].sort((a, b) => (nodes[b]?.deg ?? 0) - (nodes[a]?.deg ?? 0)).slice(0, 14).forEach((i) => s.add(i));
-    return s;
+    return new Set([...nodes.keys()]);
   }, [nodes, agentPalette]);
   if (nodes.length === 0) {
     return <p className="p-4 text-xs text-muted-foreground">该 Worker 暂无知识库文件（MEMORY.md/memory/digest）。</p>;
@@ -1059,7 +1058,6 @@ export function KnowledgeSection() {
                           colorFor={colorFor3d}
                           isRoot={(n) => n.virtual === true}
                           isDirect={() => false}
-                          labelPolicy={graphMode === 'merged' ? 'top14' : 'auto'}
                           onOpenNode={onOpenNode3d}
                           onSelect={setSelectedId3d}
                           onExit3D={() => setViewMode('2d')}

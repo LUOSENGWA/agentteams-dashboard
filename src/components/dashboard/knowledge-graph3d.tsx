@@ -232,10 +232,6 @@ interface G3DGraph {
   onSelect?: (_id: string) => void;
   onExit3D: () => void;
   height?: number;
-  /** 标签策略（插件 showLabel 移植）：
-   *  auto（单 Agent）= ≤42 节点全标，否则 root ∪ deg≥4（QwenPaw 同值）；
-   *  top14（聚合）= root ∪ 度数 top14（插件 labeledIds 同规则，防标签糊屏）。 */
-  labelPolicy?: 'auto' | 'top14';
 }
 
 // ── 主题适配（dashboard 无 antd/无插件 useThemeColors）──────────────────
@@ -329,7 +325,6 @@ export function KnowledgeGraph3D(props: G3DGraph) {
     onSelect,
     onExit3D,
     height = 480,
-    labelPolicy = 'auto',
   } = props;
   const t = useGraph3DPalette();
   const containerRef = React.useRef<HTMLDivElement | null>(null);
@@ -582,8 +577,8 @@ export function KnowledgeGraph3D(props: G3DGraph) {
     glow.visible = false;
     obj.add(glow);
 
-    // 标签——集合由 graphData memo 按 labelPolicy 预计算（插件
-    // showLabel：auto=≤42 全标否则 root∪deg≥4；top14=root∪度数前 14）。
+    // 标签——集合由 graphData memo 预计算（9/17 验收第六轮起=全节点；
+    // 全名走 hover 提示，标签超 22 字截断带省略号）。
     // SpriteText(text, textHeight世界单位, color)；fontSize=76 是
     // 画布分辨率（清晰度），不是字号（混淆了两者）。
     if (s.labelSet.has(n.id)) {
@@ -654,26 +649,14 @@ export function KnowledgeGraph3D(props: G3DGraph) {
               o.target === l.source,
           ),
       }));
-    // 标签集合（插件 showLabel 移植；nodeThreeObject 建球时读
-    // stateRef.labelSet，渲染期同步写入——engine 建球在 effect 之后，
-    // 读到的必是当帧值）。
-    const labelSet = new Set<string>();
-    if (labelPolicy === 'top14') {
-      nd.forEach((n) => { if (s.isRoot(n)) labelSet.add(n.id); });
-      [...nd]
-        .sort((a, b) => (b._deg - a._deg) || a.id.localeCompare(b.id))
-        .slice(0, 14)
-        .forEach((n) => labelSet.add(n.id));
-    } else if (nd.length <= 42) {
-      nd.forEach((n) => labelSet.add(n.id));
-    } else {
-      nd.forEach((n) => {
-        if (s.isRoot(n) || (n._deg || 0) >= 4) labelSet.add(n.id);
-      });
-    }
+    // 标签集合——9/17 验收第六轮：全节点挂标签（与插件/QwenPaw 同标准，
+    // 旧 auto≤42 / top14 策略被「不是每个点都有标题」否决）。
+    // nodeThreeObject 建球时读 stateRef.labelSet，渲染期同步写入——
+    // engine 建球在 effect 之后，读到的必是当帧值。
+    const labelSet = new Set<string>(nd.map((n) => n.id));
     stateRef.current.labelSet = labelSet;
     return { nodes: nd, links: lk };
-  }, [nodes, links, labelPolicy]); // degree 由 links 派生，随 links 同变
+  }, [nodes, links]); // degree 由 links 派生，随 links 同变
 
   // latest-ref：init 效果的 ResizeObserver 闭包只捕获首帧 graphData，
   // 数据更新后 resize 重 fit 必须用当前节点（官方 resizeAndFit 同理
@@ -889,11 +872,14 @@ export function KnowledgeGraph3D(props: G3DGraph) {
       graph.renderer().toneMappingExposure = p.isDark
         ? 1.1
         : 0.98;
-      // 物理力——官方原值（不设 collide，同官方）。
-      graph.d3Force('charge')?.strength?.(-108);
+      // 物理力——官方原值 -108/72 是为 v3（wikilink 稀疏图）标定；v4 结构边
+      // hub-and-spoke 节点更多更密，同值下整图发散，9/17 验收第六轮反馈
+      // 「点隔太远」→ 整体收紧（charge -60 / 距离 44 / 强度 0.5，约 1.6 倍
+      // 密度），参数语义与官方一致只改数值；不设 collide 同官方。
+      graph.d3Force('charge')?.strength?.(-60);
       const linkForce: any = graph.d3Force('link');
-      linkForce?.distance?.(72);
-      linkForce?.strength?.(0.46);
+      linkForce?.distance?.(44);
+      linkForce?.strength?.(0.5);
 
       // 数据灌入 + 官方双 fit：rAF 立即 fit（初始视角根治「无限远」）
       // + 引擎收敛 onEngineStop 平滑 480ms 重 fit。
