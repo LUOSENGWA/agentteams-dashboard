@@ -8,6 +8,7 @@ import { EventTile } from '../views/EventTile';
 import type { DisplayMessage } from '@/hooks/use-matrix';
 import { MessageSquare, AlertTriangle, RotateCcw, X } from 'lucide-react';
 import type { MentionEntry } from '../chat-composer';
+import type { WorkerSessionState } from '@/lib/worker-session-state';
 
 /**
  * System notice rendered inline in the message stream (rate-limit / send
@@ -156,6 +157,11 @@ interface MessageListProps {
   /** Latest m.read receipts of every user in the room (for ✓✓ read indicator). */
   readReceipts?: Record<string, import('@/hooks/use-matrix').ReadReceiptEntry>;
   currentUserId?: string | null;
+  /**
+   * matrixUserID → live worker session state (A17 avatar dot). Only workers
+   * have entries; humans / unknown senders render no dot.
+   */
+  senderStatusMap?: Record<string, WorkerSessionState>;
 }
 
 export const MessageList = forwardRef<ScrollPanelHandle, MessageListProps>(function MessageList(
@@ -184,6 +190,7 @@ export const MessageList = forwardRef<ScrollPanelHandle, MessageListProps>(funct
     onDismissNotice,
     readReceipts,
     currentUserId,
+    senderStatusMap,
   },
   ref
 ) {
@@ -209,9 +216,10 @@ export const MessageList = forwardRef<ScrollPanelHandle, MessageListProps>(funct
         memberMap={memberMap}
         readReceipts={readReceipts}
         currentUserId={currentUserId}
+        senderStatus={senderStatusMap?.[gm.message.sender] ?? null}
       />
     );
-  }, [onReply, onCopy, onOpenThread, onEdit, onDelete, onResend, onCancel, onSendConfirmation, onOpenWorkerFiles, memberMap, readReceipts, currentUserId]);
+  }, [onReply, onCopy, onOpenThread, onEdit, onDelete, onResend, onCancel, onSendConfirmation, onOpenWorkerFiles, memberMap, readReceipts, currentUserId, senderStatusMap]);
 
   // Top-edge pagination status: older messages are prepended at the top, so
   // the spinner/button lives at the top instead of the footer (where it would

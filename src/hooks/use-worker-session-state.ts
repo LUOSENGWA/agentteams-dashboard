@@ -3,12 +3,34 @@
 import { useEffect, useState } from 'react';
 
 import { useRoomMetaStore, useTypingStore } from '@/hooks/use-matrix';
+import { useWorkers } from '@/hooks/use-agentteams-workers';
 import {
   TICK_MS,
   workerSessionState,
   roomWorkerState,
 } from '@/lib/worker-session-state';
-import type { WorkerSessionState } from '@/lib/worker-session-state';
+import type { WorkerSessionState, WorkerAgentStatusInfo } from '@/lib/worker-session-state';
+
+/**
+ * matrixUserID → runtime task-level status, from the polled worker list
+ * (15s). Older controllers (no worker-agent-status fields) yield entries
+ * with all fields undefined — the derivation then falls back to typing +
+ * message age. Consumed by the per-sender message-bubble dots in ChatRoom.
+ */
+export function useWorkerAgentStatusMap(): Record<string, WorkerAgentStatusInfo> {
+  const { data: workers } = useWorkers();
+  const map: Record<string, WorkerAgentStatusInfo> = {};
+  for (const w of workers ?? []) {
+    if (!w.matrixUserID) continue;
+    map[w.matrixUserID] = {
+      agentStatus: w.agentStatus,
+      runningTaskCount: w.runningTaskCount,
+      lastFinishAt: w.lastFinishAt,
+      lastRunAt: w.lastRunAt,
+    };
+  }
+  return map;
+}
 
 /**
  * Shared 60s clock driving the done→idle aging of the session dots.

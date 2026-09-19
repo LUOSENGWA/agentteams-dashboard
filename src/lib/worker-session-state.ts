@@ -29,6 +29,57 @@
 
 import type { WorkerSessionState, SessionRoomLike } from './worker-session-state-types';
 
+/**
+ * Task-level (heartbeat) status — the r12c data model kept alongside the
+ * zero-backend session model above. Luo-zong 9/14: the 120s typing ceiling
+ * is unacceptable, so the controller heartbeat `agentStatus` is the
+ * authoritative "running" source (unbounded); typing is the realtime
+ * fallback; a recent finish is green and decays after 10 minutes.
+ *
+ *   running  = agentStatus "running" / runningTaskCount>0 / typing now
+ *   done     = finished (lastFinishAt or last message) within 10 min
+ *   idle     = everything else
+ *
+ * Older controllers without the agentStatus fields degrade gracefully to
+ * typing + last-message-age.
+ */
+export interface WorkerAgentStatusInfo {
+  agentStatus?: string;
+  runningTaskCount?: number;
+  lastFinishAt?: string;
+  lastRunAt?: string;
+}
+
+/** Window after which a "done" (green) dot decays to idle (gray). */
+export const DONE_DECAY_MS = 10 * 60 * 1000;
+
+export function deriveWorkerSessionState(opts: {
+  agentStatus?: WorkerAgentStatusInfo | null;
+  isTyping: boolean;
+  /** Epoch ms of the worker's latest message in this room (0/undefined = none). */
+  lastMessageTs?: number;
+  now: number;
+}): WorkerSessionState {
+  const { agentStatus, isTyping, lastMessageTs, now } = opts;
+
+  // 1) Task-level truth from the heartbeat — no time ceiling.
+  if (
+    agentStatus?.agentStatus === 'running' ||
+    (agentStatus?.runningTaskCount ?? 0) > 0
+  ) {
+    return 'running';
+  }
+  // 2) Realtime typing signal — the worker is actively producing.
+  if (isTyping) return 'running';
+  // 3) Recently finished → green, decaying.
+  const finishTs = agentStatus?.lastFinishAt
+    ? Date.parse(agentStatus.lastFinishAt)
+    : Number.NaN;
+  const recentTs = Number.isFinite(finishTs) && finishTs > 0 ? finishTs : (lastMessageTs ?? 0);
+  if (recentTs > 0 && now - recentTs < DONE_DECAY_MS) return 'done';
+  return 'idle';
+}
+
 /** done window: last activity ≤ 10min ago counts as "just finished". */
 export const DONE_WINDOW_MS = 10 * 60 * 1000;
 /** Aging tick: re-derive every 60s (the done→idle flip needs no new message). */

@@ -254,6 +254,14 @@
 .status-dot-red-fast {
   animation: pulse-red 0.8s infinite;
 }
+/* Worker session "running": blue breathing (A17, QwenPaw AgentStatusIndicator cadence) */
+@keyframes worker-status-breathe {
+  0%, 100% { opacity: 1; box-shadow: 0 0 0 0 rgba(14, 165, 233, 0.5); }
+  50% { opacity: 0.35; box-shadow: 0 0 0 4px rgba(14, 165, 233, 0); }
+}
+.worker-status-breathe {
+  animation: worker-status-breathe 1.2s ease-in-out infinite;
+}
 
 /* Worker card being deleted: breathing fade (0.4 → 1.0 → 0.6) */
 @keyframes deleting-breathe {
@@ -283,6 +291,7 @@
   .status-dot-red-fast,
   .worker-card-deleting,
   .deleting-progress-indicator,
+  .worker-status-breathe,
   .shimmer {
     animation: none !important;
   }
