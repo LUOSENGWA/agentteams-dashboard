@@ -70,15 +70,30 @@ export function AuditSection() {
       <SectionHeader
         title="审计日志"
         description={
-          data?.scope === 'self'
-            ? '服务端记录的治理事件。L2 操作员视图仅显示你本人执行的操作；L3+ 平台管理员可查看全部。'
-            : '服务端记录的治理事件（mutation、RBAC 拒绝、登录等）。10 MB 自动 rotate，保留 30 份归档。'
+          data?.source === 'controller'
+            ? data.scope === 'team'
+              ? `Controller 记录的治理事件（MinIO 持久存储，覆盖全部入口）。你的视图限定在团队「${data.team ?? '?'}」。`
+              : 'Controller 记录的治理事件（MinIO 持久存储，覆盖全部入口：dashboard、CLI、API）。'
+            : data?.scope === 'self'
+              ? '服务端记录的治理事件。L2 操作员视图仅显示你本人执行的操作；L3+ 平台管理员可查看全部。'
+              : '服务端记录的治理事件（mutation、RBAC 拒绝、登录等）。10 MB 自动 rotate，保留 30 份归档。'
         }
       />
 
       <Card>
         <CardHeader className="flex flex-row items-center justify-between gap-2 space-y-0 pb-3">
-          <CardTitle className="text-base">最近事件</CardTitle>
+          <div className="flex items-center gap-2">
+            <CardTitle className="text-base">最近事件</CardTitle>
+            {data?.source === 'controller' ? (
+              <Badge className="bg-blue-500/10 text-blue-700 dark:text-blue-300">
+                数据源：Controller
+              </Badge>
+            ) : data?.source === 'local' ? (
+              <Badge className="bg-amber-500/10 text-amber-700 dark:text-amber-300">
+                数据源：本地日志
+              </Badge>
+            ) : null}
+          </div>
           <div className="flex items-center gap-2">
             <Filter className="h-4 w-4 text-muted-foreground" aria-hidden />
             <div className="flex flex-wrap gap-1">
@@ -108,6 +123,11 @@ export function AuditSection() {
           </div>
         </CardHeader>
         <CardContent>
+          {data?.source === 'local' && data.note ? (
+            <div className="mb-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+              {data.note}
+            </div>
+          ) : null}
           {data && data.success === false ? (
             <div className="flex items-start gap-3 rounded-md border border-amber-500/30 bg-amber-500/10 px-4 py-3 text-sm">
               <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-600" aria-hidden />
@@ -160,9 +180,12 @@ export function AuditSection() {
                         </td>
                         <td className="px-2 py-2">
                           <Badge variant="outline" className="font-mono text-xs">
-                            {event.entity_type}
+                            {event.kind ?? event.entity_type}
                           </Badge>
                           <div className="text-xs text-muted-foreground">{event.entity_name}</div>
+                          {event.team ? (
+                            <div className="text-xs text-muted-foreground">团队：{event.team}</div>
+                          ) : null}
                         </td>
                         <td className="px-2 py-2 font-mono text-xs">{actionLabel(event.action)}</td>
                         <td className="px-2 py-2">
