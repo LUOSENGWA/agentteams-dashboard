@@ -38,6 +38,7 @@ import { projectTs } from '@/lib/project-time';
 import { useHitlInboxStore } from '@/lib/hitl-inbox';
 import { ProjectTimelinePanel } from './project-timeline-panel';
 import { MarkdownMessage } from '@/components/dashboard/sections/chat/markdown-message';
+import { ProjectEventsPanel } from './project-events-panel';
 import {
   getTaskArtifactUrl,
   type ProjectStatus,
@@ -914,6 +915,9 @@ export function WorkflowDetail({
 
       {/* Intervention timeline (controller history endpoint) */}
       <ProjectTimelinePanel projectId={wf.project_id} teamId={mutationTeamId} />
+
+      {/* Task-transition event stream (controller /events, upstream #1233) */}
+      <ProjectEventsPanel projectId={wf.project_id} teamId={mutationTeamId} />
 
       {/* Nodes */}
       <div>
