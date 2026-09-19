@@ -495,6 +495,20 @@ describe('clusterGridLayout v4（簇块分离 + chip 尺寸）', () => {
     expect(sb.w).toBeGreaterThanOrEqual(KB2D.MIN_W);
   });
 
+  it('⑩ 无 virtual 根 → hub=分量内最高度数文件（v3 升序 bug 回归）', () => {
+    const nodes = [node('leaf.md'), node('MEMORY.md'), node('x.md'), node('y.md')];
+    const r = clusterGridLayout(
+      nodes,
+      [
+        ['MEMORY.md', 'leaf.md'],
+        ['MEMORY.md', 'x.md'],
+        ['MEMORY.md', 'y.md'],
+      ],
+    );
+    expect(r.hubs).toEqual(['MEMORY.md']); // 星心=最高度，不是首字母序
+    expect(r.sectorOf.get('leaf.md')).toBe('MEMORY.md');
+  });
+
   it('⑨ sectorOf 全覆盖（每节点恰属一个簇）', () => {
     const nodes = [node('r1', { virtual: true }), node('a.md'), node('loner.md')];
     const { sectorOf, hubs } = clusterGridLayout(nodes, [['r1', 'a.md']]);

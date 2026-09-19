@@ -466,7 +466,9 @@ export function clusterGridLayout(
   // 1) 簇 = 连通分量（v4 语义：一块=一个连通簇）。
   //    聚合模式例外：簇按 agent 字段划分（Worker 块），不被跨 Worker 链接切碎。
   const degRank = (x: number, y: number) =>
-    deg[x] - deg[y] || nodes[x].label.localeCompare(nodes[y].label) || x - y;
+    // 降序：最高度数优先（hub=簇内最连接文件）。v3 的 deg[x]-deg[y] 是升序，
+    // hub 会取到最低度叶子——R12 插件冒烟 T1 抓出，双端同修。
+    deg[y] - deg[x] || nodes[x].label.localeCompare(nodes[y].label) || x - y;
   const sectorIdx = new Array<number>(n).fill(-1);
   const sectors: { hub: number }[] = [];
   if (agentOrder && agentOrder.length > 0) {
