@@ -92,15 +92,23 @@ export function RoomListItem({
                 {room.phase}
               </Badge>
             ) : null}
+          </div>
+          {/* Runtime badge on its own row (below the name) so long room
+              names are never pushed off-screen by a second badge. */}
+          <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
             {room.runtime ? (
-              <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5 shrink-0">
+              <Badge
+                variant="outline"
+                className="text-[8px] px-1 py-0 h-3.5 shrink-0"
+                title={room.runtime}
+              >
                 {RUNTIME_LABELS[room.runtime] || room.runtime}
               </Badge>
             ) : null}
+            <p className="text-[10px] text-muted-foreground truncate min-w-0">
+              {room.lastMessagePreview || room.parentTeam || room.id}
+            </p>
           </div>
-          <p className="text-[10px] text-muted-foreground truncate mt-0.5">
-            {room.lastMessagePreview || room.parentTeam || room.id}
-          </p>
         </div>
         {room.unreadCount !== undefined && room.unreadCount > 0 ? (
           <span

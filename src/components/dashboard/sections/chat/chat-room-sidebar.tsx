@@ -2,6 +2,58 @@
 
 import { useSyncExternalStore, useState } from 'react';
 import { MessageSquare, PanelLeftClose, Search } from 'lucide-react';
+
+/** Element-style resizable room list: drag the right edge to change width. */
+const SIDEBAR_DEFAULT_W = 224;
+const SIDEBAR_MIN_W = 176;
+const SIDEBAR_MAX_W = 448;
+const SIDEBAR_W_KEY = 'agentteams.chatSidebarWidth';
+
+function loadSidebarWidth(): number {
+  if (typeof window === 'undefined') return SIDEBAR_DEFAULT_W;
+  try {
+    const raw = window.localStorage.getItem(SIDEBAR_W_KEY);
+    const n = raw ? Number.parseInt(raw, 10) : NaN;
+    if (Number.isFinite(n)) return Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, n));
+  } catch {
+    /* storage unavailable — fall through to default */
+  }
+  return SIDEBAR_DEFAULT_W;
+}
+
+// Module-level persisted-width store (useSyncExternalStore): the width
+// hydrates from localStorage WITHOUT an effect setState (no cascading
+// render), and SSR gets the default via the server snapshot.
+let sidebarWidthCache: number | null = null;
+const sidebarWidthListeners = new Set<() => void>();
+
+function readSidebarWidthStore(): number {
+  if (typeof window === 'undefined') return SIDEBAR_DEFAULT_W;
+  if (sidebarWidthCache === null) sidebarWidthCache = loadSidebarWidth();
+  return sidebarWidthCache;
+}
+
+const subscribeSidebarWidth = (cb: () => void): (() => void) => {
+  sidebarWidthListeners.add(cb);
+  return () => {
+    sidebarWidthListeners.delete(cb);
+  };
+};
+
+/** Live width update (drag) — no persistence until the pointer is up. */
+function publishSidebarWidth(w: number): void {
+  sidebarWidthCache = w;
+  sidebarWidthListeners.forEach((l) => l());
+}
+
+function persistSidebarWidth(w: number): void {
+  sidebarWidthCache = w;
+  try {
+    window.localStorage.setItem(SIDEBAR_W_KEY, String(w));
+  } catch {
+    /* non-persistent environment — width still applied for this session */
+  }
+}
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { RoomListItem } from './room-list-item';
@@ -81,8 +133,47 @@ export function ChatRoomSidebar({
   const timeOrdered = sortRoomsByRecency(visible);
   const shortId = shortUserId(userId);
 
+  // Resizable width (persisted) via the module store above — SSR and the
+  // first client paint agree on the default; the persisted width applies
+  // from the first client render (store snapshot), no mount-time setState.
+  const width = useSyncExternalStore(
+    subscribeSidebarWidth,
+    readSidebarWidthStore,
+    () => SIDEBAR_DEFAULT_W,
+  );
+  const [isResizing, setIsResizing] = useState(false);
+
+  const startResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    const startX = e.clientX;
+    const startW = readSidebarWidthStore();
+    setIsResizing(true);
+    const onMove = (ev: PointerEvent) => {
+      publishSidebarWidth(Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, startW + ev.clientX - startX)));
+    };
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove);
+      window.removeEventListener('pointerup', onUp);
+      setIsResizing(false);
+      persistSidebarWidth(readSidebarWidthStore());
+    };
+    window.addEventListener('pointermove', onMove);
+    window.addEventListener('pointerup', onUp);
+  };
+
   return (
-    <div className="w-56 shrink-0 flex flex-col border-r border-border bg-muted/20 overflow-hidden">
+    <div
+      className={`relative shrink-0 flex flex-col border-r border-border bg-muted/20 overflow-hidden ${isResizing ? 'select-none' : ''}`}
+      style={{ width }}
+    >
+      {/* Drag handle: right edge, Element-style col-resize */}
+      <div
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="调整会话列表宽度"
+        onPointerDown={startResize}
+        className={`absolute top-0 right-[-2px] w-1 h-full cursor-col-resize z-10 transition-colors ${isResizing ? 'bg-primary/60' : 'bg-transparent hover:bg-primary/40'}`}
+      />
       <div className="px-3 pt-3 pb-2 border-b border-border shrink-0">
         <div className="flex items-center justify-between mb-2">
           <span className="text-xs font-semibold tracking-wide">会话</span>
