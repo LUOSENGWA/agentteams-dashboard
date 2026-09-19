@@ -205,7 +205,7 @@ docker build -t agentteams-dashboard:local .
 | `AGENTTEAMS_CONTROLLER_URL` | AgentTeams Controller 地址（服务端代理用） | `http://agentteams-controller:8090` |
 | `NEXT_PUBLIC_AGENTTEAMS_CONTROLLER_URL` | 浏览器端 Controller URL（可选） | — |
 | `NEXT_PUBLIC_MATRIX_API_URL` | Matrix Homeserver 地址 | — |
-| `MATRIX_HOMESERVER_ALLOWLIST` | Matrix 代理允许的 homeserver 主机名（逗号分隔，设置后排他生效） | — |
+| `MATRIX_HOMESERVER_ALLOWLIST` | Matrix 代理允许的 homeserver 主机名（逗号分隔，设置后排他生效）。**私网/LAN 部署必设**——默认 SSRF 防护会拒绝私有网段（如 `192.168.*`）的 homeserver URL，未声明会导致登录与全部 Matrix 流量不可用 | — |
 | `AGENTTEAMS_AUTH_TOKEN` | Controller 认证 Token——启用 L1 admin 密码登录路径；`DASHBOARD_SHARED_MODE=1` 时是唯一的 admin 凭据来源 | — |
 | `AGENTTEAMS_AUTH_TOKEN_FILE` | Token 文件路径（支持轮转） | — |
 | `DASHBOARD_SESSION_SECRET` | 会话 cookie HMAC 密钥——登录**必填** | — |
