@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore, useState } from 'react';
 import { MessageSquare, PanelLeftClose, Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -9,6 +9,33 @@ import { filterRooms, groupRoomsByType, sortRoomsByRecency } from './room-builde
 import type { RoomInfo } from './room-info';
 
 const SORT_KEY = 'chat-sidebar-sort';
+
+// 12.15：排序模式持久化走 useSyncExternalStore（SSR 首个客户端渲染用 server
+// 快照 'time'，随后切到持久化值——规避 react-hooks/set-state-in-effect，
+// 与页面既有宽度存储同思路）。
+type SortMode = 'time' | 'type';
+function readSortStore(): SortMode {
+  try {
+    return localStorage.getItem(SORT_KEY) === 'type' ? 'type' : 'time';
+  } catch {
+    return 'time';
+  }
+}
+const sortListeners = new Set<() => void>();
+function subscribeSort(fn: () => void): () => void {
+  sortListeners.add(fn);
+  return () => {
+    sortListeners.delete(fn);
+  };
+}
+function publishSort(m: SortMode) {
+  try {
+    localStorage.setItem(SORT_KEY, m);
+  } catch {
+    /* storage 不可用忽略 */
+  }
+  sortListeners.forEach((fn) => fn());
+}
 
 function shortUserId(userId: string | null | undefined): string | null {
   if (!userId) return null;
@@ -37,23 +64,9 @@ export function ChatRoomSidebar({
   const groups = groupRoomsByType(filtered);
   // 12.15（装验反馈「项目群被丢进『其他』、要和 Element/插件一样排序」）：
   // 默认「按时间」=Element/插件同款的单一时间序混合列表；「按类型」保留
-  // 分组视图（团队/Agent/Manager/房间）。持久化 localStorage。
-  const [sortMode, setSortMode] = useState<'time' | 'type'>('time');
-  useEffect(() => {
-    try {
-      if (localStorage.getItem(SORT_KEY) === 'type') setSortMode('type');
-    } catch {
-      /* storage 不可用忽略 */
-    }
-  }, []);
-  const changeSort = (m: 'time' | 'type') => {
-    setSortMode(m);
-    try {
-      localStorage.setItem(SORT_KEY, m);
-    } catch {
-      /* storage 不可用忽略 */
-    }
-  };
+  // 分组视图（团队/Agent/Manager/房间）。
+  const sortMode = useSyncExternalStore(subscribeSort, readSortStore, () => 'time' as const);
+  const changeSort = publishSort;
   const timeOrdered = sortRoomsByRecency(filtered);
   const shortId = shortUserId(userId);
 
