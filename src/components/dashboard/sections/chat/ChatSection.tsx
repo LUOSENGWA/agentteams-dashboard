@@ -19,6 +19,7 @@ import { MessageSquare, PanelLeftOpen, PanelRightClose, PanelRightOpen } from 'l
 import { Button } from '@/components/ui/button';
 import { buildRooms, sortRoomsByRecency, type RoomMetaByRoomId } from './room-builders';
 import { ChatAuthBadge } from './chat-auth-badge';
+import { SyncStatusChip } from './sync-status-chip';
 import { ChatRoomSidebar } from './chat-room-sidebar';
 import { ChatEmptyState } from './chat-empty-state';
 import { ChatPanel } from './ChatPanel';
@@ -136,6 +137,7 @@ export function ChatSection() {
             </div>
           </div>
           <div className="flex items-center gap-1.5">
+            <SyncStatusChip />
             <Button
               variant="ghost"
               size="sm"

@@ -7,6 +7,7 @@ import { useMatrixStore } from '@/lib/matrix-store';
 import { useReceiptStore, useRoomMetaStore, useTypingStore } from './use-matrix';
 import { useTaskStore } from '@/lib/task-store';
 import { useHitlInboxStore } from '@/lib/hitl-inbox';
+import { consumeBufferedEvents, resetSyncBufferForTests } from '@/lib/matrix-sync-buffer';
 import type { ReactNode } from 'react';
 
 vi.mock('@/lib/matrix-api', async () => {
@@ -89,6 +90,7 @@ describe('useGlobalMatrixSync', () => {
   beforeEach(() => {
     vi.useFakeTimers();
     resetStores();
+    resetSyncBufferForTests();
     (matrixApi.sync as ReturnType<typeof vi.fn>).mockReset();
     (matrixApi.getJoinedRooms as ReturnType<typeof vi.fn>).mockResolvedValue({ joined_rooms: [] });
   });
@@ -226,15 +228,23 @@ describe('useGlobalMatrixSync', () => {
     unmount();
   });
 
-  it('merges timeline events only for the active room', async () => {
+  it('merges timeline events into every cached room (buffers uncached rooms)', async () => {
     useRoomMetaStore.getState().setActiveRoomId('!r1:test');
+    // Buffer replay TTL-filters events older than 10min — use now-relative
+    // timestamps so the buffered event survives.
+    const now = Date.now();
     (matrixApi.sync as ReturnType<typeof vi.fn>).mockResolvedValue(
       syncWith({
         '!r1:test': joinedRoom({
-          timeline: { events: [msgEvent('$new1', 1000)], limited: false, prev_batch: 'p' },
+          timeline: { events: [msgEvent('$new1', now - 3000)], limited: false, prev_batch: 'p' },
         }),
         '!r2:test': joinedRoom({
-          timeline: { events: [msgEvent('$new2', 2000)], limited: false, prev_batch: 'p' },
+          timeline: { events: [msgEvent('$new2', now - 2000)], limited: false, prev_batch: 'p' },
+        }),
+        // No cache seeded for !r3:test — its event must land in the buffer,
+        // not be dropped.
+        '!r3:test': joinedRoom({
+          timeline: { events: [msgEvent('$new3', now - 1000)], limited: false, prev_batch: 'p' },
         }),
       }),
     );
@@ -258,7 +268,12 @@ describe('useGlobalMatrixSync', () => {
       pages: Array<{ chunk: MatrixEvent[] }>;
     };
     expect(r1.pages[0].chunk.map((e) => e.event_id)).toContain('$new1');
-    expect(r2.pages[0].chunk.map((e) => e.event_id)).not.toContain('$new2');
+    // Element-style realtime: a non-active room WITH a cache merges too —
+    // no 10s polling needed to see new messages in background rooms.
+    expect(r2.pages[0].chunk.map((e) => e.event_id)).toContain('$new2');
+    // Uncached room: event buffered for replay on open, drained once.
+    expect(consumeBufferedEvents('!r3:test').map((e) => e.event_id)).toContain('$new3');
+    expect(consumeBufferedEvents('!r3:test')).toEqual([]);
 
     unmount();
   });

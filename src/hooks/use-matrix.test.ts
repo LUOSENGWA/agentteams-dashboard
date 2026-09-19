@@ -1,6 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import type { MatrixEvent } from '@/lib/matrix-api';
-import { formatMatrixEvent, formatMatrixEvents, isMessageReadByOthers } from './use-matrix';
+import {
+  formatMatrixEvent,
+  formatMatrixEvents,
+  isMessageReadByOthers,
+  mergeRawEventsInto,
+} from './use-matrix';
 
 function message(
   eventId: string,
@@ -363,5 +368,47 @@ describe('isMessageReadByOthers', () => {
 
   it('returns false when no receipts exist', () => {
     expect(isMessageReadByOthers(base, '@human:example.test', {})).toBe(false);
+  });
+});
+
+describe('mergeRawEventsInto', () => {
+  it('prepends new events newest-first, history intact', () => {
+    const chunk = [message('$old1', 'a', 100), message('$old2', 'b', 90)];
+    const merged = mergeRawEventsInto(chunk, [
+      message('$c200', 'c', 200),
+      message('$d300', 'd', 300),
+    ]);
+    expect(merged.map((e) => e.event_id)).toEqual(['$d300', '$c200', '$old1', '$old2']);
+  });
+
+  it('replaces existing events in place (m.replace edits)', () => {
+    const chunk = [message('$old1', 'v1', 100), message('$old2', 'b', 90)];
+    const merged = mergeRawEventsInto(chunk, [
+      { ...message('$old1', 'v2-edited', 101) },
+    ]);
+    expect(merged.map((e) => e.event_id)).toEqual(['$old1', '$old2']);
+    expect(merged[0].content.body).toBe('v2-edited');
+  });
+
+  it('edit + new in the same batch lands both correctly', () => {
+    const chunk = [message('$old1', 'v1', 100), message('$old2', 'b', 90)];
+    const merged = mergeRawEventsInto(chunk, [
+      { ...message('$old1', 'v2-edited', 101) },
+      message('$new1', 'n', 200),
+    ]);
+    expect(merged.map((e) => e.event_id)).toEqual(['$new1', '$old1', '$old2']);
+    expect(merged[1].content.body).toBe('v2-edited');
+  });
+
+  it('skips events without an event_id', () => {
+    const chunk = [message('$old1', 'a', 100)];
+    const anon = {
+      sender: '@a:t',
+      type: 'm.room.message',
+      origin_server_ts: 50,
+      content: { msgtype: 'm.text', body: 'anon' },
+    } as unknown as MatrixEvent;
+    const merged = mergeRawEventsInto(chunk, [anon]);
+    expect(merged.map((e) => e.event_id)).toEqual(['$old1']);
   });
 });

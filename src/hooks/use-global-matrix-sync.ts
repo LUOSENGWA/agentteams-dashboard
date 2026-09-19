@@ -16,6 +16,11 @@ import {
   type RoomMeta,
 } from '@/hooks/use-matrix';
 import { extractMessagePreview } from '@/components/dashboard/sections/chat/room-builders';
+import {
+  bufferSyncEvents,
+  recordSyncFailure,
+  recordSyncSuccess,
+} from '@/lib/matrix-sync-buffer';
 
 /**
  * Single global Matrix /sync loop, mounted once at dashboard level so it
@@ -190,6 +195,11 @@ export function useGlobalMatrixSync(): void {
       }
     };
 
+    /** True when the event is a thread reply (m.thread relation). */
+    const isThreadReply = (e: { content?: Record<string, unknown> }): boolean =>
+      (e.content?.['m.relates_to'] as { rel_type?: string } | undefined)?.rel_type ===
+      'm.thread';
+
     /** Update sidebar meta (last message ts/preview + unread counts) for one room. */
     const ingestRoomMeta = (
       rid: string,
@@ -257,7 +267,7 @@ export function useGlobalMatrixSync(): void {
         syncToken = resp.next_batch;
         retryDelay = 1000;
 
-        const activeRoomId = useRoomMetaStore.getState().activeRoomId;
+        let maxEventTs = 0;
         const joinedRooms = resp.rooms?.join;
         if (joinedRooms) {
           for (const [rid, roomData] of Object.entries(joinedRooms)) {
@@ -270,19 +280,38 @@ export function useGlobalMatrixSync(): void {
             );
             ingestRoomMeta(rid, roomData);
 
-            // Only merge timeline events into the message cache for the room
-            // that is actually open, so live m.replace streaming updates and
-            // new messages never land in a cached room the user is not looking at.
-            const timelineEvents = roomData.timeline?.events || [];
-            if (timelineEvents.length > 0 && rid === activeRoomId) {
-              mergeTimelineEvents(queryClient, rid, timelineEvents, userId);
+            // Element-style realtime: merge timeline events into the message
+            // cache of EVERY room that has one (open or recently visited),
+            // not only the active room. Events for rooms without a cache are
+            // buffered and replayed by the message queryFn when the room is
+            // opened — dedupe by event_id makes both paths idempotent, so
+            // nothing is dropped and nothing double-renders.
+            const timelineEvents = (roomData.timeline?.events || []) as MatrixEvent[];
+            if (timelineEvents.length > 0) {
+              for (const ev of timelineEvents) {
+                if (typeof ev.origin_server_ts === 'number' && ev.origin_server_ts > maxEventTs) {
+                  maxEventTs = ev.origin_server_ts;
+                }
+              }
+              if (queryClient.getQueryData(['matrix-messages', rid])) {
+                mergeTimelineEvents(queryClient, rid, timelineEvents, userId ?? '');
+              } else {
+                bufferSyncEvents(rid, timelineEvents);
+              }
+              // Thread replies paginate in their own view — invalidate the
+              // room's thread queries (only active ones refetch).
+              if (timelineEvents.some(isThreadReply)) {
+                queryClient.invalidateQueries({ queryKey: ['matrix-thread', rid] });
+              }
             }
           }
         }
+        recordSyncSuccess(maxEventTs);
       } catch (err) {
         // A sync failure is expected on network flaps — back off and retry
         // (max 5s). If the homeserver rejected our custom filter, fall back to
         // an unfiltered sync once and log it.
+        recordSyncFailure(err instanceof Error ? err.message : String(err));
         if (!filterRejected && (err as { errcode?: string })?.errcode === 'M_UNKNOWN') {
           filterRejected = true;
           console.warn('Matrix sync filter rejected by homeserver; falling back to unfiltered sync');
