@@ -5,6 +5,8 @@
 export const SENSITIVE_PATTERNS: readonly RegExp[] = [
   /^\.hermes\/config\.yaml$/,
   /^\.ssh\//,
+  // 插件 _kb_is_sensitive 双规则：credentials 目录本身 + 其下内容
+  /^credentials$/,
   /^credentials\//,
   /^openclaw\.json$/,
   /\.lock$/,

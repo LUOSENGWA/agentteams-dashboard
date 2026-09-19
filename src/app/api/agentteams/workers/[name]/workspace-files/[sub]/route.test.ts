@@ -41,6 +41,15 @@ function makeTar(entries: T[]): Buffer {
   return Buffer.concat(parts);
 }
 
+// Docker archive 真实形态（9/16 真机实测）：目录请求 = 所请求路径 basename
+// 根前缀 + 根成员自身（如 'default/AGENTS.md' + 'default'）。
+function dockerDirTar(entries: T[], baseName: string): Buffer {
+  return makeTar([
+    { name: baseName, isdir: true },
+    ...entries.map((e) => ({ ...e, name: `${baseName}/${e.name}` })),
+  ]);
+}
+
 // ── fetch 路由（Controller Docker 代理语义）────────────────────────────────
 const WS = '/root/agentteams-fs/agents/w1/.qwenpaw/workspaces/default';
 const WS_COPAW = '/root/agentteams-fs/agents/w1/.copaw/workspaces/default';
@@ -53,6 +62,8 @@ interface Fixtures {
   topTar?: T[];
   memoryTar?: T[];
   fileTar?: T[];
+  /** true=个别 daemon 形态：目录 archive 直接返回相对名（无根前缀） */
+  relativeNames?: boolean;
 }
 const fx: Fixtures = {};
 
@@ -81,8 +92,10 @@ function installFetch() {
           return json(status);
         }
         const root = p.startsWith(WS_COPAW) ? WS_COPAW : WS; // 回退布局同样供数
-        if (p === root) return tar(200, makeTar(fx.topTar ?? []));
-        if (p === `${root}/memory`) return tar(200, makeTar(fx.memoryTar ?? []));
+        const dirTar = (entries: T[]) =>
+          fx.relativeNames ? makeTar(entries) : dockerDirTar(entries, p.split('/').pop() ?? 'default');
+        if (p === root) return tar(200, dirTar(fx.topTar ?? []));
+        if (p === `${root}/memory`) return tar(200, dirTar(fx.memoryTar ?? []));
         if (p.startsWith(`${root}/memory/`)) {
           const rel = p.slice(`${root}/memory/`.length);
           const f = (fx.memoryTar ?? []).find((e) => e.name === rel && !e.isdir);
@@ -140,11 +153,12 @@ describe('/workers/[name]/workspace-files/[sub]（v2：Controller Docker 代理�
     expect(body.directory).toBe('workspace');
     expect(body.has_more).toBe(false);
     const names = body.entries.map((e) => e.name);
-    // 目录在前（credentials/digest/memory），文件按名排序
-    expect(names).toEqual(['credentials', 'digest', 'memory', 'MEMORY.md', 'SOUL.md', 'agent.json']);
-    // openclaw.json / foo.lock 被敏感过滤
+    // 目录在前（digest/memory），文件按名排序
+    expect(names).toEqual(['digest', 'memory', 'MEMORY.md', 'SOUL.md', 'agent.json']);
+    // openclaw.json / foo.lock 被敏感过滤；credentials 目录本身同样过滤（插件同款）
     expect(names).not.toContain('openclaw.json');
     expect(names).not.toContain('foo.lock');
+    expect(names).not.toContain('credentials');
     const md = body.entries.find((e) => e.name === 'MEMORY.md')!;
     expect(md.kind).toBe('file');
     expect(md.preview_kind).toBe('markdown');
@@ -226,5 +240,29 @@ describe('/workers/[name]/workspace-files/[sub]（v2：Controller Docker 代理�
   it('非法 Worker 名 / 未知子路径 → 400', async () => {
     expect((await call('tree', '', 'bad/../name')).status).toBe(400);
     expect((await call('delete')).status).toBe(400);
+  });
+
+  it('目录 archive 相对名形态（个别 daemon 无根前缀）→ 同款解析', async () => {
+    fx.relativeNames = true;
+    const res = await call('tree');
+    expect(res.status).toBe(200);
+    const body = (await res.json()) as { entries: { name: string }[] };
+    expect(body.entries.map((e) => e.name).sort()).toEqual(
+      ['MEMORY.md', 'SOUL.md', 'agent.json', 'digest', 'memory'].sort(),
+    );
+  });
+
+  it('file-content?raw=1：原始字节直下（octet-stream + attachment）', async () => {
+    const res = await call('file-content', `?path=MEMORY.md&raw=1`);
+    expect(res.status).toBe(200);
+    expect(res.headers.get('content-type')).toContain('application/octet-stream');
+    expect(res.headers.get('content-disposition') ?? '').toContain('attachment');
+    const bytes = Buffer.from(await res.arrayBuffer());
+    expect(bytes.toString('utf8')).toBe('# mem');
+  });
+
+  it('file-content?raw=1 敏感文件 → 400（下载与预览同一道闸）', async () => {
+    const res = await call('file-content', `?path=${encodeURIComponent('credentials/x.yaml')}&raw=1`);
+    expect(res.status).toBe(400);
   });
 });

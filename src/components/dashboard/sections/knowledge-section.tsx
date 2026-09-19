@@ -15,6 +15,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
   ArrowLeft,
+  Download,
   FileText,
   FolderOpen,
   Folder,
@@ -389,6 +390,29 @@ export function KnowledgeSection() {
     }
   }, [effectiveWorker]);
 
+  // 下载（对齐插件 KB 文件下载）：file-content?raw=1 原始字节 → blob → a[download]
+  const downloadFile = useCallback(async (worker: string, path: string) => {
+    try {
+      const qs = new URLSearchParams({ path, raw: '1' });
+      const res = await fetch(`${base(worker)}/file-content?${qs.toString()}`, { cache: 'no-store' });
+      if (!res.ok) {
+        const j = (await res.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(j?.error || `下载失败（${res.status}）`);
+      }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = basename(path);
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setPreviewError(err instanceof Error ? err.message : '下载失败');
+    }
+  }, []);
+
   const openPreview = useCallback(async (path: string) => {
     setView('files');
     setPreviewPath(path);
@@ -587,6 +611,15 @@ export function KnowledgeSection() {
                   </Button>
                   <FileText className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
                   <span className="text-xs font-medium">{previewPath}</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="ml-auto h-6 px-1.5 text-xs"
+                    onClick={() => void downloadFile(effectiveWorker, previewPath)}
+                  >
+                    <Download className="mr-1 h-3 w-3" aria-hidden="true" />
+                    下载
+                  </Button>
                 </div>
                 <div className="flex-1 overflow-auto p-4">
                   {previewLoading ? (

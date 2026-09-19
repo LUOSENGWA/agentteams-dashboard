@@ -52,7 +52,9 @@ interface TarMember {
 
 /**
  * 最小 ustar 顺序解析（Docker archive 产物；pax 扩展头 'x'/'g' 跳过不产出条目）。
- * Docker 对目录请求返回相对路径条目（插件实测），对文件请求返回文件自身。
+ * Docker archive 条目语义（9/16 真机实测 + 插件 _kb_tar_entries 同款）：
+ *   目录请求 = 所请求路径的 basename 根前缀（'default/AGENTS.md'）+ 根成员自身；
+ *   文件请求 = 裸文件名成员。消费方（listDir）按 uniform 检测剥离根前缀。
  */
 function tarMembers(buf: Buffer): TarMember[] {
   const out: TarMember[] = [];
@@ -79,16 +81,6 @@ function tarMembers(buf: Buffer): TarMember[] {
     off += 512 + Math.ceil((Number.isFinite(size) ? size : 0) / 512) * 512;
   }
   return out;
-}
-
-/** 全部条目（isdir 折叠进 TarEntry，兼容调用方）。 */
-function tarEntries(buf: Buffer): TarEntry[] {
-  return tarMembers(buf).map((m) => ({
-    name: m.name,
-    size: m.size,
-    mtime: m.mtime,
-    isdir: m.typeflag === '5',
-  }));
 }
 
 function previewKindOf(name: string): string {
@@ -172,7 +164,15 @@ async function resolveWorkspace(
   throw Object.assign(new Error(`未找到工作区目录（容器 ${container} 可能仍在启动中）`), { status: 404 });
 }
 
-/** 取 {ws}{dir} 的直接子级条目（Docker archive 对目录返回相对路径、对文件返回文件自身）。 */
+/**
+ * 取 {ws}{dir} 的直接子级条目。
+ * Docker archive 语义（9/16 真机实测，插件 _kb_tar_entries 同款处理）：
+ *   · 目录请求：tar 根 = 所请求路径的 basename（如 'default/AGENTS.md'），
+ *     首个成员 = 所请求目录自身；顶层段一致（uniform）时剥离根前缀。
+ *   · 文件请求：成员 = 裸文件名（如 '2026-09-04.md'）。
+ *   · 个别 daemon 版本可能直接返回相对名（无根前缀）——按插件同款 uniform
+ *     检测兼容两种形态。
+ */
 async function listDir(
   controllerUrl: string,
   token: string | undefined,
@@ -192,13 +192,26 @@ async function listDir(
     return { status: 502, error: `工作区列取失败（Docker API ${r.status}）` };
   }
   if (r.body.length > MAX_TAR_BYTES) {
-    return { status: 502, error: '工作区体积超出 20MB tar 上限，无法列取（可在服务器侧清理后重试）' };
+    return { status: 502, error: '工作区体积超出 20MB tar 上限，无法列取（大工作区可后续走 exec 兜底）' };
   }
+  // 拆段（跳空段与 '.'，对齐插件 parts 语义）
+  const all = tarMembers(r.body)
+    .map((m) => ({
+      parts: m.name.split('/').filter((p) => p && p !== '.'),
+      isdir: m.typeflag === '5',
+      size: m.size,
+      mtime: m.mtime,
+    }))
+    .filter((e) => e.parts.length > 0);
+  const tops = new Set(all.map((e) => e.parts[0]));
+  const uniform = tops.size === 1; // 目录请求（根前缀一致）→ 剥离首段
   const entries: TarEntry[] = [];
-  for (const e of tarEntries(r.body)) {
-    const rel = e.name; // 相对 target（Docker 目录 archive 返回相对路径）
+  for (const e of all) {
+    const relParts = uniform ? e.parts.slice(1) : e.parts;
+    if (relParts.length === 0) continue; // 所请求目录自身（根成员）——跳过
+    const rel = relParts.join('/');
     if (rel.includes('/')) continue; // 只取直接子级（懒展开：子目录点开时再列）
-    entries.push({ ...e, name: rel });
+    entries.push({ name: rel, size: e.size, mtime: e.mtime, isdir: e.isdir });
   }
   // 码元序（非 localeCompare——locale 相关排序跨环境不确定，测试与 UI 均期望稳定序）
   entries.sort((a, b) => (a.isdir === b.isdir ? (a.name < b.name ? -1 : a.name > b.name ? 1 : 0) : a.isdir ? -1 : 1));
@@ -304,8 +317,21 @@ export async function GET(
           size: file.size,
         });
       }
-      // file-content：单块返回（≤1MB，面板分块循环首块即 eof）
-      const content = r.body.subarray(file.dataStart, file.dataStart + file.size).toString('utf8');
+      // file-content：?raw=1 → 原始字节直下（对齐插件文件下载）；
+      // 缺省 → JSON 单块返回（≤1MB，面板分块循环首块即 eof）
+      const rawBytes = r.body.subarray(file.dataStart, file.dataStart + file.size);
+      if (qs.get('raw') === '1') {
+        const safeName = (path.split('/').pop() ?? 'download').replace(/[^\w.\-一-龥]/g, '_');
+        return new NextResponse(new Uint8Array(rawBytes), {
+          status: 200,
+          headers: {
+            'Content-Type': 'application/octet-stream',
+            'Content-Disposition': `attachment; filename="${encodeURIComponent(safeName)}"`,
+            'Cache-Control': 'no-store',
+          },
+        });
+      }
+      const content = rawBytes.toString('utf8');
       return NextResponse.json({
         content,
         encoding: 'utf8',
