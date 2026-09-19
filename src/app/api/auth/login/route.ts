@@ -27,7 +27,12 @@
 // receive internal homeserver tokens).
 
 import { NextRequest, NextResponse } from 'next/server';
-import { callHigressConsole, forwardCookies, getHigressConsoleURL } from '../../higress/proxy-helper';
+import {
+  callHigressConsole,
+  forwardCookies,
+  getHigressConsoleURL,
+  HigressConsoleConfigurationError,
+} from '../../higress/proxy-helper';
 import { getAuthToken, getControllerUrl } from '../../agentteams/proxy-helper';
 import { createSession, sessionCookieHeader } from '@/lib/dashboard-session';
 import { pickBackendUrl } from '@/lib/backend-config';
@@ -212,10 +217,33 @@ async function attemptConsoleLogin(
   try {
     consoleUrl = getHigressConsoleURL();
   } catch (err) {
-    // Console deployment config invalid (e.g. host not on the allowlist in a
-    // one-person-per-instance LAN deployment): the Console track is
-    // unavailable, but the Matrix track does not depend on it — fall through
-    // so one track's misconfiguration never blocks the whole login endpoint.
+    if (err instanceof HigressConsoleConfigurationError) {
+      // Deployment misconfiguration (host not on the allowlist / bad URL
+      // shape): the Console admin account can NEVER log in on this
+      // deployment. Failing through to the Matrix track here produced a
+      // misleading "无法确认该账号的权限级别" (a Matrix/permission error)
+      // for what is actually a deployment configuration gap — maintainer
+      // report, 9/19. Fail fast with an actionable message instead; the
+      // Matrix track is still reachable for matrix accounts on the NEXT
+      // attempt only if the operator fixes the config (or logs in with a
+      // Matrix-native account where the Console track is irrelevant).
+      console.error(`Console deployment misconfiguration: ${err.message}`);
+      return {
+        kind: 'misconfigured',
+        response: NextResponse.json(
+          {
+            success: false,
+            error:
+              `Higress Console 部署配置错误（管理员账号暂时无法登录，这不是账号或密码问题）：${err.message}。` +
+              `请将环境变量 AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS 设为包含该 Console 主机名（逗号分隔），` +
+              `或通过受保护的「后端配置」页面保存 Console 地址后重建 Dashboard 容器。`,
+          },
+          { status: 503 }
+        ),
+      };
+    }
+    // Non-configuration runtime failure: keep the original fall-through so
+    // one track's runtime hiccup never blocks the whole login endpoint.
     console.error(
       `Console track unavailable: ${err instanceof Error ? err.message : String(err)}`,
     );

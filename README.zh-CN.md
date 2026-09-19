@@ -172,7 +172,11 @@ docker run -d -p 13000:3000 \
 - 团队管理员（L1）登录时多一步验证：admin 密码（需下面的
   `AGENTTEAMS_AUTH_TOKEN`）或在登录表单粘贴 controller token。
 - 网关 Console 功能（模型管理、共享登录）另需
-  `-e AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS=<console-host>`。
+  `-e AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS=<console-host>`
+  （Console 主机名白名单，防 SSRF）。**安装脚本会自动把交互输入的
+  自定义 Console 地址主机名并入该白名单**（保留已有项，不覆盖）；
+  直接 `docker run` 手配自定义 Console URL 时需自行追加该主机名，
+  否则管理员登录会被拒绝（页面提示部署配置错误而非权限错误）。
 
 **共享多用户（一台容器多人用）**，追加：
 

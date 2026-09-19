@@ -2617,6 +2617,30 @@ step_dashboard() {
         esac
     fi
 
+    # Merge the Console host into the admin allowlist. The Dashboard validates
+    # the Console host against AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS
+    # (SSRF guard); a custom host typed above (container name / IP / Service
+    # name) would otherwise be rejected at login time ("Console host ... is
+    # not allowed") because the built-in allowlist only covers embedded
+    # deployments. Union, never replace: operator-provided entries are kept.
+    if [ -n "${AGENTTEAMS_AI_GATEWAY_ADMIN_URL}" ]; then
+        local _gw_host
+        _gw_host="$(printf '%s' "${AGENTTEAMS_AI_GATEWAY_ADMIN_URL}" | sed -E 's#^https?://##; s#/.*$##; s#:\[([0-9a-fA-F:]+)\]$#:\1#; s#:[0-9]+$##')"
+        if [ -n "${_gw_host}" ]; then
+            case ",${AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS}," in
+                *,${_gw_host},*) ;;
+                *)
+                    if [ -n "${AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS}" ]; then
+                        AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS="${AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS},${_gw_host}"
+                    else
+                        AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS="${_gw_host}"
+                    fi
+                    log "  Console host '${_gw_host}' added to AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS (required by the Dashboard login allowlist)"
+                    ;;
+            esac
+        fi
+    fi
+
     # Verify the Higress Console URL is reachable (best-effort warning only)
     if [ -n "${AGENTTEAMS_AI_GATEWAY_ADMIN_URL}" ]; then
         local _gw_reachable=0

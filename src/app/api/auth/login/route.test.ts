@@ -5,7 +5,12 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { POST } from './route';
-import { callHigressConsole, forwardCookies, getHigressConsoleURL } from '../../higress/proxy-helper';
+import {
+  callHigressConsole,
+  forwardCookies,
+  getHigressConsoleURL,
+  HigressConsoleConfigurationError,
+} from '../../higress/proxy-helper';
 import { getAuthToken, getControllerUrl } from '../../agentteams/proxy-helper';
 import { __resetSessionStoreForTests, SESSION_COOKIE_NAME } from '@/lib/dashboard-session';
 import { forgetWorking } from '@/lib/backend-config';
@@ -18,6 +23,13 @@ vi.mock('../../higress/proxy-helper', () => ({
     }
   }),
   getHigressConsoleURL: vi.fn(() => 'http://higress-console:8080'),
+  // Same class reference the route's instanceof check consumes (module is
+  // fully mocked — the real class would never match a thrown mock instance).
+  HigressConsoleConfigurationError: class HigressConsoleConfigurationError extends Error {
+    constructor(reason: string) {
+      super(`Higress Console deployment configuration error: ${reason}`);
+    }
+  },
 }));
 
 vi.mock('../../agentteams/proxy-helper', () => ({
@@ -173,6 +185,39 @@ describe('POST /api/auth/login (dual track, M19)', () => {
     const response = await POST(request({ username: 'admin', password: 'password' }));
     expect(response.status).toBe(503);
     expect(response.headers.getSetCookie()).toEqual([]);
+  });
+
+  it('L1: Console host not on allowlist → 503 deployment-config error, no misleading permission error (maintainer report 9/19)', async () => {
+    mockGetHigressConsoleURL.mockImplementation(() => {
+      throw new HigressConsoleConfigurationError('Console host "agtmain0918-controller" is not allowed');
+    });
+    const fetchMock = installFetchMock({ matrixLogin: { status: 200 } });
+
+    const response = await POST(request({ username: 'admin', password: 'password' }));
+    expect(response.status).toBe(503);
+    const data = await responseJson(response);
+    expect(data.success).toBe(false);
+    const err = String(data.error);
+    expect(err).toContain('部署配置错误');
+    expect(err).toContain('agtmain0918-controller');
+    expect(err).toContain('AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS');
+    // The old behavior funneled this into the Matrix track and surfaced a
+    // permission error — assert it is gone.
+    expect(err).not.toContain('权限级别');
+    // No session cookie, and the Matrix track was never consulted for
+    // session data (login endpoint answered before the human lookup).
+    expect(response.headers.getSetCookie()).toEqual([]);
+    expect(fetchMock.mock.calls.every(([url]) => !String(url).includes('/api/v1/humans/'))).toBe(true);
+  });
+
+  it('L1: correct Console config + wrong password → plain auth failure (not a deployment-config error)', async () => {
+    mockCallHigressConsole.mockResolvedValue(failedConsoleLogin());
+    installFetchMock({ matrixLogin: { status: 401 } });
+
+    const response = await POST(request({ username: 'admin', password: 'wrong' }));
+    expect(response.status).toBe(401);
+    const data = await responseJson(response);
+    expect(String(data.error)).not.toContain('部署配置错误');
   });
 
   it('Matrix: Console 401 + Matrix login + CR level 2 (bob) → level-2 session, scoped, matrix mode, no Console cookie', async () => {
