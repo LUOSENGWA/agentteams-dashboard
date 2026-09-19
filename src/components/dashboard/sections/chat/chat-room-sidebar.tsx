@@ -1,12 +1,41 @@
 'use client';
 
-import { useState } from 'react';
+import { useSyncExternalStore, useState } from 'react';
 import { MessageSquare, PanelLeftClose, Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { RoomListItem } from './room-list-item';
-import { filterRooms, groupRoomsByType } from './room-builders';
+import { filterRooms, groupRoomsByType, sortRoomsByRecency } from './room-builders';
 import type { RoomInfo } from './room-info';
+
+const SORT_KEY = 'chat-sidebar-sort';
+
+// 12.15：排序模式持久化走 useSyncExternalStore（SSR 首个客户端渲染用 server
+// 快照 'time'，随后切到持久化值——规避 react-hooks/set-state-in-effect，
+// 与页面既有宽度存储同思路）。
+type SortMode = 'time' | 'type';
+function readSortStore(): SortMode {
+  try {
+    return localStorage.getItem(SORT_KEY) === 'type' ? 'type' : 'time';
+  } catch {
+    return 'time';
+  }
+}
+const sortListeners = new Set<() => void>();
+function subscribeSort(fn: () => void): () => void {
+  sortListeners.add(fn);
+  return () => {
+    sortListeners.delete(fn);
+  };
+}
+function publishSort(m: SortMode) {
+  try {
+    localStorage.setItem(SORT_KEY, m);
+  } catch {
+    /* storage 不可用忽略 */
+  }
+  sortListeners.forEach((fn) => fn());
+}
 
 function shortUserId(userId: string | null | undefined): string | null {
   if (!userId) return null;
@@ -31,8 +60,25 @@ export function ChatRoomSidebar({
   onCollapse: () => void;
 }) {
   const [filter, setFilter] = useState('');
+  // 12.15（装验反馈「加上像插件那样的分类」）：全部/群组/私聊——群组=成员>2
+  // （plugin 同款口径）；与排序模式正交。
+  const [kindFilter, setKindFilter] = useState<'all' | 'group' | 'dm'>('all');
   const filtered = filterRooms(rooms, filter);
-  const groups = groupRoomsByType(filtered);
+  const visible =
+    kindFilter === 'all'
+      ? filtered
+      : filtered.filter((r) =>
+          kindFilter === 'group'
+            ? (r.memberCount ?? 0) > 2
+            : (r.memberCount ?? 0) <= 2,
+        );
+  const groups = groupRoomsByType(visible);
+  // 12.15（装验反馈「项目群被丢进『其他』、要和 Element/插件一样排序」）：
+  // 默认「按时间」=Element/插件同款的单一时间序混合列表；「按类型」保留
+  // 分组视图（团队/Agent/Manager/房间）。
+  const sortMode = useSyncExternalStore(subscribeSort, readSortStore, () => 'time' as const);
+  const changeSort = publishSort;
+  const timeOrdered = sortRoomsByRecency(visible);
   const shortId = shortUserId(userId);
 
   return (
@@ -41,7 +87,38 @@ export function ChatRoomSidebar({
         <div className="flex items-center justify-between mb-2">
           <span className="text-xs font-semibold tracking-wide">会话</span>
           <div className="flex items-center gap-1">
-            <span className="text-[10px] text-muted-foreground">{filtered.length} 个房间</span>
+            <span className="text-[10px] text-muted-foreground">{visible.length} 个房间</span>
+            <div className="flex items-center rounded border border-border p-0.5" role="group" aria-label="房间分类">
+              {(['all', 'group', 'dm'] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  className={`rounded px-1.5 py-0.5 text-[10px] ${kindFilter === k ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                  onClick={() => setKindFilter(k)}
+                  title={k === 'all' ? '全部房间' : k === 'group' ? '群组（成员 > 2）' : '私聊（成员 ≤ 2）'}
+                >
+                  {k === 'all' ? '全部' : k === 'group' ? '群组' : '私聊'}
+                </button>
+              ))}
+            </div>
+            <div className="flex items-center rounded border border-border p-0.5" role="group" aria-label="房间排序">
+              <button
+                type="button"
+                className={`rounded px-1.5 py-0.5 text-[10px] ${sortMode === 'time' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                onClick={() => changeSort('time')}
+                title="按最近消息时间排序（Element/插件同款）"
+              >
+                时间
+              </button>
+              <button
+                type="button"
+                className={`rounded px-1.5 py-0.5 text-[10px] ${sortMode === 'type' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                onClick={() => changeSort('type')}
+                title="按房间类型分组（团队/Agent/Manager/房间）"
+              >
+                类型
+              </button>
+            </div>
             <button
               type="button"
               className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -79,22 +156,31 @@ export function ChatRoomSidebar({
             </p>
           </div>
         ) : (
-          groups.map((group) => (
-            <div key={group.type} className="mb-1.5">
-              <p className="px-2 py-1 text-[10px] font-semibold tracking-wide text-muted-foreground">
-                {group.label}
-                <span className="ml-1 font-normal">{group.rooms.length}</span>
-              </p>
-              {group.rooms.map((room) => (
+          sortMode === 'time'
+            ? timeOrdered.map((room) => (
                 <RoomListItem
                   key={room.id}
                   room={room}
                   isSelected={selectedRoomId === room.id}
                   onClick={() => onSelectRoom(room.id)}
                 />
-              ))}
-            </div>
-          ))
+              ))
+            : groups.map((group) => (
+                <div key={group.type} className="mb-1.5">
+                  <p className="px-2 py-1 text-[10px] font-semibold tracking-wide text-muted-foreground">
+                    {group.label}
+                    <span className="ml-1 font-normal">{group.rooms.length}</span>
+                  </p>
+                  {group.rooms.map((room) => (
+                    <RoomListItem
+                      key={room.id}
+                      room={room}
+                      isSelected={selectedRoomId === room.id}
+                      onClick={() => onSelectRoom(room.id)}
+                    />
+                  ))}
+                </div>
+              ))
         )}
       </div>
       <div className="p-3 border-t border-border shrink-0 bg-card/30">

@@ -6,6 +6,10 @@ export interface RoomMetaInput {
   lastMessagePreview?: string;
   unreadCount?: number;
   unreadHighlightCount?: number;
+  /** Room name captured by the global sync (used for sync-only rooms). */
+  roomName?: string;
+  /** Joined member count captured by the global sync (kind filter). */
+  memberCount?: number;
 }
 
 /** Lookup table for per-room meta. Keys are Matrix room ids. */
@@ -27,7 +31,10 @@ export function buildRooms(
   const lookup = metaByRoomId ?? {};
   const enrich = (
     rid: string,
-  ): Pick<RoomInfo, 'lastMessageTs' | 'lastMessagePreview' | 'unreadCount' | 'unreadHighlightCount'> => {
+  ): Pick<
+    RoomInfo,
+    'lastMessageTs' | 'lastMessagePreview' | 'unreadCount' | 'unreadHighlightCount' | 'memberCount'
+  > => {
     const m = lookup[rid];
     if (!m) return {};
     return {
@@ -35,6 +42,7 @@ export function buildRooms(
       lastMessagePreview: m.lastMessagePreview,
       unreadCount: m.unreadCount,
       unreadHighlightCount: m.unreadHighlightCount,
+      memberCount: m.memberCount,
     };
   };
 
@@ -49,6 +57,7 @@ export function buildRooms(
         parentTeam: team.name,
         phase: team.phase,
         team,
+        memberCount: (team.workerNames?.length ?? 0) + 1,
         ...enrich(team.teamRoomID),
       });
     }
@@ -65,6 +74,7 @@ export function buildRooms(
         workerName: worker.name,
         phase: worker.phase,
         runtime: worker.runtime,
+        memberCount: 2,
         ...enrich(worker.roomID),
       });
     }
@@ -83,10 +93,25 @@ export function buildRooms(
         matrixUserId: manager.matrixUserID,
         parentTeam: leadingTeam?.name,
         phase: manager.phase,
+        memberCount: 2,
         ...enrich(chatRoomId),
       });
     }
   });
+  // 12.13（装验反馈「看不到项目群」）：/sync 原生房间补齐——资源推导只
+  // 覆盖 team/worker/manager 房间；项目群等普通房间此前完全不可见（插件
+  // 走全量 /sync 可见，行为不一致）。按 meta.roomName 补「其他」分组。
+  const known = new Set(roomList.map((room) => room.id));
+  for (const [rid, meta] of Object.entries(lookup)) {
+    if (known.has(rid) || !meta.roomName) continue;
+    roomList.push({
+      id: rid,
+      name: meta.roomName,
+      type: 'unknown',
+      members: [],
+      ...enrich(rid),
+    });
+  }
   return roomList;
 }
 
@@ -129,7 +154,7 @@ export const ROOM_TYPE_LABELS: Record<RoomInfo['type'], string> = {
   worker: 'Agent',
   manager: 'Manager',
   human: 'Human',
-  unknown: '其他',
+  unknown: '房间',
 };
 
 export interface RoomTypeGroup {

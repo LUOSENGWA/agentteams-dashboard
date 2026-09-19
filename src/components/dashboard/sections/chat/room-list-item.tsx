@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { Bot, Crown, Hash, UserCheck, Users } from 'lucide-react';
+import { Bot, Crown, MessageSquare, UserCheck, Users } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { useRoomMetaStore } from '@/hooks/use-matrix';
 import { RUNTIME_LABELS } from '@/lib/phase-colors';
@@ -28,7 +28,8 @@ function roomTypeIcon(type: RoomInfo['type']) {
     case 'human':
       return <UserCheck className="w-4 h-4 text-cyan-500" />;
     default:
-      return <Hash className="w-4 h-4 text-muted-foreground" />;
+      // 12.15：通用房间用对话气泡（原先 Hash '#' 像是频道符——装验反馈）。
+      return <MessageSquare className="w-4 h-4 text-muted-foreground" />;
   }
 }
 
