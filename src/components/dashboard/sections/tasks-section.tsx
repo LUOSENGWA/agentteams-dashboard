@@ -30,6 +30,13 @@ import { Badge } from '@/components/ui/badge';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
 import { SectionHeader } from '@/components/dashboard/section-header';
 import { useMatrixStore } from '@/lib/matrix-store';
 import { useActiveSection } from '@/components/dashboard/use-active-section';
@@ -597,6 +604,30 @@ export function TasksSection() {
   >(TASKS_PROJECT_KEY, null, isProjectIdOrNone);
   const [reloadKey, setReloadKey] = useState(0);
 
+  // 项目视图左栏排序（9/16 装验反馈第 2/3/4 轮：左栏项目要能按时间排序）。
+  // 9/16 真机 E2E 定位：独立 ProjectsSection 已并入任务看板（nav-items 注释
+  // 「项目视图已并入任务看板」），修复必须落在本视图——与插件 WorkflowBoard
+  // 同款语义（时间新→旧 默认）。
+  const [projSort, setProjSort] = useState<'time_desc' | 'time_asc' | 'name'>(
+    'time_desc',
+  );
+  const sortedProjects = useMemo(() => {
+    const list = [...board.projects];
+    list.sort((a, b) => {
+      if (projSort === 'name') {
+        return a.name.localeCompare(b.name, 'en');
+      }
+      const ta = a.completedAt ?? a.createdAt;
+      const tb = b.completedAt ?? b.createdAt;
+      // 无时间戳的条目垫底（与 projects-section/artifacts-section 同款语义）
+      if (!ta && !tb) return a.name.localeCompare(b.name, 'en');
+      if (!ta) return 1;
+      if (!tb) return -1;
+      return projSort === 'time_desc' ? tb - ta : ta - tb;
+    });
+    return list;
+  }, [board.projects, projSort]);
+
   // Atomically consume the pending project deep-link (HITL inbox card). The
   // task board now owns the project view, so a deep link targets a project in
   // this section rather than the removed standalone projects section.
@@ -888,15 +919,40 @@ export function TasksSection() {
                 </CardContent>
               </Card>
             ) : (
-              board.projects.map((p) => (
-                <ProjectCard
-                  key={p.runId}
-                  project={p}
-                  taskCount={tasksForProject(p.runId).length}
-                  onSelect={setSelectedProjectId}
-                  selected={p.runId === effectiveProjectId}
-                />
-              ))
+              <Card className="glass-card">
+                <div className="flex items-center justify-between gap-2 border-b border-border/60 px-3 py-2">
+                  <p className="text-xs font-semibold text-muted-foreground">
+                    选择项目（{board.projects.length}）
+                  </p>
+                  <Select
+                    value={projSort}
+                    onValueChange={(v) =>
+                      setProjSort(v as 'time_desc' | 'time_asc' | 'name')
+                    }
+                  >
+                    <SelectTrigger className="h-7 w-[108px] text-xs">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="time_desc">时间 新→旧</SelectItem>
+                      <SelectItem value="time_asc">时间 旧→新</SelectItem>
+                      <SelectItem value="name">名称</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+                {/* 左栏独立滚动（9/16 装验反馈：左栏列表要独立滚动条） */}
+                <div className="max-h-[calc(100vh-220px)] min-h-[120px] space-y-2 overflow-y-auto p-3">
+                  {sortedProjects.map((p) => (
+                    <ProjectCard
+                      key={p.runId}
+                      project={p}
+                      taskCount={tasksForProject(p.runId).length}
+                      onSelect={setSelectedProjectId}
+                      selected={p.runId === effectiveProjectId}
+                    />
+                  ))}
+                </div>
+              </Card>
             )}
           </div>
           <div className="lg:col-span-2">
