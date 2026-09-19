@@ -873,13 +873,13 @@ export function KnowledgeGraph3D(props: G3DGraph) {
         ? 1.1
         : 0.98;
       // 物理力——官方原值 -108/72 是为 v3（wikilink 稀疏图）标定；v4 结构边
-      // hub-and-spoke 节点更多更密，同值下整图发散，9/17 验收第六轮反馈
-      // 「点隔太远」→ 整体收紧（charge -60 / 距离 44 / 强度 0.5，约 1.6 倍
-      // 密度），参数语义与官方一致只改数值；不设 collide 同官方。
-      graph.d3Force('charge')?.strength?.(-60);
+      // hub-and-spoke 节点更多更密，同值下整图发散，验收轮反馈「点隔太远」
+      // → 两轮收紧：-60/44/0.5 → -50/38/0.52（散点再聚合一档；参数语义与
+      // 官方一致只改数值；不设 collide 同官方）。插件 Graph3D 同值。
+      graph.d3Force('charge')?.strength?.(-50);
       const linkForce: any = graph.d3Force('link');
-      linkForce?.distance?.(44);
-      linkForce?.strength?.(0.5);
+      linkForce?.distance?.(38);
+      linkForce?.strength?.(0.52);
 
       // 数据灌入 + 官方双 fit：rAF 立即 fit（初始视角根治「无限远」）
       // + 引擎收敛 onEngineStop 平滑 480ms 重 fit。
