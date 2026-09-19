@@ -8,6 +8,7 @@
 // level gate; the security boundary remains server-side (middleware +
 // Controller A2).
 import { NextRequest, NextResponse } from 'next/server';
+import { validateHigressSession } from '@/lib/api-auth';
 import { getSessionFromRequest } from '@/lib/dashboard-session';
 
 export async function GET(request: NextRequest) {
@@ -16,10 +17,21 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ authenticated: false }, { status: 200 });
   }
 
+  // 12.15（装验反馈：luo 登录后模型页仍打 /api/higress/* 拿 401）：
+  // 浏览器是否持有有效 Higress Console 会话——网关管理面的真实门控。
+  // 客户端此前误用 dashboard 会话判定 canManage（登录≠Console 会话）。
+  let higressSession = false;
+  try {
+    higressSession = (await validateHigressSession(request)).valid;
+  } catch {
+    higressSession = false;
+  }
+
   return NextResponse.json({
     authenticated: true,
     username: session.user,
     level: session.level,
     mode: session.credential.kind === 'sa' ? 'higress' : 'matrix',
+    higressSession,
   }, { status: 200 });
 }
