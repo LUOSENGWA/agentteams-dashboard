@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { ChatRoomSidebar } from './chat-room-sidebar';
@@ -6,6 +6,13 @@ import { useRoomMetaStore } from '@/hooks/use-matrix';
 import type { RoomInfo } from './room-info';
 
 afterEach(cleanup);
+beforeEach(() => {
+  try {
+    localStorage.clear();
+  } catch {
+    /* jsdom 一定有，保险 */
+  }
+});
 
 const room = (overrides: Partial<RoomInfo>): RoomInfo => ({
   id: '!r:test',
@@ -74,12 +81,21 @@ describe('ChatRoomSidebar', () => {
     expect(screen.queryByText('Newest')).toBeNull();
   });
 
-  it('groups rooms by type and shows last message preview', () => {
+  it('defaults to a flat recency list (Element/plugin-style) without group headers', () => {
     renderSidebar();
-    expect(screen.getByText('团队')).toBeInTheDocument();
-    expect(screen.getByText('Agent')).toBeInTheDocument();
+    // 默认「按时间」：不出现类型分组头，房间直接并列。
+    expect(screen.queryByText('团队')).toBeNull();
+    expect(screen.queryByText('Agent')).toBeNull();
+    expect(screen.getByText('Newest')).toBeInTheDocument();
     expect(screen.getByText('最新一条')).toBeInTheDocument();
     expect(screen.getByText('QwenPaw')).toBeInTheDocument();
+  });
+
+  it('switches to type-grouped view via the toggle', () => {
+    renderSidebar();
+    fireEvent.click(screen.getByText('类型'));
+    expect(screen.getByText('团队')).toBeInTheDocument();
+    expect(screen.getByText('Agent')).toBeInTheDocument();
   });
 
   it('omits the runtime badge and never renders the literal "undefined" when phase/runtime are missing', () => {

@@ -1,12 +1,14 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { MessageSquare, PanelLeftClose, Search } from 'lucide-react';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
 import { RoomListItem } from './room-list-item';
-import { filterRooms, groupRoomsByType } from './room-builders';
+import { filterRooms, groupRoomsByType, sortRoomsByRecency } from './room-builders';
 import type { RoomInfo } from './room-info';
+
+const SORT_KEY = 'chat-sidebar-sort';
 
 function shortUserId(userId: string | null | undefined): string | null {
   if (!userId) return null;
@@ -33,6 +35,26 @@ export function ChatRoomSidebar({
   const [filter, setFilter] = useState('');
   const filtered = filterRooms(rooms, filter);
   const groups = groupRoomsByType(filtered);
+  // 12.15（装验反馈「项目群被丢进『其他』、要和 Element/插件一样排序」）：
+  // 默认「按时间」=Element/插件同款的单一时间序混合列表；「按类型」保留
+  // 分组视图（团队/Agent/Manager/房间）。持久化 localStorage。
+  const [sortMode, setSortMode] = useState<'time' | 'type'>('time');
+  useEffect(() => {
+    try {
+      if (localStorage.getItem(SORT_KEY) === 'type') setSortMode('type');
+    } catch {
+      /* storage 不可用忽略 */
+    }
+  }, []);
+  const changeSort = (m: 'time' | 'type') => {
+    setSortMode(m);
+    try {
+      localStorage.setItem(SORT_KEY, m);
+    } catch {
+      /* storage 不可用忽略 */
+    }
+  };
+  const timeOrdered = sortRoomsByRecency(filtered);
   const shortId = shortUserId(userId);
 
   return (
@@ -42,6 +64,24 @@ export function ChatRoomSidebar({
           <span className="text-xs font-semibold tracking-wide">会话</span>
           <div className="flex items-center gap-1">
             <span className="text-[10px] text-muted-foreground">{filtered.length} 个房间</span>
+            <div className="flex items-center rounded border border-border p-0.5" role="group" aria-label="房间排序">
+              <button
+                type="button"
+                className={`rounded px-1.5 py-0.5 text-[10px] ${sortMode === 'time' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                onClick={() => changeSort('time')}
+                title="按最近消息时间排序（Element/插件同款）"
+              >
+                时间
+              </button>
+              <button
+                type="button"
+                className={`rounded px-1.5 py-0.5 text-[10px] ${sortMode === 'type' ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                onClick={() => changeSort('type')}
+                title="按房间类型分组（团队/Agent/Manager/房间）"
+              >
+                类型
+              </button>
+            </div>
             <button
               type="button"
               className="rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -79,22 +119,31 @@ export function ChatRoomSidebar({
             </p>
           </div>
         ) : (
-          groups.map((group) => (
-            <div key={group.type} className="mb-1.5">
-              <p className="px-2 py-1 text-[10px] font-semibold tracking-wide text-muted-foreground">
-                {group.label}
-                <span className="ml-1 font-normal">{group.rooms.length}</span>
-              </p>
-              {group.rooms.map((room) => (
+          sortMode === 'time'
+            ? timeOrdered.map((room) => (
                 <RoomListItem
                   key={room.id}
                   room={room}
                   isSelected={selectedRoomId === room.id}
                   onClick={() => onSelectRoom(room.id)}
                 />
-              ))}
-            </div>
-          ))
+              ))
+            : groups.map((group) => (
+                <div key={group.type} className="mb-1.5">
+                  <p className="px-2 py-1 text-[10px] font-semibold tracking-wide text-muted-foreground">
+                    {group.label}
+                    <span className="ml-1 font-normal">{group.rooms.length}</span>
+                  </p>
+                  {group.rooms.map((room) => (
+                    <RoomListItem
+                      key={room.id}
+                      room={room}
+                      isSelected={selectedRoomId === room.id}
+                      onClick={() => onSelectRoom(room.id)}
+                    />
+                  ))}
+                </div>
+              ))
         )}
       </div>
       <div className="p-3 border-t border-border shrink-0 bg-card/30">

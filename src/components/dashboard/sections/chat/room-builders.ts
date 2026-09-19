@@ -145,7 +145,7 @@ export const ROOM_TYPE_LABELS: Record<RoomInfo['type'], string> = {
   worker: 'Agent',
   manager: 'Manager',
   human: 'Human',
-  unknown: '其他',
+  unknown: '房间',
 };
 
 export interface RoomTypeGroup {
