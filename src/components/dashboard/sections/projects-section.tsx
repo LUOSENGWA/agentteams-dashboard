@@ -1263,7 +1263,7 @@ export function ProjectsSection() {
 
           {/* Workflow detail */}
           <Card className="glass-card lg:col-span-2">
-            <CardContent className="p-4">
+            <CardContent className="p-4 max-h-[calc(100vh-160px)] overflow-y-auto overscroll-contain">
               {selected ? (
                 <WorkflowDetail projectId={selected.project_id} teamId={selected.team_id} />
               ) : (
@@ -1290,7 +1290,7 @@ export function ProjectsSection() {
           </div>
           {selected && (
             <Card className="glass-card">
-              <CardContent className="p-4">
+              <CardContent className="p-4 max-h-[calc(100vh-160px)] overflow-y-auto overscroll-contain">
                 <WorkflowDetail projectId={selected.project_id} teamId={selected.team_id} />
               </CardContent>
             </Card>
