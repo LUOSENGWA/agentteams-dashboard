@@ -22,7 +22,7 @@ vi.mock('@/components/dashboard/sections/chat/markdown-message', () => ({
   MarkdownMessage: ({ content }: { content: string }) => <div data-testid="md">{content}</div>,
 }));
 
-import { KnowledgeSection } from './knowledge-section';
+import { KnowledgeSection, assembleGraph } from './knowledge-section';
 
 const TREE_TOP = {
   directory: 'workspace',
@@ -91,6 +91,71 @@ async function switchTo2D() {
   return (await screen.findByRole('img', { name: /wikilink 图谱/ })) as unknown as { querySelectorAll: (_s: string) => NodeListOf<SVGElement> };
 }
 
+describe('assembleGraph（v4 图谱模型——对齐插件 kb_graph / QwenPaw ReMe 同款）', () => {
+  const label = (nodes: { id: string; label: string }[], id: string) =>
+    nodes.find((n) => n.id === id)?.label;
+
+  it('结构边：digest 三分类虚拟根（非空才生成）→ 分桶文件（任意深度）', () => {
+    const paths = [
+      'digest/wiki/a.md', 'digest/wiki/sub/e.md',
+      'digest/personal/b.md', 'digest/procedure/c.md', 'digest/other/d.md',
+    ];
+    const { nodes, edges } = assembleGraph(paths, paths.map(() => ''));
+    expect(nodes.some((n) => n.id === 'virtual:wiki')).toBe(true);
+    expect(nodes.some((n) => n.id === 'virtual:personal')).toBe(true);
+    expect(nodes.some((n) => n.id === 'virtual:procedure')).toBe(true);
+    expect(nodes.some((n) => n.id === 'virtual:other')).toBe(false); // other 非三桶，无根
+    const wi = nodes.findIndex((n) => n.id === 'virtual:wiki');
+    expect(label(nodes, 'virtual:wiki')).toBe('wiki');
+    const edgeOf = (t: string) => edges.find((e) => e.t === nodes.findIndex((n) => n.id === t) && e.s === wi);
+    expect(edgeOf('digest/wiki/a.md')).toBeTruthy(); // 深度 1
+    expect(edgeOf('digest/wiki/sub/e.md')).toBeTruthy(); // 深度 2（任意深度）
+    expect(edges.some((e) => e.t === nodes.findIndex((n) => n.id === 'digest/other/d.md'))).toBe(false);
+  });
+
+  it('兜底 hub：无 digest 分桶时 MEMORY.md → depth-1 memory 文件（depth-2 不挂）', () => {
+    const paths = ['MEMORY.md', 'memory/2026-01-01.md', 'memory/sub/x.md'];
+    const { nodes, edges } = assembleGraph(paths, paths.map(() => ''));
+    expect(nodes.some((n) => n.virtual)).toBe(false); // 无 digest 分桶 → 无虚拟根
+    const mi = nodes.findIndex((n) => n.id === 'MEMORY.md');
+    expect(edges.some((e) => e.s === mi && e.t === nodes.findIndex((n) => n.id === 'memory/2026-01-01.md'))).toBe(true);
+    expect(edges.some((e) => e.s === mi && e.t === nodes.findIndex((n) => n.id === 'memory/sub/x.md'))).toBe(false);
+  });
+
+  it('wikilink：干名/大小写/|alias/#anchor 四种形态匹配 + 自链跳过', () => {
+    const paths = ['x.md', 'y.md', 'z.md'];
+    const contents = ['[[y]] [[Y|alias]] [[z#sec]] [[x]]', '', ''];
+    const { nodes, edges } = assembleGraph(paths, contents);
+    const xi = 0, yi = 1, zi = 2;
+    const to = (t: number) => edges.filter((e) => e.s === xi && e.t === t);
+    expect(to(yi).length).toBe(1); // [[y]] 与 [[Y|alias]] 去重为一条
+    expect(to(zi).length).toBe(1); // #anchor 剥掉后匹配
+    expect(edges.some((e) => e.s === xi && e.t === xi)).toBe(false); // 自链跳过
+    expect(nodes.length).toBe(3); // 未产生灰点
+  });
+
+  it('→/← 路径块引用（ReMe inlinks/outlinks 行约定）', () => {
+    const paths = ['x.md', 'y.md', 'z.md'];
+    const contents = ['→ y.md\n← z\n→ not-exist', '', ''];
+    const { nodes, edges } = assembleGraph(paths, contents);
+    const xi = 0;
+    expect(edges.some((e) => e.s === xi && e.t === 1)).toBe(true); // → y.md
+    expect(edges.some((e) => e.s === xi && e.t === 2)).toBe(true); // ← z
+    const ghost = nodes.find((n) => n.id === 'not-exist');
+    expect(ghost?.resolved).toBe(false); // 未解析 → 灰点
+    expect(edges.some((e) => e.s === xi && e.t === nodes.findIndex((n) => n.id === 'not-exist'))).toBe(true);
+  });
+
+  it('http / 绝对路径不成边不建点；完整路径（缺 .md）可解析', () => {
+    const paths = ['x.md', 'memory/a.md'];
+    const contents = ['[[http://x.com/a]] [[/abs/path]] [[memory/a]]', ''];
+    const { nodes, edges } = assembleGraph(paths, contents);
+    expect(nodes.length).toBe(2); // 无灰点
+    expect(edges.length).toBe(1);
+    expect(edges[0]).toEqual({ s: 0, t: 1 });
+  });
+});
+
 describe('KnowledgeSection（v3：3D / 预览与图谱分离 / 团队聚合 / 选择记忆）', () => {
   beforeEach(() => {
     vi.useRealTimers();
@@ -121,8 +186,9 @@ describe('KnowledgeSection（v3：3D / 预览与图谱分离 / 团队聚合 / �
     expect(texts).toContain('MEMORY'); // MEMORY.md 干
     expect(texts).toContain('a');
     expect(texts).toContain('b');
-    // a.md 链接 [[b]] 与 [[MEMORY]] → 2 条边
-    expect(svg.querySelectorAll('line').length).toBe(2);
+    // v4：a.md 的 [[b]]/[[MEMORY]] 2 条 wikilink 边 + MEMORY.md 兜底 hub
+    // →memory/a、memory/b 2 条结构边 = 4 条（无 digest 分桶触发兜底）
+    expect(svg.querySelectorAll('line').length).toBe(4);
   });
 
   it('③ 点图谱节点 → 打开预览 且 图谱仍驻留（预览与图谱分离，回退不空白）', async () => {
@@ -205,10 +271,12 @@ describe('KnowledgeSection（v3：3D / 预览与图谱分离 / 团队聚合 / �
     expect(Array.from(teamSel.options).map((o) => o.textContent)).toEqual([
       '全部团队（2 Workers）', 't1（1）', 't2（1）',
     ]);
-    // 切 2D 断言合并图：w1+w2 各 3 文件 → 6 节点；各 2 边 → 4 边
+    // 切 2D 断言合并图：w1+w2 各 3 文件 → 6 节点；
+    // v4 每 Worker 4 边（MEMORY.md 兜底 hub→memory/a、memory/b 两条结构边
+    // + a.md 的 [[b]]/[[MEMORY]] 两条 wikilink 边）→ 共 8 边
     const svg = await switchTo2D();
     expect(svg.querySelectorAll('circle').length).toBe(6);
-    expect(svg.querySelectorAll('line').length).toBe(4);
+    expect(svg.querySelectorAll('line').length).toBe(8);
     // 图例=两个 Worker（按 Agent 着色）——option 文案带后缀/计数，图例为精确名
     expect(screen.getAllByText('w1').length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText('w2').length).toBeGreaterThanOrEqual(1);

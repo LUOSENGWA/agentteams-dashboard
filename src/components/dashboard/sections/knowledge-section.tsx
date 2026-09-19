@@ -72,6 +72,10 @@ interface GNode {
   isMemory: boolean;
   /** 聚合模式：节点所属 Worker（着色/跳转用）。 */
   agent?: string;
+  /** v4：虚拟分类根（digest/wiki|personal|procedure——插件 virtual:* 同款）。 */
+  virtual?: boolean;
+  /** v4：未解析 wikilink 灰点（文件不存在，不可点开——插件 resolved:false 同款）。 */
+  resolved?: boolean;
 }
 interface GEdge { s: number; t: number }
 interface GraphData { nodes: GNode[]; edges: GEdge[]; positions: { x: number; y: number }[] }
@@ -95,7 +99,7 @@ function writeMem(key: string, value: string): void {
 }
 
 const base = (w: string) => `/api/agentteams/workers/${encodeURIComponent(w)}/workspace-files`;
-const MAX_GRAPH_FILES = 60; // 单 Worker 图谱内容抓取上限（防大 KB 拖死）
+const MAX_GRAPH_FILES = 150; // 单 Worker 图谱内容抓取上限（对齐插件 _KB_MAX_GRAPH_FILES=150）
 const MAX_MERGED_FILES = 240; // 聚合模式全量上限（跨 Worker 总预算）
 const CHUNK = 200_000; // file-content 单块
 const MAX_CHUNKS = 8; // 单文件最多 1.6MB
@@ -182,8 +186,131 @@ function extractWikilinks(md: string): string[] {
 const basename = (p: string) => p.split('/').pop() ?? p;
 const stem = (p: string) => (basename(p).toLowerCase().endsWith('.md') ? basename(p).slice(0, -3) : basename(p));
 
+/** digest 三虚拟分桶（插件 kb_graph 同款：wiki/personal/procedure）。 */
+const DIGEST_BUCKETS = ['wiki', 'personal', 'procedure'] as const;
+
+/** v4 图谱模型（对齐插件 kb_graph / QwenPaw ReMe graph_snapshot_step）：
+ *  节点 = md 文件 + 虚拟分类根（digest/{bucket} 非空才生成）
+ *       + 未解析引用灰点（wikilink 指向不存在的文件，不可点开）；
+ *  边   = 结构边（分类根→分桶文件，任意深度）
+ *       + 兜底 hub（无 digest 分桶时 MEMORY.md→depth-1 memory 文件）
+ *       + [[wikilink]]（含 |alias / #anchor）
+ *       + →/← 路径块引用（ReMe inlinks/outlinks 行约定）。
+ *  纯函数（paths+contents → 图），单测直接打，不 mock fetch。 */
+export function assembleGraph(
+  paths: string[],
+  contents: (string | null)[],
+): { nodes: Omit<GNode, 'agent'>[]; edges: GEdge[] } {
+  const nodes: Omit<GNode, 'agent'>[] = paths.map((p) => ({
+    id: p,
+    path: p,
+    label: stem(p),
+    deg: 0,
+    isMemory: p === 'MEMORY.md',
+  }));
+  // 虚拟分类根——非空才生成（避免空根节点污染前端，插件同款）。
+  for (const b of DIGEST_BUCKETS) {
+    if (paths.some((p) => p.startsWith(`digest/${b}/`))) {
+      nodes.push({
+        id: `virtual:${b}`, path: `virtual:${b}`, label: b,
+        deg: 0, isMemory: false, virtual: true,
+      });
+    }
+  }
+  // 归一索引：target（完整路径 / 文件名，可缺 .md）→ 文件路径。
+  // 插件 norm_map 同构（path + path 去 .md + tail + tail 去 .md 四键），
+  // 键额外小写化：[[MEMORY]] 须匹配 'MEMORY.md'（集群 KB 大写约定）。
+  const normMap = new Map<string, string>();
+  for (const p of paths) {
+    const add = (k: string) => {
+      const kk = k.toLowerCase();
+      if (!normMap.has(kk)) normMap.set(kk, p); // 同干多文件=首个（与 v2/v3 一致）
+    };
+    add(p);
+    if (p.toLowerCase().endsWith('.md')) add(p.slice(0, -3));
+    const tail = p.split('/').pop() ?? p;
+    add(tail);
+    if (tail.toLowerCase().endsWith('.md')) add(tail.slice(0, -3));
+  }
+  const indexById = new Map<string, number>();
+  nodes.forEach((n, i) => indexById.set(n.id, i));
+  const resolveTarget = (raw: string): string | null => {
+    const t = raw.trim().replace(/^['"`]+|['"`]+$/g, '').trim();
+    if (!t || t.startsWith('http') || t.startsWith('/')) return null;
+    const cands = [t];
+    const rs = t.replace(/\/+$/, '');
+    if (rs !== t) cands.push(rs);
+    cands.push(t.endsWith('.md') ? t.slice(0, -3) : `${t}.md`);
+    for (const c of cands) {
+      const hit = normMap.get(c.toLowerCase());
+      if (hit) return hit;
+    }
+    return null;
+  };
+  const ensureUnresolved = (t: string): number => {
+    let i = indexById.get(t);
+    if (i == null) {
+      i = nodes.length;
+      nodes.push({
+        id: t, path: t, label: t.split('/').pop() ?? t,
+        deg: 0, isMemory: false, resolved: false,
+      });
+      indexById.set(t, i);
+    }
+    return i;
+  };
+  const edges: GEdge[] = [];
+  const seen = new Set<string>();
+  const addEdge = (sPath: string, tRaw: string): void => {
+    const t = tRaw.trim().replace(/^['"`]+|['"`]+$/g, '').trim();
+    if (!t || t.startsWith('http') || t.startsWith('/')) return; // 外部/绝对路径不成边（插件同款）
+    const sIdx = indexById.get(sPath);
+    if (sIdx == null) return;
+    const resolved = resolveTarget(t);
+    const tIdx = resolved != null ? indexById.get(resolved) : ensureUnresolved(t);
+    if (tIdx == null || tIdx === sIdx) return; // 自链跳过
+    const key = `${sIdx}->${tIdx}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    edges.push({ s: sIdx, t: tIdx });
+    nodes[sIdx].deg += 1;
+    nodes[tIdx].deg += 1;
+  };
+  // 结构边：分类根 → digest/{bucket}/ 文件（任意深度）。
+  for (const p of paths) {
+    if (p.startsWith('digest/') && p.split('/').length >= 3) {
+      const first = p.split('/')[1];
+      if ((DIGEST_BUCKETS as readonly string[]).includes(first)) {
+        addEdge(`virtual:${first}`, p);
+      }
+    }
+  }
+  // 兜底 hub：无 digest 分桶 + MEMORY.md 在 → MEMORY.md 挂 depth-1 memory 文件
+  // （旧布局 worker 保证图不空，插件同款）。
+  const hasBucket = DIGEST_BUCKETS.some((b) =>
+    paths.some((p) => p.startsWith(`digest/${b}/`)),
+  );
+  if (!hasBucket && paths.includes('MEMORY.md')) {
+    for (const p of paths) {
+      if (p.startsWith('memory/') && p.split('/').length === 2) {
+        addEdge('MEMORY.md', p);
+      }
+    }
+  }
+  // 语义边：[[wikilink]] + →/← 路径块引用（ReMe inlinks/outlinks 行约定）。
+  paths.forEach((p, i) => {
+    const text = contents[i];
+    if (!text) return;
+    for (const t of extractWikilinks(text)) addEdge(p, t);
+    const rePath = /^[ \t]*(?:→|←)\s+(\S+?)(?:[ \t]+name=|[ \t]*$)/gm;
+    let m: RegExpExecArray | null;
+    while ((m = rePath.exec(text)) !== null) addEdge(p, m[1]);
+  });
+  return { nodes, edges };
+}
+
 /** 单 Worker 建图（单 Agent 模式与聚合模式每 Worker 共用）：
- *  节点=md 文件（id=路径 / label=干名），边=wikilink 按干名匹配（文件内索引）。 */
+ *  抓取 ≤cap 个 md（MEMORY.md 若在优先入图）→ assembleGraph。 */
 async function buildAgentGraph(worker: string, cap: number): Promise<{ nodes: Omit<GNode, 'agent'>[]; edges: GEdge[] }> {
   const files = await collectMdFiles(worker);
   // MEMORY.md 若在（KB 布局根文件）优先入图
@@ -205,37 +332,7 @@ async function buildAgentGraph(worker: string, cap: number): Promise<{ nodes: Om
     }
   };
   await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, all.length)) }, () => workerPool()));
-  const nodes: Omit<GNode, 'agent'>[] = all.map((p) => ({
-    id: p,
-    path: p,
-    label: stem(p),
-    deg: 0,
-    isMemory: p === 'MEMORY.md',
-  }));
-  // 键小写化：wikilink [[MEMORY]] 须匹配节点干 'MEMORY'（target 统一 toLowerCase 查）
-  const idIndex = new Map<string, number>();
-  nodes.forEach((nd, i) => {
-    const k = nd.label.toLowerCase();
-    if (!idIndex.has(k)) idIndex.set(k, i); // 同干多文件=首个（与 v2 一致，label 冲突时边归属首见）
-  });
-  const edges: GEdge[] = [];
-  const seen = new Set<string>();
-  all.forEach((_p, i) => {
-    const links = contents[i] ? extractWikilinks(contents[i]) : [];
-    for (const t of links) {
-      const ti = idIndex.get(t.toLowerCase());
-      if (ti != null && ti !== i) {
-        const key = `${i}-${ti}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          edges.push({ s: i, t: ti });
-          nodes[i].deg += 1;
-          nodes[ti].deg += 1;
-        }
-      }
-    }
-  });
-  return { nodes, edges };
+  return assembleGraph(all, contents);
 }
 
 // ── 2D 力导向布局（确定性：初值=圆环按序，迭代纯函数——无 Math.random）──────
@@ -421,7 +518,7 @@ export function KnowledgeSection() {
   const [graphMode, setGraphMode] = useState<'worker' | 'merged'>(
     () => (readMem('graph-mode') === 'merged' ? 'merged' : 'worker'),
   );
-  const [kbTeam, setKbTeam] = useState(''); // ''=全部团队
+  const [kbTeam, setKbTeam] = useState(() => readMem('team')); // ''=全部团队（记忆恢复：团队选择也持久化）
   const [viewMode, setViewMode] = useState<'3d' | '2d'>(
     () => (readMem('view-mode') === '2d' ? '2d' : '3d'),
   );
@@ -469,7 +566,12 @@ export function KnowledgeSection() {
   // 必须先于 loadMerged 定义（其 useCallback 依赖数组在渲染期求值，
   // const 后置声明会触发 TDZ ReferenceError）。
   const effectiveKbTeam = kbTeam && teamGroups.some((g) => g.team === kbTeam) ? kbTeam : '';
-  useEffect(() => { writeMem('team', effectiveKbTeam); }, [effectiveKbTeam]);
+  // workers 列表落地前不写——首帧 teamGroups 为空，派生值必为 ''，
+  // 若此时写会覆盖掉刚恢复的合法记忆值（G5 记忆竞态）。
+  useEffect(() => {
+    if (workers == null) return;
+    writeMem('team', effectiveKbTeam);
+  }, [workers, effectiveKbTeam]);
 
   const loadGraph = useCallback(async (w: string) => {
     const gen = ++genRef.current;
@@ -498,12 +600,19 @@ export function KnowledgeSection() {
       const scope = effectiveKbTeam
         ? teamGroups.find((g) => g.team === effectiveKbTeam)?.workers.map((wd) => wd.name) ?? []
         : sortedWorkers.map((wd) => wd.name);
+      // 单 Worker 份额=总预算均分（封顶 150、保底 30）——首 Worker 大 KB 不再
+      // 吃掉全员份额（旧版顺序扣减 60/Worker 的升级：4 Worker 仍各 60，
+      // 2 Worker 各 120，1 Worker 150）。
+      const perWorker = Math.min(
+        MAX_GRAPH_FILES,
+        Math.max(30, Math.floor(MAX_MERGED_FILES / Math.max(1, scope.length))),
+      );
       const nodes: GNode[] = [];
       const edges: GEdge[] = [];
       let budget = MAX_MERGED_FILES;
       for (const w of scope) {
         if (budget <= 0) break;
-        const ag = await buildAgentGraph(w, Math.min(MAX_GRAPH_FILES, budget));
+        const ag = await buildAgentGraph(w, Math.min(perWorker, budget));
         budget -= ag.nodes.length;
         const offset = nodes.length;
         for (const n of ag.nodes) nodes.push({ ...n, id: `${w}::${n.id}`, agent: w });
@@ -519,13 +628,27 @@ export function KnowledgeSection() {
     }
   }, [effectiveKbTeam, teamGroups, sortedWorkers]);
 
-  // 聚合模式：切模式/切团队/团队列表变化 → 重拉（loadMerged 入口自带清旧图）
+  // 聚合范围签名（团队+成员名单）：真正变化才重拉。
+  // workers 每 ~15s 轮询换新数组（teamGroups/sortedWorkers 身份随之变），
+  // 旧版 effect 依赖身份 → 图谱周期自拉+重排（9/17 装验 G1「过一段时间
+  // 就重新加载」根因）。签名不变=跳过；手动「刷新」按钮直调 loadMerged
+  // 不经此门，不受影响。
+  const mergedScopeKey = useMemo(() => {
+    const scope = effectiveKbTeam
+      ? teamGroups.find((g) => g.team === effectiveKbTeam)?.workers.map((wd) => wd.name) ?? []
+      : sortedWorkers.map((wd) => wd.name);
+    return `${effectiveKbTeam || '*'}::${scope.join(',')}`;
+  }, [effectiveKbTeam, teamGroups, sortedWorkers]);
+  const lastMergedKeyRef = useRef('');
+  // 聚合模式：切模式/切团队/范围真变 → 重拉（loadMerged 入口自带清旧图）
   useEffect(() => {
     if (graphMode !== 'merged') return;
+    if (mergedScopeKey === lastMergedKeyRef.current) return;
+    lastMergedKeyRef.current = mergedScopeKey;
     // 宏任务触发（同 reload effect 模式：effect 内不同步 setState 链）
     const t = setTimeout(() => { void loadMerged(); }, 0);
     return () => clearTimeout(t);
-  }, [graphMode, effectiveKbTeam, teamGroups, loadMerged]);
+  }, [graphMode, mergedScopeKey, loadMerged]);
 
   // 顶层文件树（四分类分组来源）+ 图谱，随 Worker 切换/刷新重载
   const reload = useCallback(async (w: string) => {
@@ -648,6 +771,8 @@ export function KnowledgeSection() {
       name: n.label,
       path: n.path,
       agent: n.agent,
+      virtual: n.virtual,
+      resolved: n.resolved,
     }));
   }, [currentGraph]);
   const g3dLinks = useMemo(() => {
@@ -659,9 +784,13 @@ export function KnowledgeSection() {
   }, [currentGraph]);
   const colorFor3d = useCallback(
     (n: G3DNodeInput): string => {
+      // 插件 nodeColor 同序：聚合 Worker 色优先 → 分类根 → 未解析灰点
+      // → MEMORY.md 琥珀 → 普通文件靛蓝。
       if (agentLegend && n.agent) {
         return agentLegend.find((l) => l.name === n.agent)?.color ?? '#8c8c8c';
       }
+      if (n.virtual) return '#ff7f16'; // 分类根（QwenPaw --graph-3d-root 同值）
+      if (n.resolved === false) return '#9ca3af'; // 未解析引用灰点（不可点开）
       return n.path === 'MEMORY.md' ? '#f59e0b' : '#6366f1';
     },
     [agentLegend],
@@ -684,6 +813,7 @@ export function KnowledgeSection() {
   // 3D 节点点击 → 开预览（聚合：`worker::path` 解析；单 Agent：path）
   const onOpenNode3d = useCallback(
     (n: G3DNodeInput) => {
+      if (n.resolved === false) return; // 未解析灰点不可点开（插件同款）
       const sep = n.id.indexOf('::');
       if (graphMode === 'merged' && sep > 0) {
         void openPreview(n.id.slice(sep + 2), n.id.slice(0, sep));
@@ -927,8 +1057,9 @@ export function KnowledgeSection() {
                           nodes={g3dNodes}
                           links={g3dLinks}
                           colorFor={colorFor3d}
-                          isRoot={() => false}
+                          isRoot={(n) => n.virtual === true}
                           isDirect={() => false}
+                          labelPolicy={graphMode === 'merged' ? 'top14' : 'auto'}
                           onOpenNode={onOpenNode3d}
                           onSelect={setSelectedId3d}
                           onExit3D={() => setViewMode('2d')}
@@ -951,7 +1082,13 @@ export function KnowledgeSection() {
                           nodes={currentGraph.nodes}
                           edges={currentGraph.edges}
                           positions={currentGraph.positions}
-                          onSelect={(p, agent) => void openPreview(p, agent)}
+                          onSelect={(p, agent) => {
+                            // 分类根/未解析灰点不可点开（与 3D 守卫同款）。
+                            if (p.startsWith('virtual:')) return;
+                            const nd = currentGraph.nodes.find((x) => x.path === p);
+                            if (nd?.resolved === false) return;
+                            void openPreview(p, agent);
+                          }}
                           agentPalette={agentLegend ?? undefined}
                         />
                       </div>

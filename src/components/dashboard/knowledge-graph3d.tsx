@@ -33,6 +33,8 @@ export interface G3DNodeInput {
   path?: string;
   virtual?: boolean;
   category?: string;
+  /** v4：未解析引用灰点（hover 提示标注，点击不可开预览）。 */
+  resolved?: boolean;
   /** 聚合模式：节点所属 Worker 名（图例着色用）。 */
   agent?: string;
   /** d3-force 运行时写入的布局坐标（引擎跑过即有值）。 */
@@ -230,6 +232,10 @@ interface G3DGraph {
   onSelect?: (_id: string) => void;
   onExit3D: () => void;
   height?: number;
+  /** 标签策略（插件 showLabel 移植）：
+   *  auto（单 Agent）= ≤42 节点全标，否则 root ∪ deg≥4（QwenPaw 同值）；
+   *  top14（聚合）= root ∪ 度数 top14（插件 labeledIds 同规则，防标签糊屏）。 */
+  labelPolicy?: 'auto' | 'top14';
 }
 
 // ── 主题适配（dashboard 无 antd/无插件 useThemeColors）──────────────────
@@ -323,6 +329,7 @@ export function KnowledgeGraph3D(props: G3DGraph) {
     onSelect,
     onExit3D,
     height = 480,
+    labelPolicy = 'auto',
   } = props;
   const t = useGraph3DPalette();
   const containerRef = React.useRef<HTMLDivElement | null>(null);
@@ -444,6 +451,7 @@ export function KnowledgeGraph3D(props: G3DGraph) {
     neighborSets: new Map<string, Set<string>>() as Map<string, Set<string>>,
     degree: new Map<string, number>(),
     nodeCount: 0,
+    labelSet: new Set<string>(),
   });
   stateRef.current.palette = palette;
   stateRef.current.colorFor = colorFor;
@@ -574,11 +582,11 @@ export function KnowledgeGraph3D(props: G3DGraph) {
     glow.visible = false;
     obj.add(glow);
 
-    // 标签——QwenPaw 条件同值：count<=42 || root || deg>=4。
+    // 标签——集合由 graphData memo 按 labelPolicy 预计算（插件
+    // showLabel：auto=≤42 全标否则 root∪deg≥4；top14=root∪度数前 14）。
     // SpriteText(text, textHeight世界单位, color)；fontSize=76 是
     // 画布分辨率（清晰度），不是字号（混淆了两者）。
-    const count = s.nodeCount;
-    if (count <= 42 || root || deg >= 4) {
+    if (s.labelSet.has(n.id)) {
       const raw = String(n.name);
       const text =
         raw.length > 22 ? `${raw.slice(0, 21)}…` : raw;
@@ -646,8 +654,26 @@ export function KnowledgeGraph3D(props: G3DGraph) {
               o.target === l.source,
           ),
       }));
+    // 标签集合（插件 showLabel 移植；nodeThreeObject 建球时读
+    // stateRef.labelSet，渲染期同步写入——engine 建球在 effect 之后，
+    // 读到的必是当帧值）。
+    const labelSet = new Set<string>();
+    if (labelPolicy === 'top14') {
+      nd.forEach((n) => { if (s.isRoot(n)) labelSet.add(n.id); });
+      [...nd]
+        .sort((a, b) => (b._deg - a._deg) || a.id.localeCompare(b.id))
+        .slice(0, 14)
+        .forEach((n) => labelSet.add(n.id));
+    } else if (nd.length <= 42) {
+      nd.forEach((n) => labelSet.add(n.id));
+    } else {
+      nd.forEach((n) => {
+        if (s.isRoot(n) || (n._deg || 0) >= 4) labelSet.add(n.id);
+      });
+    }
+    stateRef.current.labelSet = labelSet;
     return { nodes: nd, links: lk };
-  }, [nodes, links]); // degree 由 links 派生，随 links 同变
+  }, [nodes, links, labelPolicy]); // degree 由 links 派生，随 links 同变
 
   // latest-ref：init 效果的 ResizeObserver 闭包只捕获首帧 graphData，
   // 数据更新后 resize 重 fit 必须用当前节点（官方 resizeAndFit 同理
@@ -762,11 +788,61 @@ export function KnowledgeGraph3D(props: G3DGraph) {
             hoverIdRef.current = next;
           }
           el.style.cursor = next ? 'pointer' : 'default';
+          // 全名提示：root 已有常驻标签不提示（插件同款），其余节点
+          // 显示 名称 + 完整路径 + Worker（聚合）+ 未解析标注。
+          if (n && next) {
+            const lines = [String(n.name)];
+            const full =
+              n.path && n.path !== n.id ? String(n.path) : String(n.id);
+            if (full !== String(n.name)) lines.push(full);
+            if (n.agent) lines.push(`Worker：${n.agent}`);
+            if (n.resolved === false) lines.push('未解析引用（文件不存在，不可点开）');
+            tip.textContent = lines.join('\n');
+            tip.style.display = 'block';
+            positionTip(lastPtr.x, lastPtr.y);
+          } else {
+            tip.style.display = 'none';
+          }
         })
         .onBackgroundClick(() => {
           setSelectedId('');
           onSelect?.('');
         });
+
+      // hover 全名提示（自绘 HTML，跟手移动——库内置 nodeLabel 按官方
+      // 同款禁用；静态 SpriteText 截 22 字，完整路径/未解析标注只能
+      // 放这里。9/17 装验反馈 G1「鼠标放上去有全名」）。
+      const tip = document.createElement('div');
+      tip.style.cssText =
+        `position:absolute;left:0;top:0;z-index:30;display:none;` +
+        `pointer-events:none;max-width:280px;padding:4px 8px;` +
+        `border-radius:6px;font-size:11px;line-height:1.55;` +
+        `background:${p.labelBackground};color:${p.label};` +
+        `border:1px solid ${p.labelBorder};` +
+        `box-shadow:0 4px 14px rgba(0,0,0,0.18);` +
+        `white-space:pre-wrap;word-break:break-all;`;
+      el.appendChild(tip);
+      const lastPtr = { x: 0, y: 0 };
+      const positionTip = (x: number, y: number) => {
+        const r = el.getBoundingClientRect();
+        let tx = x + 14;
+        let ty = y + 12;
+        const tw = tip.offsetWidth || 0;
+        const th = tip.offsetHeight || 0;
+        if (tx + tw > r.width - 4) tx = Math.max(4, x - tw - 10);
+        if (ty + th > r.height - 4) ty = Math.max(4, y - th - 8);
+        tip.style.left = `${tx}px`;
+        tip.style.top = `${ty}px`;
+      };
+      const onTipMove = (e: PointerEvent) => {
+        const r = el.getBoundingClientRect();
+        lastPtr.x = e.clientX - r.left;
+        lastPtr.y = e.clientY - r.top;
+        if (tip.style.display !== 'none') {
+          positionTip(lastPtr.x, lastPtr.y);
+        }
+      };
+      el.addEventListener('pointermove', onTipMove);
 
       // 相机——官方原值（fov 44 / near 0.1 / far CEILING*1.6；
       // zoom 上下限由 fitGraphModel 的 applyGraphZoomLimits 动态收紧）。
@@ -949,6 +1025,7 @@ export function KnowledgeGraph3D(props: G3DGraph) {
         ro.disconnect();
         el.removeEventListener('pointerdown', onSelfPointerDown);
         el.removeEventListener('pointerup', onSelfPointerUp);
+        el.removeEventListener('pointermove', onTipMove);
         try {
           (graph.controls?.() as any)?.removeEventListener?.(
             'change',
