@@ -52,6 +52,7 @@ import {
   type PlanItem,
 } from '@/hooks/use-task-board';
 import { useApiTaskBoard } from '@/hooks/use-projects';
+import { useProjectRoomTimestamps } from '@/hooks/use-project-room-ts';
 // Project governance panel (pause / resume / replan / cancel / artifacts /
 // timeline) — defined in the (now-merged) projects section; only the panel
 // crosses the module boundary.
@@ -611,14 +612,19 @@ export function TasksSection() {
   const [projSort, setProjSort] = useState<'time_desc' | 'time_asc' | 'name'>(
     'time_desc',
   );
+  // 9/17 装验第 7 轮：controller projectSummary 无时间戳（源码实锤：struct
+  // 仅 6 字段）且 proj-<uuid> 无内嵌日期 → 时间排序对 API 项目无数据可用，
+  // 静默退化为名称序。兜底第三源 = 项目房间最后一条消息 ts（与插件
+  // projectActivityTs 同款语义，60s 缓存，limit 1）；名称排序时零请求。
+  const roomTs = useProjectRoomTimestamps(board.projects, projSort !== 'name');
   const sortedProjects = useMemo(() => {
     const list = [...board.projects];
     list.sort((a, b) => {
       if (projSort === 'name') {
         return a.name.localeCompare(b.name, 'en');
       }
-      const ta = a.completedAt ?? a.createdAt;
-      const tb = b.completedAt ?? b.createdAt;
+      const ta = (a.completedAt ?? a.createdAt) || roomTs.get(a.runId) || 0;
+      const tb = (b.completedAt ?? b.createdAt) || roomTs.get(b.runId) || 0;
       // 无时间戳的条目垫底（与 projects-section/artifacts-section 同款语义）
       if (!ta && !tb) return a.name.localeCompare(b.name, 'en');
       if (!ta) return 1;
@@ -626,7 +632,7 @@ export function TasksSection() {
       return projSort === 'time_desc' ? tb - ta : ta - tb;
     });
     return list;
-  }, [board.projects, projSort]);
+  }, [board.projects, projSort, roomTs]);
 
   // Atomically consume the pending project deep-link (HITL inbox card). The
   // task board now owns the project view, so a deep link targets a project in
