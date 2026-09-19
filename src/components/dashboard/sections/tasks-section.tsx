@@ -866,14 +866,14 @@ export function TasksSection() {
             return (
               <div
                 key={col.key}
-                className={`rounded-lg border ${col.color} p-3 min-h-[300px] flex flex-col gap-2`}
+                className={`rounded-lg border ${col.color} p-3 h-[560px] flex flex-col gap-2`}
               >
                 <div className="flex items-center gap-1.5 pb-1 border-b border-current/10">
                   <Icon className={`h-3.5 w-3.5 ${col.key === 'in_progress' ? 'animate-spin' : ''}`} />
                   <p className="text-xs font-semibold">{col.label}</p>
                   <span className="ml-auto text-[10px] font-mono opacity-70">{list.length}</span>
                 </div>
-                <div className="space-y-2 flex-1">
+                <div className="space-y-2 flex-1 min-h-0 overflow-y-auto overscroll-contain">
                   <AnimatePresence initial={false}>
                     {list.length === 0 ? (
                       <p className="text-[10px] text-muted-foreground italic text-center py-4">
@@ -936,7 +936,7 @@ export function TasksSection() {
                       setProjSort(v as 'time_desc' | 'time_asc' | 'name')
                     }
                   >
-                    <SelectTrigger className="h-7 w-[108px] text-xs">
+                    <SelectTrigger className="h-7 w-auto min-w-[108px] text-xs">
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
