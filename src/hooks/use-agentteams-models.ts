@@ -69,6 +69,35 @@ export function useDeleteModel() {
   });
 }
 
+// ============ SGLang serving models ============
+
+export interface SglangModelsResponse {
+  enabled: boolean;
+  models: string[];
+  error?: string;
+}
+
+const sglangQueryKey = ['agentteams-sglang-models'];
+
+// SGLang serving layer for model selection. The server route returns an empty
+// list when AGENTTEAMS_SGLANG_URL is unset or unreachable, so deployments
+// without a local inference server are unaffected. The serving model list only
+// changes when SGLang itself restarts, so a slow refetch is deliberate.
+export function useSglangModels(enabled = true) {
+  return useQuery<SglangModelsResponse>({
+    queryKey: sglangQueryKey,
+    queryFn: async () => {
+      const res = await fetch('/api/agentteams/sglang-models', { cache: 'no-store' });
+      if (!res.ok) return { enabled: true, models: [] };
+      return (await res.json()) as SglangModelsResponse;
+    },
+    enabled,
+    refetchInterval: 60000,
+    retry: 1,
+    throwOnError: false,
+  });
+}
+
 // ============ AI Routes ============
 
 export function useAiRoutes(enabled = true) {

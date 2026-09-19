@@ -32,4 +32,38 @@ describe('model-catalog', () => {
     const duplicates = options.length !== new Set(options.map((option) => option.alias)).size;
     expect(duplicates).toBe(false);
   });
+
+  it('adds a SGLang serving layer without disturbing the alias layer', () => {
+    const options = buildModelSelectionOptions(routes, providers, [
+      'qwen3.6-27b-fp8',
+      'local-llama-70b',
+    ]);
+
+    expect(options.find((option) => option.alias === 'qwen3.6-27b-fp8')?.kind).toBe('sglang');
+    expect(options.find((option) => option.alias === 'local-llama-70b')?.kind).toBe('sglang');
+    // Alias layer untouched.
+    expect(options.find((option) => option.alias === 'team-chat')?.kind).toBe('configured');
+    expect(options.find((option) => option.alias === 'deepseek-chat')?.kind).toBe('builtin');
+  });
+
+  it('keeps the alias layer on SGLang name collision (configured and builtin win)', () => {
+    const options = buildModelSelectionOptions(routes, providers, [
+      'team-chat', // collides with a configured alias
+      'deepseek-chat', // collides with a builtin alias
+      'qwen3.6-27b-fp8',
+    ]);
+
+    expect(options.filter((option) => option.alias === 'team-chat')).toHaveLength(1);
+    expect(options.find((option) => option.alias === 'team-chat')?.kind).toBe('configured');
+    expect(options.find((option) => option.alias === 'deepseek-chat')?.kind).toBe('builtin');
+    expect(options.find((option) => option.alias === 'qwen3.6-27b-fp8')?.kind).toBe('sglang');
+  });
+
+  it('dedupes and filters empty SGLang ids', () => {
+    const options = buildModelSelectionOptions([], [], ['dup-model', 'dup-model', '', 'solo-model']);
+
+    expect(options.filter((option) => option.alias === 'dup-model')).toHaveLength(1);
+    expect(options.find((option) => option.alias === 'solo-model')?.kind).toBe('sglang');
+    expect(options.some((option) => option.alias === '')).toBe(false);
+  });
 });
