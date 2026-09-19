@@ -5,6 +5,7 @@ import { Card } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { StatusDot } from '@/components/dashboard/status-dot';
+import { WorkerSessionName } from './worker-session-name';
 import { PhaseBadge, RuntimeBadge } from '@/components/dashboard/phase-badge';
 import { HealthRingCompact } from '@/components/dashboard/health-ring';
 import { useAgentHealth } from '@/hooks/use-agent-health';
@@ -102,7 +103,7 @@ export function WorkerTable({
                 <div className="flex items-center gap-2">
                   <StatusDot phase={worker.phase} />
                   <Bot className="w-4 h-4 text-emerald-500 shrink-0" aria-hidden="true" />
-                  <span className="font-medium truncate max-w-[180px]">{worker.name}</span>
+                  <WorkerSessionName worker={worker} className="max-w-[180px]" />
                 </div>
               </TableCell>
               <TableCell>

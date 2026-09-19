@@ -47,13 +47,24 @@ export function buildRooms(
   };
 
   const roomList: RoomInfo[] = [];
+  // name → MXID for resolving a team's workers to Matrix ids (A17 dot)
+  const workerMxidByTeam = new Map<string, Map<string, string>>();
+  workers?.forEach((worker) => {
+    if (!worker.team || !worker.matrixUserID) return;
+    if (!workerMxidByTeam.has(worker.team)) workerMxidByTeam.set(worker.team, new Map());
+    workerMxidByTeam.get(worker.team)!.set(worker.name, worker.matrixUserID);
+  });
   teams?.forEach((team) => {
     if (team.teamRoomID) {
+      const teamWorkers = workerMxidByTeam.get(team.name);
       roomList.push({
         id: team.teamRoomID,
         name: `${team.name} 团队房间`,
         type: 'team',
         members: team.workerNames || [],
+        workerMatrixUserIds: (team.workerNames || [])
+          .map((name) => teamWorkers?.get(name))
+          .filter((id): id is string => Boolean(id)),
         parentTeam: team.name,
         phase: team.phase,
         team,
@@ -71,6 +82,7 @@ export function buildRooms(
         members: [worker.matrixUserID].filter(Boolean),
         parentTeam: worker.team,
         matrixUserId: worker.matrixUserID,
+        workerMatrixUserIds: [worker.matrixUserID].filter(Boolean),
         workerName: worker.name,
         phase: worker.phase,
         runtime: worker.runtime,

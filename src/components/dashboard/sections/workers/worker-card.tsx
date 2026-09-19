@@ -6,6 +6,7 @@ import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { StatusDot } from '@/components/dashboard/status-dot';
+import { WorkerSessionName } from './worker-session-name';
 import { PhaseBadge, RuntimeBadge } from '@/components/dashboard/phase-badge';
 import { HealthRingCompact } from '@/components/dashboard/health-ring';
 import { useAgentHealth } from '@/hooks/use-agent-health';
@@ -124,7 +125,7 @@ export function WorkerCard({
                 )}
               </button>
               <StatusDot phase={worker.phase} />
-              <span className="font-medium truncate">{worker.name}</span>
+              <WorkerSessionName worker={worker} />
             </div>
             <div className="flex items-center gap-2 shrink-0">
               <RuntimeBadge runtime={worker.runtime} withTooltip />

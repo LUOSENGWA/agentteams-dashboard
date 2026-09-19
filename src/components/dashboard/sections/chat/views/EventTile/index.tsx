@@ -3,6 +3,7 @@
 import { MessageBubble } from '../MessageBubble';
 import type { DisplayMessage } from '@/hooks/use-matrix';
 import type { ReadReceiptEntry } from '@/hooks/use-matrix';
+import type { WorkerSessionState } from '@/lib/worker-session-state';
 
 interface EventTileProps {
   _message: DisplayMessage;
@@ -20,6 +21,8 @@ interface EventTileProps {
   memberMap?: Record<string, string>;
   readReceipts?: Record<string, ReadReceiptEntry>;
   currentUserId?: string | null;
+  /** Live session state of the sender when it is a worker (A17 dot). */
+  senderStatus?: WorkerSessionState | null;
 }
 
 export function EventTile({
@@ -38,6 +41,7 @@ export function EventTile({
   memberMap,
   readReceipts,
   currentUserId,
+  senderStatus,
 }: EventTileProps) {
   return (
     <MessageBubble
@@ -56,6 +60,7 @@ export function EventTile({
       memberMap={memberMap}
       readReceipts={readReceipts}
       currentUserId={currentUserId}
+      senderStatus={senderStatus}
     />
   );
 }

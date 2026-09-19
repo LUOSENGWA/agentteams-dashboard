@@ -3,6 +3,11 @@
 import { motion } from 'framer-motion';
 import { Bot, Crown, MessageSquare, UserCheck, Users } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
+import { WorkerSessionDot, WorkerSessionRunningDot } from '@/components/worker-session-dot';
+import {
+  useRoomRunningState,
+  useRoomSessionState,
+} from '@/hooks/use-worker-session-state';
 import { useRoomMetaStore } from '@/hooks/use-matrix';
 import { RUNTIME_LABELS } from '@/lib/phase-colors';
 import type { RoomInfo } from './room-info';
@@ -61,6 +66,21 @@ export function RoomListItem({
     }
     onClick();
   };
+
+  // Session dot (A17): 1:1 worker rooms show the full three states
+  // (running/done/idle); team rooms only express running — a human
+  // message in a team room must never flash green (v1.51 decision).
+  // Manager/human rooms get no dot.
+  const isWorkerRoom = room.type === 'worker';
+  const isTeamRoom = room.type === 'team';
+  const workerRoomState = useRoomSessionState(
+    isWorkerRoom ? room.id : undefined,
+    isWorkerRoom ? room.matrixUserId : undefined,
+  );
+  const teamRunning = useRoomRunningState(
+    isTeamRoom ? room.id : undefined,
+    isTeamRoom ? room.workerMatrixUserIds : undefined,
+  );
   return (
     <motion.button
       onClick={handleClick}
@@ -84,6 +104,12 @@ export function RoomListItem({
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <p className="font-medium text-sm truncate">{room.name}</p>
+            {isWorkerRoom && room.matrixUserId ? (
+              <WorkerSessionDot state={workerRoomState} />
+            ) : null}
+            {isTeamRoom ? (
+              <WorkerSessionRunningDot running={teamRunning} />
+            ) : null}
             {room.phase ? (
               <Badge
                 variant="outline"

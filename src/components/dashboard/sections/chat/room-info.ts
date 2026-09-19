@@ -7,6 +7,9 @@ export interface RoomInfo {
   members: string[];
   parentTeam?: string;
   matrixUserId?: string;
+  /** Worker MXIDs of this room (worker rooms: [the worker]; team rooms:
+   *  the team's workers). Drives the session running dot (A17). */
+  workerMatrixUserIds?: string[];
   phase?: string;
   /** Worker runtime (worker rooms only). */
   runtime?: string;
