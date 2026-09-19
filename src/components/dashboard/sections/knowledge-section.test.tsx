@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 
 // 可变 holder：⑥ 号用例模拟轮询重取后列表顺序漂移（Controller 顺序不稳定）
@@ -24,8 +24,13 @@ vi.mock('@/components/dashboard/sections/chat/markdown-message', () => ({
 
 import {
   KnowledgeSection,
+  KnowledgeGraph,
   assembleGraph,
   radialLayout,
+  sectorGapAngle,
+  sectorHalfAngle,
+  focusView,
+  clampZoomView,
   type GNode,
 } from './knowledge-section';
 
@@ -200,6 +205,8 @@ describe('KnowledgeSection（v3：3D / 预览与图谱分离 / 团队聚合 / �
     mockFetch();
     render(<KnowledgeSection />);
     const svg = await switchTo2D();
+    // v3 语义验证：该测试图无 virtual 根 → 度数 top 文件（a.md 等）=伪根 hub，
+    // 伪根仍走预览（单击=文件预览语义保留；virtual 根才单击聚焦）。
     const nodeA = Array.from(svg.querySelectorAll('text')).find((t) => t.textContent === 'a')!;
     fireEvent.click(nodeA);
     // 预览卡更新
@@ -216,8 +223,10 @@ describe('KnowledgeSection（v3：3D / 预览与图谱分离 / 团队聚合 / �
     mockFetch();
     render(<KnowledgeSection />);
     await screen.findByText('知识文件');
-    // 四分类分组头常驻（左栏文件树，无需切视图）
-    expect(screen.getByText('档案')).toBeInTheDocument();
+    // 四分类分组头常驻（左栏文件树，无需切视图）。
+    // findByText：文件树在顶层 fetch 落地后渲染，同步断言在重渲染负载下会
+    // 偶发抢跑（2D 图谱机件落地后首帧变重，实测 ~10% flake）。
+    expect(await screen.findByText('档案')).toBeInTheDocument();
     expect(screen.getAllByText('文件', { selector: 'p' }).length).toBe(1);
     expect(screen.getByText('日记 memory')).toBeInTheDocument();
     expect(screen.getByText('知识库 digest')).toBeInTheDocument();
@@ -347,16 +356,16 @@ describe('radialLayout（2D v2 分层径向布局）', () => {
       expect(Number.isFinite(p.x)).toBe(true);
       expect(Number.isFinite(p.y)).toBe(true);
     }
-    // 等角：三节点在 92% 扇区弧内等距（步长 = 0.92×2π/3），扇区边界处
-    // 的第三段 = 剩余弧（比步长大）——两段小间隔相等、大间隔兜底。
+    // 等角：v3 起 R=1 单扇区=整圆（sectorHalfAngle(1)=π）→ 三节点整圆均布，
+    // 三段弧相等（旧版 0.92 系数留下的 29° 空楔已废除——单簇独占画布）。
     const ang = (id: string) => Math.atan2(pos.get(id)!.y, pos.get(id)!.x);
     const gaps = [ang('a.md'), ang('b.md'), ang('c.md')].sort((a, b) => a - b);
     const d = (a: number, b: number) => Math.abs(a - b);
-    const step = 0.92 * (2 * Math.PI / 3);
+    const step = 2 * Math.PI / 3;
     const segs = [d(gaps[1], gaps[0]), d(gaps[2], gaps[1]), 2 * Math.PI - d(gaps[2], gaps[0])].sort((a, b) => a - b);
     expect(segs[0]).toBeCloseTo(step, 1);
     expect(segs[1]).toBeCloseTo(step, 1);
-    expect(segs[2]).toBeCloseTo(2 * Math.PI - 2 * step, 1);
+    expect(segs[2]).toBeCloseTo(step, 1);
   });
 
   it('③ 确定性：同输入两次 → 逐点相同', () => {
@@ -424,5 +433,183 @@ describe('radialLayout（2D v2 分层径向布局）', () => {
     expect(view.minY).toBeLessThanOrEqual(minY);
     expect(view.minX + view.width).toBeGreaterThanOrEqual(maxX);
     expect(view.minY + view.height).toBeGreaterThanOrEqual(maxY);
+  });
+});
+
+// ── 第 11 轮：2D 缩放 / 聚焦 / 簇分离（v3）─────────────────────────────────
+describe('radialLayout v3（簇分离：扇区 GAP + sectorOf/hubs）', () => {
+  const node = (id: string, extra: Partial<GNode> = {}): GNode => ({
+    id,
+    path: id,
+    label: id,
+    deg: 0,
+    isMemory: false,
+    ...extra,
+  });
+
+  it('⑦ R=3 扇区间隙：任何节点不落入相邻扇区中心间的空楔', () => {
+    const nodes = [
+      node('r1', { virtual: true, deg: 3 }),
+      node('r2', { virtual: true, deg: 3 }),
+      node('r3', { virtual: true, deg: 3 }),
+      ...['a1', 'a2', 'a3', 'b1', 'b2', 'b3', 'c1', 'c2', 'c3'].map((id) => node(id)),
+    ];
+    const pairs: Array<[string, string]> = [
+      ['r1', 'a1'], ['r1', 'a2'], ['r1', 'a3'],
+      ['r2', 'b1'], ['r2', 'b2'], ['r2', 'b3'],
+      ['r3', 'c1'], ['r3', 'c2'], ['r3', 'c3'],
+    ];
+    const { pos, sectorOf, hubs } = radialLayout(nodes, pairs);
+    expect(hubs).toEqual(['r1', 'r2', 'r3']);
+    const half = sectorHalfAngle(3);
+    hubs.forEach((hub, si) => {
+      const center = -Math.PI / 2 + (si * 2 * Math.PI) / 3;
+      nodes.forEach((nd) => {
+        if (sectorOf.get(nd.id) !== hub) return;
+        const p = pos.get(nd.id)!;
+        if (Math.hypot(p.x, p.y) < 5) return; // hub 本身在中心小半径处
+        let delta = Math.abs(Math.atan2(p.y, p.x) - center) % (2 * Math.PI);
+        if (delta > Math.PI) delta = 2 * Math.PI - delta; // 归一到 [0, π]
+        expect(delta).toBeLessThanOrEqual(half + 1e-9);
+      });
+    });
+  });
+
+  it('⑧ R=8 旧公式重叠修复：2*half+GAP 整圆恒等且 half 严格小于旧值', () => {
+    for (const R of [2, 3, 5, 8, 12]) {
+      const half = sectorHalfAngle(R);
+      const gap = sectorGapAngle(R);
+      expect(2 * half + gap).toBeCloseTo((2 * Math.PI) / R, 10); // 整圆恒等
+      expect(half).toBeLessThan((Math.PI / R) * 0.92);           // 弧带收窄
+    }
+    expect(sectorGapAngle(6)).toBe(0.38);
+    expect(sectorGapAngle(7)).toBe(0.24);
+    expect(sectorHalfAngle(1)).toBe(Math.PI); // 单扇区=整圆
+  });
+
+  it('⑨ sectorOf 全覆盖（每节点恰属一个扇区）', () => {
+    const nodes = [node('r1', { virtual: true }), node('a.md'), node('loner.md')];
+    const { sectorOf, hubs } = radialLayout(nodes, [['r1', 'a.md']]);
+    expect(hubs).toEqual(['r1']);
+    expect(sectorOf.size).toBe(nodes.length);
+    nodes.forEach((nd) => expect(sectorOf.get(nd.id)).toBeDefined());
+    expect(sectorOf.get('loner.md')).toBe('r1'); // 孤立节点挂末扇区
+  });
+});
+
+describe('2D 缩放/聚焦纯函数（v3）', () => {
+  const fit = { minX: -100, minY: -50, width: 200, height: 100 };
+
+  it('focusView：空集 → null；四点包围盒 + 留白精确', () => {
+    expect(focusView([])).toBeNull();
+    const v = focusView([
+      { x: -10, y: -5 }, { x: 10, y: -5 }, { x: -10, y: 5 }, { x: 10, y: 5 },
+    ], 70)!;
+    expect(v.minX).toBe(-80);
+    expect(v.minY).toBe(-75);
+    expect(v.width).toBe(160);
+    expect(v.height).toBe(150); // (5-(-5)) + 2*70
+  });
+
+  it('clampZoomView：范围内直通；超上限钳 8×（中心锚）；超下限钳 0.25×', () => {
+    expect(clampZoomView(fit, fit)).toBe(fit);
+    const zoomed = clampZoomView({ ...fit, width: fit.width / 16, height: fit.height / 16, minX: fit.minX + fit.width / 16 * 0.5, minY: fit.minY + fit.height / 16 * 0.5 }, fit);
+    expect(zoomed.width).toBeCloseTo(fit.width / 8, 6);
+    // 中心锚：钳制后中心不变
+    const cx0 = fit.minX + fit.width / 16 * 0.5 + fit.width / 16 / 2;
+    expect(zoomed.minX + zoomed.width / 2).toBeCloseTo(cx0, 6);
+    const out = clampZoomView({ ...fit, width: fit.width * 8, height: fit.height * 8 }, fit);
+    expect(out.width).toBeCloseTo(fit.width * 4, 6); // 0.25× = 视野 4× fit
+  });
+});
+
+describe('KnowledgeGraph v3（缩放/聚焦交互）', () => {
+  afterEach(cleanup); // 组件用例间清 DOM（文件级无全局 cleanup）
+  function smallGraph() {
+    const n = (id: string, extra: Partial<GNode> = {}): GNode => ({
+      id, path: id, label: id, deg: 0, isMemory: false, ...extra,
+    });
+    const nodes = [
+      n('virtual:wiki', { virtual: true, deg: 2 }),
+      n('a.md', { deg: 1 }),
+      n('b.md', { deg: 1 }),
+      n('virtual:notes', { virtual: true, deg: 1 }),
+      n('c.md', { deg: 1 }),
+    ];
+    const pairs: Array<[string, string]> = [
+      ['virtual:wiki', 'a.md'],
+      ['virtual:wiki', 'b.md'],
+      ['virtual:notes', 'c.md'],
+    ];
+    const { pos, view, sectorOf, hubs } = radialLayout(nodes, pairs);
+    return { nodes, pos, view, sectorOf, hubs };
+  }
+  const svgOf = (container: HTMLElement) =>
+    container.querySelector('svg') as unknown as {
+      getAttribute: (_s: string) => string | null;
+      querySelectorAll: (_s: string) => NodeListOf<Element>;
+      dispatchEvent: (_e: Event) => boolean;
+    };
+  const labelParent = (svg: ReturnType<typeof svgOf>, label: string) => {
+    const t = [...svg.querySelectorAll('text')].find((x) => x.textContent === label);
+    expect(t, `label ${label} 未渲染`).toBeTruthy();
+    return (t as unknown as { parentElement: Element }).parentElement;
+  };
+
+  it('⑩ wheel 缩放：宽度按 1/1.18 收缩；连缩多次钳制在 0.25×（fit*4）', () => {
+    const g = smallGraph();
+    const { container } = render(
+      <KnowledgeGraph nodes={g.nodes} edges={[]} pos={g.pos} view={g.view} sectorOf={g.sectorOf} hubs={g.hubs} onSelect={() => {}} />,
+    );
+    const svg = svgOf(container);
+    const w0 = g.view.width;
+    act(() => {
+      svg.dispatchEvent(new WheelEvent('wheel', { deltaY: -100, cancelable: true }));
+    });
+    const vb1 = svg.getAttribute('viewBox')!.split(' ').map(Number);
+    expect(vb1[2]).toBeCloseTo(w0 / 1.18, 6);
+    for (let i = 0; i < 80; i += 1) {
+      act(() => {
+        svg.dispatchEvent(new WheelEvent('wheel', { deltaY: 100, cancelable: true }));
+      });
+    }
+    const vb2 = svg.getAttribute('viewBox')!.split(' ').map(Number);
+    expect(vb2[2]).toBeLessThanOrEqual(w0 * 4 + 1e-6);
+  });
+
+  it('⑪ 点簇根=聚焦：chip 出现 + 非簇节点淡出 0.1（恰好 2 个）', () => {
+    const g = smallGraph();
+    const { container } = render(
+      <KnowledgeGraph nodes={g.nodes} edges={[]} pos={g.pos} view={g.view} sectorOf={g.sectorOf} hubs={g.hubs} onSelect={() => {}} />,
+    );
+    const svg = svgOf(container);
+    fireEvent.click(labelParent(svg, 'virtual:wiki'));
+    const chip = screen.getByRole('button', { name: /退出/ });
+    expect(chip.textContent).toContain('virtual:wiki');
+    const dimmed = [...svg.querySelectorAll('circle')].filter((c) => c.getAttribute('fill-opacity') === '0.1');
+    expect(dimmed.length).toBe(2); // virtual:notes + c.md
+  });
+
+  it('⑫ Esc 退出聚焦：chip 消失', () => {
+    const g = smallGraph();
+    const { container } = render(
+      <KnowledgeGraph nodes={g.nodes} edges={[]} pos={g.pos} view={g.view} sectorOf={g.sectorOf} hubs={g.hubs} onSelect={() => {}} />,
+    );
+    const svg = svgOf(container);
+    fireEvent.click(labelParent(svg, 'virtual:wiki'));
+    expect(screen.getByRole('button', { name: /退出/ })).toBeTruthy();
+    fireEvent.keyDown(window, { key: 'Escape' });
+    expect(screen.queryByRole('button', { name: /退出/ })).toBeNull();
+  });
+
+  it('⑬ 文件节点双击=邻域聚焦（chip 带节点名）', () => {
+    const g = smallGraph();
+    const { container } = render(
+      <KnowledgeGraph nodes={g.nodes} edges={[]} pos={g.pos} view={g.view} sectorOf={g.sectorOf} hubs={g.hubs} onSelect={() => {}} />,
+    );
+    const svg = svgOf(container);
+    fireEvent.doubleClick(labelParent(svg, 'a.md'));
+    const chip = screen.getByRole('button', { name: /a\.md/ });
+    expect(chip.textContent).toContain('a.md');
   });
 });

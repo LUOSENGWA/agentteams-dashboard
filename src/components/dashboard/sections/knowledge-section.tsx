@@ -83,6 +83,10 @@ interface GraphData {
   edges: GEdge[];
   pos: Map<string, { x: number; y: number }>;
   view: RadialView;
+  /** 节点 id → 扇区 hub id（2D 聚焦/簇淡出归属）。 */
+  sectorOf: Map<string, string>;
+  /** 扇区 hub id 列表（2D 聚焦目标 + 边界弧线）。 */
+  hubs: string[];
 }
 
 // 聚合节点图例配色（插件 AGENT_PALETTE 同值）。
@@ -350,14 +354,79 @@ async function buildAgentGraph(worker: string, cap: number): Promise<{ nodes: Om
 //   视野 = 按内容自适应（替代固定 760×420）。
 // 纯函数、无 Math.random——确定性布局可单测复现。
 export interface RadialView { minX: number; minY: number; width: number; height: number }
+
+// ── 2D 缩放 / 聚焦 / 簇分离 纯函数（v3，第 11 轮；插件 KnowledgeBase 同算法同值）──
+
+/** 扇区间隙角（弧度）：簇分离——相邻扇区间留出的空白楔。
+ * 扇区越多单扇区越窄，间隙随之收窄（R>6 时 0.24rad≈13.7°）。
+ * 旧公式 half=(π/R)*0.92 在 R≥8 时半角超过扇区角一半 → 相邻扇区弧带重叠，
+ * 新公式从几何上保证 2*half+GAP = 2π/R（整圆恒等）。 */
+export function sectorGapAngle(sectorCount: number): number {
+  return sectorCount <= 6 ? 0.38 : 0.24;
+}
+
+/** 单扇区半角（弧度）。单扇区=整圆。R≥2 时严格小于旧值 (π/R)*0.92。 */
+export function sectorHalfAngle(sectorCount: number): number {
+  if (sectorCount <= 0) return 0;
+  if (sectorCount === 1) return Math.PI;
+  return Math.max(0.05, (Math.PI * 2 / sectorCount - sectorGapAngle(sectorCount)) / 2);
+}
+
+/** 聚焦目标：扇区（hub 簇）或单节点邻域。 */
+export type FocusTarget = { kind: 'sector'; hubId: string } | { kind: 'node'; id: string };
+
+/** 一组点的包围盒 + 留白（聚焦视野）。空集 → null。 */
+export function focusView(points: Array<{ x: number; y: number }>, pad = 70): RadialView | null {
+  if (points.length === 0) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of points) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  return { minX: minX - pad, minY: minY - pad, width: maxX - minX + pad * 2, height: maxY - minY + pad * 2 };
+}
+
+/** 缩放钳制：zoom = fit.width / vb.width 必须落在 [minZoom, maxZoom]，
+ * 越界时以当前视野中心为锚回缩。平移不限（自由拖，复位按钮兜底）。 */
+export function clampZoomView(
+  vb: RadialView,
+  fit: RadialView,
+  minZoom = 0.25,
+  maxZoom = 8,
+): RadialView {
+  const zoom = fit.width / vb.width;
+  if (zoom >= minZoom && zoom <= maxZoom) return vb;
+  const target = zoom < minZoom ? minZoom : maxZoom;
+  const width = fit.width / target;
+  const cx = vb.minX + vb.width / 2;
+  const cy = vb.minY + vb.height / 2;
+  return { minX: cx - width / 2, minY: cy - (vb.height * (width / vb.width)) / 2, width, height: vb.height * (width / vb.width) };
+}
+
+/** 缩放后的标签薄化：zoom 超过阈值时文件标签不可读（SVG 等比放大），
+ * 只保留 hub 标签 + 悬停标签。 */
+export const LABEL_CULL_ZOOM = 2.5;
 export function radialLayout(
   nodes: GNode[],
   edgePairs: Array<[string, string]>,
   agentOrder?: string[],
-): { pos: Map<string, { x: number; y: number }>; view: RadialView } {
+): {
+  pos: Map<string, { x: number; y: number }>;
+  view: RadialView;
+  /** 节点 id → 所属扇区 hub 的节点 id（聚焦/簇淡出的归属依据）。 */
+  sectorOf: Map<string, string>;
+  /** 扇区 hub 的节点 id 列表（顺序=扇区顺序）。 */
+  hubs: string[];
+} {
   const n = nodes.length;
   const pos = new Map<string, { x: number; y: number }>();
-  if (n === 0) return { pos, view: { minX: -380, minY: -210, width: 760, height: 420 } };
+  const sectorOf = new Map<string, string>();
+  if (n === 0) return { pos, view: { minX: -380, minY: -210, width: 760, height: 420 }, sectorOf, hubs: [] };
   const idxOf = new Map<string, number>(nodes.map((nd, i) => [nd.id, i]));
   const adj: number[][] = Array.from({ length: n }, () => []);
   const deg = new Array<number>(n).fill(0);
@@ -417,9 +486,11 @@ export function radialLayout(
   const R = sectors.length;
   sectors.forEach((s, si) => {
     const theta = -Math.PI / 2 + (si * 2 * Math.PI) / R;
-    const half = (Math.PI / R) * 0.92;
+    // 簇分离：扇区间留 GAP 空白楔（旧 (π/R)*0.92 在 R≥8 时相邻弧带重叠）。
+    const half = sectorHalfAngle(R);
     const hubR = R === 1 ? 0 : 46;
     pos.set(nodes[s.hub].id, { x: Math.cos(theta) * hubR, y: Math.sin(theta) * hubR });
+    sectorOf.set(nodes[s.hub].id, nodes[s.hub].id);
     const byDepth = new Map<number, number[]>();
     for (let i = 0; i < n; i += 1) {
       if (sectorIdx[i] !== si || i === s.hub) continue;
@@ -444,6 +515,7 @@ export function radialLayout(
         ring.forEach((i, k) => {
           const a = theta - half + ((k + 0.5) * 2 * half) / ring.length;
           pos.set(nodes[i].id, { x: Math.cos(a) * r, y: Math.sin(a) * r });
+          sectorOf.set(nodes[i].id, nodes[s.hub].id);
         });
       });
     });
@@ -456,21 +528,35 @@ export function radialLayout(
   });
   if (!Number.isFinite(minX)) { minX = -380; minY = -210; maxX = 380; maxY = 210; }
   const pad = 64;
-  return { pos, view: { minX: minX - pad, minY: minY - pad, width: maxX - minX + pad * 2, height: maxY - minY + pad * 2 } };
+  return {
+    pos,
+    view: { minX: minX - pad, minY: minY - pad, width: maxX - minX + pad * 2, height: maxY - minY + pad * 2 },
+    sectorOf,
+    hubs: sectors.map((s) => nodes[s.hub].id),
+  };
 }
 /** GNode 的 virtual 判定（聚合模式 id 带 worker 前缀，virtual 标志仍在原字段）。 */
 function nd_virtual(nd: GNode): boolean {
   return Boolean(nd.virtual) || nd.id.startsWith('virtual:');
 }
 
-// ── 2D 图谱子组件 ──────────────────────────────────────────────────────────
-function KnowledgeGraph({
+// ── 2D 图谱子组件（v3：缩放/平移 + 聚焦 + 簇分离）──────────────────────────
+// 第 11 轮（装验反馈 9/18「2D 太乱，加缩放、最好聚焦、分开簇」）：
+//   ① 缩放：wheel 光标锚点缩放（钳制 0.25×–8×）+ 拖拽平移 + ＋/－/复位按钮
+//   ② 聚焦：点簇根（hub）→ 动画收敛到簇 bbox + 簇外淡出 0.1 + 退出 chip；
+//      文件节点双击=邻域聚焦（节点+一度邻接）；单击文件=预览（语义不变）；
+//      Esc / 背景单击 / chip / 复位=退出
+//   ③ 簇分离：扇区 GAP 空白楔（radialLayout 已改）+ 虚线扇区边界弧
+//   ④ 高倍薄化：zoom>2.5× 时只留簇根+悬停标签（SVG 文字等比放大不可读）
+export function KnowledgeGraph({
   nodes,
   edges,
   pos,
   view,
   onSelect,
   agentPalette,
+  sectorOf,
+  hubs,
 }: {
   nodes: GNode[];
   edges: GEdge[];
@@ -479,8 +565,208 @@ function KnowledgeGraph({
   onSelect: (_path: string, _agent?: string) => void;
   /** 聚合模式：按 Worker 着色（插件 agentLegend 同款）。 */
   agentPalette?: { name: string; color: string }[];
+  /** 节点 id → 所属扇区 hub id（radialLayout 产出，聚焦归属）。 */
+  sectorOf?: Map<string, string>;
+  /** 扇区 hub id 列表（聚焦目标 + 边界弧）。 */
+  hubs?: string[];
 }) {
   const [hover, setHover] = useState<number | null>(null);
+  // v3：当前视野（初始=自适应 view）、聚焦目标、拖拽态。
+  const [vb, setVb] = useState<RadialView>(view);
+  const [focus, setFocus] = useState<FocusTarget | null>(null);
+  const [panning, setPanning] = useState(false);
+  const svgRef = useRef<SVGSVGElement | null>(null);
+  const vbRef = useRef(vb);
+  const focusRef = useRef(focus);
+  const animRaf = useRef(0);
+  const dragRef = useRef<{ startX: number; startY: number; vb0: RadialView; moved: boolean } | null>(null);
+
+  // 布局换图（切 Worker/聚合）→ 重置缩放与聚焦（render 阶段状态调整——
+  // React 文档「adjusting state when props change」模式，非 effect setState）。
+  const layoutSig = `${view.minX},${view.minY},${view.width},${view.height}#${pos.size}`;
+  const [layoutSigRef, setLayoutSigRef] = useState(layoutSig);
+  if (layoutSig !== layoutSigRef) {
+    setLayoutSigRef(layoutSig);
+    setVb(view);
+    setFocus(null);
+  }
+  // 事件处理器/动画帧读 ref 镜像（effect 同步，不在 render 阶段写 ref）。
+  useEffect(() => { vbRef.current = vb; });
+  useEffect(() => { focusRef.current = focus; });
+
+  const zoom = view.width / Math.max(1e-6, vb.width);
+
+  const cancelAnim = useCallback(() => {
+    if (animRaf.current) cancelAnimationFrame(animRaf.current);
+    animRaf.current = 0;
+  }, []);
+  const animateTo = useCallback((target: RadialView, ms = 320) => {
+    cancelAnim();
+    const from = { ...vbRef.current };
+    const t0 = performance.now();
+    const step = (t: number) => {
+      const k = Math.min(1, (t - t0) / ms);
+      const e = 1 - Math.pow(1 - k, 3); // easeOutCubic
+      setVb({
+        minX: from.minX + (target.minX - from.minX) * e,
+        minY: from.minY + (target.minY - from.minY) * e,
+        width: from.width + (target.width - from.width) * e,
+        height: from.height + (target.height - from.height) * e,
+      });
+      if (k < 1) animRaf.current = requestAnimationFrame(step);
+    };
+    animRaf.current = requestAnimationFrame(step);
+  }, [cancelAnim]);
+  useEffect(() => cancelAnim, [cancelAnim]);
+
+  // 簇根集合：优先 radialLayout hubs；缺省回退 virtual 根。
+  const hubSet = useMemo(
+    () => new Set(hubs && hubs.length > 0 ? hubs : nodes.filter(nd_virtual).map((nd) => nd.id)),
+    [hubs, nodes],
+  );
+  // 聚焦根=virtual 簇根（分类根/Worker 根，非文件）→ 单击=聚焦簇。
+  // 伪根（无 virtual 根时取度数 top 文件当 hub）仍是文件 → 单击保持预览，
+  // 双击=聚焦其扇区（hubSet 分支）——否则无根图谱全节点都点不开预览。
+  const focusHubSet = useMemo(
+    () => new Set([...hubSet].filter((id) => {
+      const nd = nodes.find((x) => x.id === id);
+      return nd ? nd_virtual(nd) : false;
+    })),
+    [hubSet, nodes],
+  );
+
+  // 聚焦集：扇区=全成员；节点=节点+一度邻接。
+  const focusSet = useMemo<Set<string> | null>(() => {
+    if (!focus) return null;
+    const s = new Set<string>();
+    if (focus.kind === 'sector') {
+      nodes.forEach((nd) => {
+        if ((sectorOf?.get(nd.id) ?? nd.id) === focus.hubId) s.add(nd.id);
+      });
+      if (s.size === 0) s.add(focus.hubId);
+    } else {
+      s.add(focus.id);
+      edges.forEach((e) => {
+        if (nodes[e.s].id === focus.id) s.add(nodes[e.t].id);
+        if (nodes[e.t].id === focus.id) s.add(nodes[e.s].id);
+      });
+    }
+    return s;
+  }, [focus, nodes, edges, sectorOf]);
+
+  const applyFocus = useCallback((target: FocusTarget | null) => {
+    cancelAnim();
+    setFocus(target);
+    if (!target) {
+      animateTo(view, 320);
+      return;
+    }
+    const ids = new Set<string>();
+    if (target.kind === 'sector') {
+      nodes.forEach((nd) => {
+        if ((sectorOf?.get(nd.id) ?? nd.id) === target.hubId) ids.add(nd.id);
+      });
+    } else {
+      ids.add(target.id);
+      edges.forEach((e) => {
+        if (nodes[e.s].id === target.id) ids.add(nodes[e.t].id);
+        if (nodes[e.t].id === target.id) ids.add(nodes[e.s].id);
+      });
+    }
+    const pts = [...ids]
+      .map((id) => pos.get(id))
+      .filter((p): p is { x: number; y: number } => Boolean(p));
+    animateTo(focusView(pts) ?? view, 320);
+  }, [nodes, edges, pos, sectorOf, view, animateTo, cancelAnim]);
+
+  // Esc 退出聚焦。
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && focusRef.current) applyFocus(null);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [applyFocus]);
+
+  // wheel 缩放：原生 non-passive 监听（React 合成 onWheel 为 passive，
+  // preventDefault 无效 → 页面会跟着滚）。
+  useEffect(() => {
+    const svg = svgRef.current;
+    if (!svg) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      cancelAnim();
+      const vb0 = vbRef.current;
+      const factor = e.deltaY < 0 ? 1 / 1.18 : 1.18;
+      let ax = vb0.minX + vb0.width / 2;
+      let ay = vb0.minY + vb0.height / 2;
+      try {
+        const ctm = svg.getScreenCTM();
+        if (ctm) {
+          const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(ctm.inverse());
+          ax = pt.x;
+          ay = pt.y;
+        } else {
+          const rect = svg.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            ax = vb0.minX + ((e.clientX - rect.left) / rect.width) * vb0.width;
+            ay = vb0.minY + ((e.clientY - rect.top) / rect.height) * vb0.height;
+          }
+        }
+      } catch {
+        /* jsdom：锚点回退视野中心 */
+      }
+      const w1 = vb0.width * factor;
+      const h1 = vb0.height * factor;
+      const fx = (ax - vb0.minX) / vb0.width;
+      const fy = (ay - vb0.minY) / vb0.height;
+      setVb(clampZoomView({ minX: ax - fx * w1, minY: ay - fy * h1, width: w1, height: h1 }, view));
+    };
+    svg.addEventListener('wheel', onWheel, { passive: false });
+    return () => svg.removeEventListener('wheel', onWheel);
+  }, [view, cancelAnim]);
+
+  const zoomBy = useCallback((factor: number) => {
+    const vb0 = vbRef.current;
+    const w1 = vb0.width * factor;
+    const h1 = vb0.height * factor;
+    const cx = vb0.minX + vb0.width / 2;
+    const cy = vb0.minY + vb0.height / 2;
+    animateTo(clampZoomView({ minX: cx - w1 / 2, minY: cy - h1 / 2, width: w1, height: h1 }, view), 160);
+  }, [animateTo, view]);
+
+  // 拖拽平移（位移 <4px 视为背景单击 → 退出聚焦）。
+  const onSvgMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return;
+    cancelAnim();
+    dragRef.current = { startX: e.clientX, startY: e.clientY, vb0: { ...vbRef.current }, moved: false };
+  };
+  const onSvgMouseMove = (e: React.MouseEvent) => {
+    const d = dragRef.current;
+    if (!d) return;
+    const dx = e.clientX - d.startX;
+    const dy = e.clientY - d.startY;
+    if (!d.moved && Math.hypot(dx, dy) < 4) return;
+    d.moved = true;
+    const svg = svgRef.current;
+    if (!svg) return;
+    let scale = d.vb0.width / Math.max(1, svg.getBoundingClientRect().width);
+    try {
+      const ctm = svg.getScreenCTM();
+      if (ctm && ctm.a) scale = 1 / ctm.a;
+    } catch {
+      /* 回退 bounding rect 换算 */
+    }
+    if (!panning) setPanning(true);
+    setVb({ ...d.vb0, minX: d.vb0.minX - dx * scale, minY: d.vb0.minY - dy * scale });
+  };
+  const onSvgMouseUp = () => {
+    const d = dragRef.current;
+    dragRef.current = null;
+    setPanning(false);
+    if (d && !d.moved && focusRef.current) applyFocus(null);
+  };
+
   const adjacent = useMemo(() => {
     const set = new Set<number>();
     if (hover != null) {
@@ -511,68 +797,144 @@ function KnowledgeGraph({
     if (agentPalette && nodes[i].agent) return 'rgba(0,0,0,0.25)';
     return nodes[i].isMemory ? '#b45309' : '#4338ca';
   };
+  // ④ 高倍薄化：>2.5× 只留簇根+悬停标签。
+  const cullLabels = zoom > LABEL_CULL_ZOOM;
+  const dimmed = (id: string): boolean => focusSet != null && !focusSet.has(id);
+  const focusLabel = focus
+    ? nodes.find((nd) => (focus.kind === 'sector' ? nd.id === focus.hubId : nd.id === focus.id))?.label
+    : null;
+  const hubColorOf = (hubId: string): string => {
+    const i = nodes.findIndex((nd) => nd.id === hubId);
+    return i >= 0 ? colorOf(i) : '#8c8c8c';
+  };
   return (
-    <svg
-      viewBox={`${view.minX} ${view.minY} ${view.width} ${view.height}`}
-      className="h-full w-full"
-      role="img"
-      aria-label="知识库 wikilink 图谱"
-    >
-      {edges.map((e, i) => {
-        const a = pos.get(nodes[e.s].id);
-        const b = pos.get(nodes[e.t].id);
-        if (!a || !b) return null;
-        return (
-          <line
-            key={i}
-            x1={a.x}
-            y1={a.y}
-            x2={b.x}
-            y2={b.y}
-            stroke={hover != null && adjacent.has(i) ? '#f59e0b' : '#94a3b8'}
-            strokeOpacity={hover == null ? 0.3 : adjacent.has(i) ? 0.85 : 0.08}
-            strokeWidth={hover != null && adjacent.has(i) ? 1.6 : 1}
-          />
-        );
-      })}
-      {nodes.map((node, i) => {
-        const p = pos.get(node.id);
-        if (!p) return null;
-        return (
-        <g
-          key={node.id}
-          transform={`translate(${p.x}, ${p.y})`}
-          className="cursor-pointer"
-          onMouseEnter={() => setHover(i)}
-          onMouseLeave={() => setHover(null)}
-          onClick={() => onSelect(node.path, node.agent)}
+    <div className="relative h-full w-full overflow-hidden">
+      <svg
+        ref={svgRef}
+        viewBox={`${vb.minX} ${vb.minY} ${vb.width} ${vb.height}`}
+        className="h-full w-full"
+        style={{ cursor: panning ? 'grabbing' : 'grab', touchAction: 'none' }}
+        role="img"
+        aria-label="知识库 wikilink 图谱（滚轮缩放、拖拽平移）"
+        onMouseDown={onSvgMouseDown}
+        onMouseMove={onSvgMouseMove}
+        onMouseUp={onSvgMouseUp}
+        onMouseLeave={() => { dragRef.current = null; setPanning(false); }}
+      >
+        {/* ③ 扇区边界虚线弧（簇分离视觉锚）。 */}
+        {hubs && hubs.length > 1 && hubs.map((hubId, si) => {
+          const theta = -Math.PI / 2 + (si * 2 * Math.PI) / hubs.length;
+          const half = sectorHalfAngle(hubs.length);
+          const rMid = 190;
+          const a1 = theta - half;
+          const a2 = theta + half;
+          return (
+            <path
+              key={hubId}
+              d={`M ${Math.cos(a1) * rMid} ${Math.sin(a1) * rMid} A ${rMid} ${rMid} 0 ${2 * half > Math.PI ? 1 : 0} 1 ${Math.cos(a2) * rMid} ${Math.sin(a2) * rMid}`}
+              fill="none"
+              stroke={hubColorOf(hubId)}
+              strokeOpacity={0.14}
+              strokeWidth={1}
+              strokeDasharray="3 5"
+            />
+          );
+        })}
+        {edges.map((e, i) => {
+          const a = pos.get(nodes[e.s].id);
+          const b = pos.get(nodes[e.t].id);
+          if (!a || !b) return null;
+          const inFocus = focusSet ? (focusSet.has(nodes[e.s].id) && focusSet.has(nodes[e.t].id) ? 1 : 0.1) : 1;
+          return (
+            <line
+              key={i}
+              x1={a.x}
+              y1={a.y}
+              x2={b.x}
+              y2={b.y}
+              stroke={hover != null && adjacent.has(i) ? '#f59e0b' : '#94a3b8'}
+              strokeOpacity={(hover == null ? 0.3 : adjacent.has(i) ? 0.85 : 0.08) * inFocus}
+              strokeWidth={hover != null && adjacent.has(i) ? 1.6 : 1}
+            />
+          );
+        })}
+        {nodes.map((node, i) => {
+          const p = pos.get(node.id);
+          if (!p) return null;
+          const isHub = hubSet.has(node.id);
+          const dim = dimmed(node.id);
+          return (
+          <g
+            key={node.id}
+            transform={`translate(${p.x}, ${p.y})`}
+            className="cursor-pointer"
+            onMouseEnter={() => setHover(i)}
+            onMouseLeave={() => setHover(null)}
+            onClick={(e) => {
+              e.stopPropagation(); // 不触发 svg 背景逻辑（退出聚焦）
+              if (focusHubSet.has(node.id)) {
+                applyFocus({ kind: 'sector', hubId: node.id });
+                return;
+              }
+              onSelect(node.path, node.agent);
+            }}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              if (isHub) applyFocus({ kind: 'sector', hubId: node.id });
+              else applyFocus({ kind: 'node', id: node.id });
+            }}
+          >
+            <circle
+              r={hover === i ? Math.min(15, 6 + node.deg * 1.2) : Math.min(13, 5 + node.deg)}
+              fill={colorOf(i)}
+              fillOpacity={dim ? 0.1 : hover == null || adjacent.has(i) ? 0.75 : 0.25}
+              stroke={strokeOf(i)}
+              strokeOpacity={dim ? 0.1 : 1}
+            />
+            {(!agentPalette || hover === i || (labeledIds?.has(i) ?? false)) &&
+              (!cullLabels || hover === i || isHub) && !dim && (
+                <text
+                  y={-Math.min(13, 5 + node.deg) - 4}
+                  textAnchor="middle"
+                  className="select-none"
+                  fontSize="10"
+                  fill="currentColor"
+                  opacity={hover == null || adjacent.has(i) ? 0.85 : 0.3}
+                  style={{ paintOrder: 'stroke' }}
+                  stroke="var(--card)"
+                  strokeWidth="3"
+                  strokeLinejoin="round"
+                >
+                  {node.label.length > 14 ? `${node.label.slice(0, 14)}…` : node.label}
+                </text>
+              )}
+          </g>
+          );
+        })}
+      </svg>
+      {/* ② 聚焦 chip（点按退出）。 */}
+      {focus && (
+        <button
+          type="button"
+          onClick={() => applyFocus(null)}
+          className="absolute left-2 top-2 rounded-md border border-violet-500/40 bg-violet-500/10 px-2 py-0.5 text-xs text-violet-700 hover:bg-violet-500/20 dark:text-violet-300"
         >
-          <circle
-            r={hover === i ? Math.min(15, 6 + node.deg * 1.2) : Math.min(13, 5 + node.deg)}
-            fill={colorOf(i)}
-            fillOpacity={hover == null || adjacent.has(i) ? 0.75 : 0.25}
-            stroke={strokeOf(i)}
-          />
-          {(!agentPalette || hover === i || (labeledIds?.has(i) ?? false)) && (
-            <text
-              y={-Math.min(13, 5 + node.deg) - 4}
-              textAnchor="middle"
-              className="select-none"
-              fontSize="10"
-              fill="currentColor"
-              opacity={hover == null || adjacent.has(i) ? 0.85 : 0.3}
-              style={{ paintOrder: 'stroke' }}
-              stroke="var(--card)"
-              strokeWidth="3"
-              strokeLinejoin="round"
-            >
-              {node.label.length > 14 ? `${node.label.slice(0, 14)}…` : node.label}
-            </text>
-          )}
-        </g>
-        );
-      })}
-    </svg>
+          🎯 {focusLabel ?? '簇'} · 退出
+        </button>
+      )}
+      {/* ① 缩放控制。 */}
+      <div className="absolute right-2 top-2 flex flex-col gap-1">
+        <button type="button" onClick={() => zoomBy(1 / 1.5)} title="放大" aria-label="放大"
+          className="h-6 w-6 rounded-md border border-border bg-background/85 text-sm leading-none hover:bg-accent">＋</button>
+        <button type="button" onClick={() => zoomBy(1.5)} title="缩小" aria-label="缩小"
+          className="h-6 w-6 rounded-md border border-border bg-background/85 text-sm leading-none hover:bg-accent">－</button>
+        <button type="button" onClick={() => { setFocus(null); animateTo(view, 320); }} title="复位视野" aria-label="复位视野"
+          className="h-6 w-6 rounded-md border border-border bg-background/85 text-sm leading-none hover:bg-accent">⟳</button>
+      </div>
+      <div className="pointer-events-none absolute bottom-1 left-2 text-[10px] text-muted-foreground">
+        滚轮缩放 · 拖拽平移 · 点簇根聚焦 · 双击节点邻域 · Esc 退出
+      </div>
+    </div>
   );
 }
 
@@ -675,8 +1037,8 @@ export function KnowledgeSection() {
       const pairs = ag.edges.map(
         (e) => [ag.nodes[e.s].id, ag.nodes[e.t].id] as [string, string],
       );
-      const { pos, view } = radialLayout(ag.nodes as GNode[], pairs);
-      setGraph({ nodes: ag.nodes as GNode[], edges: ag.edges, pos, view });
+      const { pos, view, sectorOf, hubs } = radialLayout(ag.nodes as GNode[], pairs);
+      setGraph({ nodes: ag.nodes as GNode[], edges: ag.edges, pos, view, sectorOf, hubs });
     } catch (err) {
       if (gen === genRef.current) setLoadError(err instanceof Error ? err.message : '加载失败');
     } finally {
@@ -717,8 +1079,8 @@ export function KnowledgeSection() {
       const pairs = edges.map(
         (e) => [nodes[e.s].id, nodes[e.t].id] as [string, string],
       );
-      const { pos, view } = radialLayout(nodes, pairs, scope);
-      setMergedGraph({ nodes, edges, pos, view });
+      const { pos, view, sectorOf, hubs } = radialLayout(nodes, pairs, scope);
+      setMergedGraph({ nodes, edges, pos, view, sectorOf, hubs });
     } catch {
       if (gen === mergedGenRef.current) setMergedGraph(null);
     } finally {
@@ -1180,6 +1542,8 @@ export function KnowledgeSection() {
                           edges={currentGraph.edges}
                           pos={currentGraph.pos}
                           view={currentGraph.view}
+                          sectorOf={currentGraph.sectorOf}
+                          hubs={currentGraph.hubs}
                           onSelect={(p, agent) => {
                             // 分类根/未解析灰点不可点开（与 3D 守卫同款）。
                             if (p.startsWith('virtual:')) return;
