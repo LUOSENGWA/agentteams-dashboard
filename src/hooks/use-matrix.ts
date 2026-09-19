@@ -7,6 +7,7 @@ import { isWorkflowPayload, type WorkflowPayload } from '@/lib/a2ui/workflow';
 import { parseAgentRunBlocks, type ParsedA2uiBlock } from '@/lib/a2ui/parser';
 import type { WorkerRuntime } from '@/lib/agentteams-api';
 import { create } from 'zustand';
+import { consumeBufferedEvents } from '@/lib/matrix-sync-buffer';
 
 // Helper to get Matrix connection params
 function useMatrixParams() {
@@ -226,6 +227,38 @@ export function isMessageReadByOthers(
   );
 }
 
+/**
+ * Merge fresh raw timeline events into a messages `chunk` array in place
+ * (shared by the /sync buffer replay below). Dedupe by event_id: edits
+ * (m.replace) replace the existing event in place, new events are
+ * prepended (page 0 is newest-first).
+ */
+export function mergeRawEventsInto(
+  chunk: MatrixEvent[],
+  fresh: MatrixEvent[],
+): MatrixEvent[] {
+  const idToIndex = new Map<string, number>();
+  chunk.forEach((e, i) => {
+    if (e.event_id) idToIndex.set(e.event_id, i);
+  });
+  // Two passes: replace edits in place first, then unshift new events once
+  // (unshifting mid-loop would invalidate the index map).
+  const newEvents: MatrixEvent[] = [];
+  for (const f of fresh) {
+    if (!f.event_id) continue;
+    const i = idToIndex.get(f.event_id);
+    if (i !== undefined) {
+      chunk[i] = f;
+    } else {
+      newEvents.push(f);
+    }
+  }
+  // Page 0 is newest-first; buffered /sync events arrive oldest-first, so
+  // reverse the batch before prepending.
+  if (newEvents.length > 0) chunk.unshift(...newEvents.reverse());
+  return chunk;
+}
+
 export function useMatrixRoomMessages(roomId: string | null) {
   const { homeserver, accessToken, isLoggedIn } = useMatrixParams();
 
@@ -235,16 +268,26 @@ export function useMatrixRoomMessages(roomId: string | null) {
       if (!homeserver || !accessToken || !roomId) {
         return { chunk: [], start: '', end: '' };
       }
-      return matrixApi.getRoomMessages(homeserver, accessToken, roomId, {
+      const data = await matrixApi.getRoomMessages(homeserver, accessToken, roomId, {
         dir: 'b',
         limit: 50,
         from: pageParam as string | undefined,
       });
+      // Element-style realtime: replay the /sync events that arrived while
+      // this room had no message cache (buffered by useGlobalMatrixSync).
+      // Only the first page (latest events) participates — history pages
+      // fetched via "load more" are immutable.
+      if (pageParam === undefined) {
+        const buffered = consumeBufferedEvents(roomId);
+        if (buffered.length > 0) {
+          data.chunk = mergeRawEventsInto(data.chunk, buffered);
+        }
+      }
+      return data;
     },
     initialPageParam: undefined as string | undefined,
     getNextPageParam: (lastPage) => lastPage.end || undefined,
     enabled: isLoggedIn && !!roomId && !!homeserver && !!accessToken,
-    refetchInterval: 10000, // Poll every 10s for new messages
     staleTime: 5000,
   });
 }
@@ -331,7 +374,6 @@ export function useMatrixThreadMessages(roomId: string | null, threadId: string 
     },
     enabled: isLoggedIn && !!roomId && !!threadId && !!homeserver && !!accessToken,
     staleTime: 5000,
-    refetchInterval: 10000, // Keep the thread live while it is open
   });
 }
 
