@@ -21,6 +21,13 @@ export interface SessionUser {
   level: number;
 }
 
+/** 12.16: does this cookie header carry a Higress Console session cookie?
+ *  (Same name filter as extractSessionCookie — used by the higress proxy
+ *  helper to decide browser-cookie vs server-bound-session.) */
+export function hasHigressSessionCookie(cookie: string | null | undefined): boolean {
+  return Boolean(cookie && extractSessionCookie(cookie));
+}
+
 function extractSessionCookie(cookie: string): string {
   // Extract only Higress-relevant cookies to keep the cache key stable
   // and avoid pollution from unrelated cookies (GA, ads, etc.).
