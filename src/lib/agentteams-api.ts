@@ -47,6 +47,14 @@ export interface WorkerResponse {
   lastActivityAt?: string;
   /** Short summary of the most recent task (optional, <= 32 chars, backend vNext). */
   lastTaskSummary?: string;
+  /** Runtime task-level state from the worker heartbeat: "idle" | "running" | "disabled"; empty/undefined = not reported (older controller). */
+  agentStatus?: 'idle' | 'running' | 'disabled' | (string & {});
+  /** Number of tasks the worker runtime is currently executing (optional, backend vNext). */
+  runningTaskCount?: number;
+  /** ISO8601 time the worker's task tracker last started a run (optional, backend vNext). */
+  lastRunAt?: string;
+  /** ISO8601 time the worker's task tracker last finished a run (optional, backend vNext). */
+  lastFinishAt?: string;
 }
 
 export interface TeamResponse {
