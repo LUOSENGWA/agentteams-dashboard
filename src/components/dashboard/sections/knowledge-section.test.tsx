@@ -47,6 +47,7 @@ const TREE_MEMORY = {
 };
 const TREE_DIGEST = { directory: 'digest', entries: [], has_more: false, next_cursor: null };
 
+// a.md 链接 [[b]] 与 [[MEMORY]] → 每 Worker 2 条边
 const CONTENTS: Record<string, string> = {
   'MEMORY.md': '# 总索引',
   'memory/a.md': 'see [[b]] and [[MEMORY]]',
@@ -78,18 +79,26 @@ function mockFetch(statuses?: { top?: number; memory?: number; digest?: number; 
         status,
         headers: new Headers(),
         json: async () => body,
+        blob: async () => new Blob([String(body)]),
       } as unknown as Response;
     }),
   );
 }
 
-describe('KnowledgeSection（v2：docker-proxy 数据面 + 四分类 + 团队分组）', () => {
+/** 切 2D（jsdom 无 WebGL：默认 3D 视图先落降级横幅，点「回到 2D」） */
+async function switchTo2D() {
+  fireEvent.click(await screen.findByRole('button', { name: '回到 2D' }));
+  return (await screen.findByRole('img', { name: /wikilink 图谱/ })) as unknown as { querySelectorAll: (_s: string) => NodeListOf<SVGElement> };
+}
+
+describe('KnowledgeSection（v3：3D / 预览与图谱分离 / 团队聚合 / 选择记忆）', () => {
   beforeEach(() => {
     vi.useRealTimers();
     workersHolder.list = [
       { name: 'w1', team: 't1', role: 'team_leader' },
       { name: 'w2', team: 't2', role: 'worker' },
     ];
+    window.localStorage.clear();
   });
   afterEach(() => {
     cleanup();
@@ -102,10 +111,12 @@ describe('KnowledgeSection（v2：docker-proxy 数据面 + 四分类 + 团队分
     expect(await screen.findByText(/容器 agentteams-worker-w1 不存在/)).toBeInTheDocument();
   });
 
-  it('② 200 → wikilink 图谱：节点+边+标签', async () => {
+  it('② 默认 3D：jsdom 无 WebGL → 降级横幅 + 一键回 2D（图谱不炸 tab）', async () => {
     mockFetch();
     render(<KnowledgeSection />);
-    const svg = (await screen.findByRole('img', { name: /wikilink 图谱/ })) as unknown as { querySelectorAll: (_s: string) => NodeListOf<SVGElement> };
+    expect(await screen.findByText(/3D 图谱不可用/)).toBeInTheDocument();
+    expect(screen.getByText('已自动保留 2D 图谱视图')).toBeInTheDocument();
+    const svg = await switchTo2D();
     const texts = Array.from(svg.querySelectorAll('text')).map((t) => t.textContent ?? '');
     expect(texts).toContain('MEMORY'); // MEMORY.md 干
     expect(texts).toContain('a');
@@ -114,24 +125,27 @@ describe('KnowledgeSection（v2：docker-proxy 数据面 + 四分类 + 团队分
     expect(svg.querySelectorAll('line').length).toBe(2);
   });
 
-  it('③ 点图谱节点 → 打开 md 预览（MarkdownMessage 透传）', async () => {
+  it('③ 点图谱节点 → 打开预览 且 图谱仍驻留（预览与图谱分离，回退不空白）', async () => {
     mockFetch();
     render(<KnowledgeSection />);
-    const svg = (await screen.findByRole('img', { name: /wikilink 图谱/ })) as unknown as { querySelectorAll: (_s: string) => NodeListOf<SVGElement> };
+    const svg = await switchTo2D();
     const nodeA = Array.from(svg.querySelectorAll('text')).find((t) => t.textContent === 'a')!;
     fireEvent.click(nodeA);
+    // 预览卡更新
     expect(await screen.findByText('memory/a.md')).toBeInTheDocument();
     const md = await screen.findByTestId('md');
     expect(md.textContent).toBe('see [[b]] and [[MEMORY]]');
+    // 图谱卡仍在（未切换视图、无空白态）
+    expect(screen.getByRole('img', { name: /wikilink 图谱/ })).toBeInTheDocument();
+    // 空预览提示消失
+    expect(screen.queryByText(/点击左侧文件查看内容/)).not.toBeInTheDocument();
   });
 
-  it('④ 文件视图：四分类分组 + 展开 memory → 点文件预览', async () => {
+  it('④ 四分类分组常驻左栏 + 展开 memory → 点文件预览（图谱卡并存）', async () => {
     mockFetch();
     render(<KnowledgeSection />);
-    await screen.findByText('知识库');
-    // 视图切换按钮（分组标签 <p>文件 同名，按 role 限 button）
-    fireEvent.click(screen.getByRole('button', { name: '文件' }));
-    // 四分类分组头（'文件' 与视图切换按钮同名，按 <p> 限定）
+    await screen.findByText('知识文件');
+    // 四分类分组头常驻（左栏文件树，无需切视图）
     expect(screen.getByText('档案')).toBeInTheDocument();
     expect(screen.getAllByText('文件', { selector: 'p' }).length).toBe(1);
     expect(screen.getByText('日记 memory')).toBeInTheDocument();
@@ -146,6 +160,8 @@ describe('KnowledgeSection（v2：docker-proxy 数据面 + 四分类 + 团队分
     fireEvent.click(fileBtn);
     expect(await screen.findByText('memory/a.md')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId('md').textContent).toBe('see [[b]] and [[MEMORY]]'));
+    // 图谱卡标题常驻
+    expect(screen.getByText('知识图谱（wikilink 引用网络）')).toBeInTheDocument();
   });
 
   it('⑥ 默认 worker 钉住：轮询重取顺序漂移不重置视图（展开的目录保留）', async () => {
@@ -153,16 +169,15 @@ describe('KnowledgeSection（v2：docker-proxy 数据面 + 四分类 + 团队分
     render(<KnowledgeSection />);
     const select = screen.getByRole('combobox', { name: /选择 Worker/ }) as HTMLSelectElement;
     await waitFor(() => expect(select.value).toBe('w1')); // 首份列表钉住 w1
-    // 展开 memory/
-    fireEvent.click(screen.getByRole('button', { name: '文件' }));
-    fireEvent.click(screen.getByText('memory/'));
+    // 展开 memory/（等文件树落地——顶层 fetch 是异步的）
+    fireEvent.click(await screen.findByText('memory/'));
     await screen.findByText('a.md');
-    // 轮询重取：列表顺序漂移（w2 变第一）+ 触发重渲染
+    // 轮询重取：列表顺序漂移（w2 变第一）+ 触发重渲染（折叠/展开图谱卡）
     workersHolder.list = [
       { name: 'w2', team: 't2', role: 'worker' },
       { name: 'w1', team: 't1', role: 'team_leader' },
     ];
-    fireEvent.click(screen.getByRole('button', { name: '图谱' }));
+    fireEvent.click(screen.getByRole('button', { name: '收起' }));
     await waitFor(() => expect(select.value).toBe('w1')); // 钉住不跟随 workers[0]
     expect(screen.getByText('a.md')).toBeInTheDocument(); // 展开状态保留
   });
@@ -177,5 +192,47 @@ describe('KnowledgeSection（v2：docker-proxy 数据面 + 四分类 + 团队分
     expect(g1.map((o) => o.textContent)).toEqual(['w1 · 负责人']);
     const g2 = Array.from(groups[1].querySelectorAll('option'));
     expect(g2.map((o) => o.textContent)).toEqual(['w2']);
+  });
+
+  it('⑦ 团队聚合图谱：跨 Worker 合并建图 + 按 Worker 着色图例 + 聚合范围标注', async () => {
+    mockFetch();
+    render(<KnowledgeSection />);
+    expect(await screen.findByText('当前 Worker 图谱')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /团队聚合图谱/ }));
+    // 聚合范围行（2 Workers）+ 聚合团队选择器（全部团队/t1/t2）
+    expect(await screen.findByText('聚合 2 个 Worker')).toBeInTheDocument();
+    const teamSel = screen.getByRole('combobox', { name: '聚合团队' }) as HTMLSelectElement;
+    expect(Array.from(teamSel.options).map((o) => o.textContent)).toEqual([
+      '全部团队（2 Workers）', 't1（1）', 't2（1）',
+    ]);
+    // 切 2D 断言合并图：w1+w2 各 3 文件 → 6 节点；各 2 边 → 4 边
+    const svg = await switchTo2D();
+    expect(svg.querySelectorAll('circle').length).toBe(6);
+    expect(svg.querySelectorAll('line').length).toBe(4);
+    // 图例=两个 Worker（按 Agent 着色）——option 文案带后缀/计数，图例为精确名
+    expect(screen.getAllByText('w1').length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText('w2').length).toBeGreaterThanOrEqual(1);
+    expect(screen.queryByText('→ 引用方向')).not.toBeInTheDocument();
+  });
+
+  it('⑧ 选择记忆：worker 选择持久化 + 失效值回退（列表落地后校验）', async () => {
+    mockFetch();
+    window.localStorage.setItem('agentteams:kb:worker', 'w2');
+    render(<KnowledgeSection />);
+    const select = screen.getByRole('combobox', { name: /选择 Worker/ }) as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe('w2')); // 记忆恢复
+    // 手动切回 w1 → 持久化更新
+    fireEvent.change(select, { target: { value: 'w1' } });
+    expect(window.localStorage.getItem('agentteams:kb:worker')).toBe('w1');
+  });
+
+  it('⑨ 选择记忆：失效 worker（列表无此人）→ 回退默认推导，不卡死', async () => {
+    mockFetch();
+    window.localStorage.setItem('agentteams:kb:worker', 'ghost-worker');
+    render(<KnowledgeSection />);
+    const select = screen.getByRole('combobox', { name: /选择 Worker/ }) as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe('w1')); // 回退首名（推导默认）
+    // 失效值不被当有效选择持久化——空选择=清除记忆键（回退=推导而非写入）
+    expect(window.localStorage.getItem('agentteams:kb:worker')).toBeNull();
   });
 });

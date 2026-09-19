@@ -1,20 +1,28 @@
 'use client';
 
-// 知识库 v2（workbench 插件同款数据面，9/16 装验定案「照插件做」）。
-//   · 数据面：/api/agentteams/workers/[name]/workspace-files/{tree|file-metadata|file-content}
-//     后端=Controller Docker 代理 tarball 只读（route.ts 内注释；旧 Controller 即开即用，
-//     不再依赖 #1208 端点）——404=真实故障（容器/工作区缺失），直接显示服务端错误。
-//   · KB 布局（插件四分类）：档案=顶层 md / 文件=其余顶层条目（只列不展开）/
-//     日记=memory/** / 知识库=digest/**（懒展开：展开仅 memory/**·digest/**）
-//   · 选择器：团队透传（optgroup 按 team 分组 + 负责人标记）
-//   · 图谱：wikilink 2D 力导向（[[title]] 从 md 内容客户端解析，无新上游依赖；
-//     dashboard 不引 three.js——深交互留给插件宿主版，本处=简化渲染+点节点开预览）
+// 知识库 v3（9/17 装验定案「照插件做」三件：3D / 预览与图谱分离 /
+// 团队聚合图谱——workbench 插件 KnowledgeBase.tsx 同款结构）。
+//   · 数据面（v2 不变）：/api/agentteams/workers/[name]/workspace-files/{tree|file-metadata|file-content}
+//     后端=Controller Docker 代理 tarball 只读（route.ts 内注释）——
+//     404=真实故障（容器/工作区缺失），直接显示服务端错误。
+//   · 布局（插件同构）：左=KB 文件树（四分类）；右=**图谱卡常驻** +
+//     **预览卡独立下置**——点节点/文件只更新预览卡，图谱永不消失
+//     （修「点开预览再点回退退到空白」：单格视图互斥 → 双视图并存）。
+//   · 图谱：2D/3D 双引擎（**默认 3D**，偏好持久化；3D=knowledge-graph3d.tsx
+//     插件 Graph3D 移植，3d-force-graph+three；WebGL 不可用/初始化失败→
+//     降级提示 + 一键回 2D，图谱不炸 tab）。
+//   · 团队聚合图谱（插件 fetchKbGraphMerged 的客户端等价物——dashboard
+//     无插件同款服务端合并端点，改客户端按团队拉各 Worker md 合并建图）：
+//     节点按 Worker 着色（AGENT_PALETTE 插件同值）、id=`worker::path`、
+//     边保留各 Worker 内部；点聚合节点开**目标 Worker** 文件，不切换
+//     当前 Worker（插件 agentOverride 同语义）。
+//   · 选择记忆（插件 kbState 同款）：worker / graphMode / team / 3D-2D
+//     偏好 localStorage 持久化，失效值回退默认。
 //   · 预览：file-content 分块读（offset/eof 循环；v2 后端单块 ≤1MB 即 eof）
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle,
-  ArrowLeft,
   Download,
   FileText,
   FolderOpen,
@@ -22,12 +30,14 @@ import {
   Loader2,
   Network,
   RefreshCw,
+  Users,
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { SectionHeader } from '@/components/dashboard/section-header';
 import { MarkdownMessage } from '@/components/dashboard/sections/chat/markdown-message';
 import { useWorkers } from '@/hooks/use-agentteams-workers';
 import type { WorkerResponse } from '@/lib/agentteams-api';
+import KnowledgeGraph3D, { type G3DNodeInput } from '@/components/dashboard/knowledge-graph3d';
 
 // ── 类型（#1208 D2 / QwenPaw workspace_files.py 实锤形状）──────────────────
 interface TreeEntry {
@@ -52,11 +62,41 @@ interface FileContentResponse {
   etag: string;
 }
 
-interface GNode { id: string; path: string; label: string; deg: number; isMemory: boolean }
+// v3：节点 id=**文件路径**（干名只做 wikilink 匹配键——同干不同目录
+// 两文件不再被合并成一个节点；插件单 Agent 图 id=path 同款）。
+interface GNode {
+  id: string;
+  path: string;
+  label: string;
+  deg: number;
+  isMemory: boolean;
+  /** 聚合模式：节点所属 Worker（着色/跳转用）。 */
+  agent?: string;
+}
 interface GEdge { s: number; t: number }
+interface GraphData { nodes: GNode[]; edges: GEdge[]; positions: { x: number; y: number }[] }
+
+// 聚合节点图例配色（插件 AGENT_PALETTE 同值）。
+const AGENT_PALETTE = [
+  '#FF7F16', '#1677ff', '#52c41a', '#f5222d', '#722ed1',
+  '#fa8c16', '#13c2c2', '#eb2f96',
+];
+
+// 选择记忆键（插件 kbState 同款语义：存值、失效回退默认）。
+const KB_MEM = 'agentteams:kb:';
+function readMem(key: string): string {
+  try { return window.localStorage.getItem(KB_MEM + key) ?? ''; } catch { return ''; }
+}
+function writeMem(key: string, value: string): void {
+  try {
+    if (value) window.localStorage.setItem(KB_MEM + key, value);
+    else window.localStorage.removeItem(KB_MEM + key);
+  } catch { /* 存储不可用（隐私模式）=不记忆，不报错 */ }
+}
 
 const base = (w: string) => `/api/agentteams/workers/${encodeURIComponent(w)}/workspace-files`;
-const MAX_GRAPH_FILES = 60; // 图谱内容抓取上限（防大 KB 拖死）
+const MAX_GRAPH_FILES = 60; // 单 Worker 图谱内容抓取上限（防大 KB 拖死）
+const MAX_MERGED_FILES = 240; // 聚合模式全量上限（跨 Worker 总预算）
 const CHUNK = 200_000; // file-content 单块
 const MAX_CHUNKS = 8; // 单文件最多 1.6MB
 
@@ -142,6 +182,62 @@ function extractWikilinks(md: string): string[] {
 const basename = (p: string) => p.split('/').pop() ?? p;
 const stem = (p: string) => (basename(p).toLowerCase().endsWith('.md') ? basename(p).slice(0, -3) : basename(p));
 
+/** 单 Worker 建图（单 Agent 模式与聚合模式每 Worker 共用）：
+ *  节点=md 文件（id=路径 / label=干名），边=wikilink 按干名匹配（文件内索引）。 */
+async function buildAgentGraph(worker: string, cap: number): Promise<{ nodes: Omit<GNode, 'agent'>[]; edges: GEdge[] }> {
+  const files = await collectMdFiles(worker);
+  // MEMORY.md 若在（KB 布局根文件）优先入图
+  const hasMemory = files.includes('MEMORY.md');
+  const targets = files.filter((f) => f !== 'MEMORY.md').slice(0, cap - 1);
+  const all = hasMemory ? ['MEMORY.md', ...targets] : files.slice(0, cap);
+  const contents: (string | null)[] = new Array(all.length).fill(null);
+  let idx = 0;
+  const concurrency = 6;
+  const workerPool = async () => {
+    while (idx < all.length) {
+      const i = idx;
+      idx += 1;
+      try {
+        contents[i] = await fetchFullContent(worker, all[i]);
+      } catch {
+        contents[i] = null;
+      }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, Math.max(1, all.length)) }, () => workerPool()));
+  const nodes: Omit<GNode, 'agent'>[] = all.map((p) => ({
+    id: p,
+    path: p,
+    label: stem(p),
+    deg: 0,
+    isMemory: p === 'MEMORY.md',
+  }));
+  // 键小写化：wikilink [[MEMORY]] 须匹配节点干 'MEMORY'（target 统一 toLowerCase 查）
+  const idIndex = new Map<string, number>();
+  nodes.forEach((nd, i) => {
+    const k = nd.label.toLowerCase();
+    if (!idIndex.has(k)) idIndex.set(k, i); // 同干多文件=首个（与 v2 一致，label 冲突时边归属首见）
+  });
+  const edges: GEdge[] = [];
+  const seen = new Set<string>();
+  all.forEach((_p, i) => {
+    const links = contents[i] ? extractWikilinks(contents[i]) : [];
+    for (const t of links) {
+      const ti = idIndex.get(t.toLowerCase());
+      if (ti != null && ti !== i) {
+        const key = `${i}-${ti}`;
+        if (!seen.has(key)) {
+          seen.add(key);
+          edges.push({ s: i, t: ti });
+          nodes[i].deg += 1;
+          nodes[ti].deg += 1;
+        }
+      }
+    }
+  });
+  return { nodes, edges };
+}
+
 // ── 2D 力导向布局（确定性：初值=圆环按序，迭代纯函数——无 Math.random）──────
 function forceLayout(nodes: GNode[], edges: GEdge[], w = 760, h = 420): { x: number; y: number }[] {
   const n = nodes.length;
@@ -158,7 +254,7 @@ function forceLayout(nodes: GNode[], edges: GEdge[], w = 760, h = 420): { x: num
   const REST = 92;
   const REP = 2600;
   for (let tick = 0; tick < 140; tick += 1) {
-    // 斥力（O(n²)，n≤60 可接受）
+    // 斥力（O(n²)，n≤240 可接受）
     for (let i = 0; i < n; i += 1) {
       for (let j = i + 1; j < n; j += 1) {
         let dx = px[i] - px[j];
@@ -195,17 +291,20 @@ function forceLayout(nodes: GNode[], edges: GEdge[], w = 760, h = 420): { x: num
   return Array.from({ length: n }, (_, i) => ({ x: px[i], y: py[i] }));
 }
 
-// ── 图谱子组件 ─────────────────────────────────────────────────────────────
+// ── 2D 图谱子组件 ──────────────────────────────────────────────────────────
 function KnowledgeGraph({
   nodes,
   edges,
   positions,
   onSelect,
+  agentPalette,
 }: {
   nodes: GNode[];
   edges: GEdge[];
   positions: { x: number; y: number }[];
-  onSelect: (_path: string) => void;
+  onSelect: (_path: string, _agent?: string) => void;
+  /** 聚合模式：按 Worker 着色（插件 agentLegend 同款）。 */
+  agentPalette?: { name: string; color: string }[];
 }) {
   const [hover, setHover] = useState<number | null>(null);
   const W = 760;
@@ -220,9 +319,27 @@ function KnowledgeGraph({
     }
     return set;
   }, [hover, edges]);
+  // 聚合模式节点多（≤240）：标签只给悬停/选中 + 度数 top14（插件 labeledIds 同规则）
+  const labeledIds = useMemo(() => {
+    if (!agentPalette) return null;
+    const s = new Set<number>();
+    [...nodes.keys()].sort((a, b) => (nodes[b]?.deg ?? 0) - (nodes[a]?.deg ?? 0)).slice(0, 14).forEach((i) => s.add(i));
+    return s;
+  }, [nodes, agentPalette]);
   if (nodes.length === 0) {
     return <p className="p-4 text-xs text-muted-foreground">该 Worker 暂无知识库文件（MEMORY.md/memory/digest）。</p>;
   }
+  const colorOf = (i: number): string => {
+    const node = nodes[i];
+    if (agentPalette && node.agent) {
+      return agentPalette.find((l) => l.name === node.agent)?.color ?? '#8c8c8c';
+    }
+    return node.isMemory ? '#f59e0b' : '#6366f1';
+  };
+  const strokeOf = (i: number): string => {
+    if (agentPalette && nodes[i].agent) return 'rgba(0,0,0,0.25)';
+    return nodes[i].isMemory ? '#b45309' : '#4338ca';
+  };
   return (
     <svg viewBox={`0 0 ${W} ${H}`} className="h-full w-full" role="img" aria-label="知识库 wikilink 图谱">
       {edges.map((e, i) => (
@@ -244,24 +361,26 @@ function KnowledgeGraph({
           className="cursor-pointer"
           onMouseEnter={() => setHover(i)}
           onMouseLeave={() => setHover(null)}
-          onClick={() => onSelect(node.path)}
+          onClick={() => onSelect(node.path, node.agent)}
         >
           <circle
             r={hover === i ? Math.min(15, 6 + node.deg * 1.2) : Math.min(13, 5 + node.deg)}
-            fill={node.isMemory ? '#f59e0b' : '#6366f1'}
+            fill={colorOf(i)}
             fillOpacity={hover == null || adjacent.has(i) ? 0.75 : 0.25}
-            stroke={node.isMemory ? '#b45309' : '#4338ca'}
+            stroke={strokeOf(i)}
           />
-          <text
-            y={-Math.min(13, 5 + node.deg) - 4}
-            textAnchor="middle"
-            className="select-none"
-            fontSize="10"
-            fill="currentColor"
-            opacity={hover == null || adjacent.has(i) ? 0.85 : 0.3}
-          >
-            {node.label.length > 14 ? `${node.label.slice(0, 14)}…` : node.label}
-          </text>
+          {(!agentPalette || hover === i || (labeledIds?.has(i) ?? false)) && (
+            <text
+              y={-Math.min(13, 5 + node.deg) - 4}
+              textAnchor="middle"
+              className="select-none"
+              fontSize="10"
+              fill="currentColor"
+              opacity={hover == null || adjacent.has(i) ? 0.85 : 0.3}
+            >
+              {node.label.length > 14 ? `${node.label.slice(0, 14)}…` : node.label}
+            </text>
+          )}
         </g>
       ))}
     </svg>
@@ -286,82 +405,127 @@ export function KnowledgeSection() {
   );
   const effectiveWorker = worker || sortedWorkers[0]?.name || '';
 
+  // 选择记忆（插件 kbState 同款）：worker 列表落地后校验有效性再恢复
+  // （失效值回退默认推导，不闪错人）。
+  useEffect(() => {
+    if (worker || sortedWorkers.length === 0) return;
+    const saved = readMem('worker');
+    if (saved && sortedWorkers.some((w) => w.name === saved)) {
+      const t = setTimeout(() => setWorker(saved), 0);
+      return () => clearTimeout(t);
+    }
+  }, [worker, sortedWorkers]);
+  useEffect(() => { writeMem('worker', worker); }, [worker]);
+
+  // 图谱模式 / 聚合团队 / 3D-2D 偏好（持久化）
+  const [graphMode, setGraphMode] = useState<'worker' | 'merged'>(
+    () => (readMem('graph-mode') === 'merged' ? 'merged' : 'worker'),
+  );
+  const [kbTeam, setKbTeam] = useState(''); // ''=全部团队
+  const [viewMode, setViewMode] = useState<'3d' | '2d'>(
+    () => (readMem('view-mode') === '2d' ? '2d' : '3d'),
+  );
+  const [graphVisible, setGraphVisible] = useState(true);
+  const [selectedId3d, setSelectedId3d] = useState('');
+  useEffect(() => { writeMem('graph-mode', graphMode === 'worker' ? '' : 'merged'); }, [graphMode]);
+  useEffect(() => { writeMem('view-mode', viewMode === '3d' ? '' : '2d'); }, [viewMode]);
+
   const [topEntries, setTopEntries] = useState<TreeEntry[] | null>(null);
   const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(false);
   const [graphLoading, setGraphLoading] = useState(false);
-  const [graph, setGraph] = useState<{ nodes: GNode[]; edges: GEdge[]; positions: { x: number; y: number }[] } | null>(null);
-  const [previewPath, setPreviewPath] = useState<string | null>(null);
+  const [graph, setGraph] = useState<GraphData | null>(null);
+  const [mergedGraph, setMergedGraph] = useState<GraphData | null>(null);
+  const [mergedLoading, setMergedLoading] = useState(false);
+  // 预览（v3：独立卡状态——{path, worker}，worker 可≠当前 Worker=聚合跨 Worker 打开）
+  const [preview, setPreview] = useState<{ path: string; worker: string } | null>(null);
   const [previewText, setPreviewText] = useState('');
   const [previewLoading, setPreviewLoading] = useState(false);
   const [previewError, setPreviewError] = useState('');
   const [expanded, setExpanded] = useState<Record<string, TreeEntry[]>>({});
   const [treeDirsLoading, setTreeDirsLoading] = useState<Record<string, boolean>>({});
-  const [view, setView] = useState<'graph' | 'files'>('graph');
   const genRef = useRef(0);
+  const mergedGenRef = useRef(0);
+
+  // 团队透传：worker 选择器按 team 分组（optgroup），负责人标记
+  // （loadMerged 聚合范围依赖此表，须先定义）
+  const teamGroups = useMemo(() => {
+    const list: WorkerResponse[] = workers ?? [];
+    const map = new Map<string, WorkerResponse[]>();
+    for (const wd of list) {
+      const team = wd.team || '';
+      if (!map.has(team)) map.set(team, []);
+      map.get(team)!.push(wd);
+    }
+    return Array.from(map.entries())
+      .sort(([a], [b]) => (a === b ? 0 : a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)))
+      .map(([team, list]) => ({
+        team,
+        workers: [...list].sort((x, y) => x.name.localeCompare(y.name)),
+      }));
+  }, [workers]);
+
+  // 聚合团队有效值（派生——团队消失时回退全部团队，不同步 setState）。
+  // 必须先于 loadMerged 定义（其 useCallback 依赖数组在渲染期求值，
+  // const 后置声明会触发 TDZ ReferenceError）。
+  const effectiveKbTeam = kbTeam && teamGroups.some((g) => g.team === kbTeam) ? kbTeam : '';
+  useEffect(() => { writeMem('team', effectiveKbTeam); }, [effectiveKbTeam]);
 
   const loadGraph = useCallback(async (w: string) => {
     const gen = ++genRef.current;
     setGraphLoading(true);
     setGraph(null);
     try {
-      const files = await collectMdFiles(w);
+      const ag = await buildAgentGraph(w, MAX_GRAPH_FILES);
       if (gen !== genRef.current) return;
-      // MEMORY.md 若在（KB 布局根文件）优先入图
-      const hasMemory = files.includes('MEMORY.md');
-      const targets = files.filter((f) => f !== 'MEMORY.md').slice(0, MAX_GRAPH_FILES - 1);
-      const all = hasMemory ? ['MEMORY.md', ...targets] : files.slice(0, MAX_GRAPH_FILES);
-      const contents: (string | null)[] = new Array(all.length).fill(null);
-      let idx = 0;
-      const concurrency = 6;
-      const workerPool = async () => {
-        while (idx < all.length) {
-          const i = idx;
-          idx += 1;
-          try {
-            contents[i] = await fetchFullContent(w, all[i]);
-          } catch {
-            contents[i] = null;
-          }
-        }
-      };
-      await Promise.all(Array.from({ length: Math.min(concurrency, all.length) }, () => workerPool()));
-      if (gen !== genRef.current) return;
-      // 建图：节点=文件（id=文件名干），边=wikilink 目标按文件名干匹配
-      const nodes: GNode[] = all.map((p) => ({
-        id: stem(p),
-        path: p,
-        label: stem(p),
-        deg: 0,
-        isMemory: p === 'MEMORY.md',
-      }));
-      // 键小写化：wikilink [[MEMORY]] 须匹配节点干 'MEMORY'（target 统一 toLowerCase 查）
-      const idIndex = new Map(nodes.map((nd, i) => [nd.id.toLowerCase(), i]));
-      const edges: GEdge[] = [];
-      const seen = new Set<string>();
-      all.forEach((p, i) => {
-        const links = contents[i] ? extractWikilinks(contents[i]) : [];
-        for (const t of links) {
-          const ti = idIndex.get(t.toLowerCase());
-          if (ti != null && ti !== i) {
-            const key = `${i}-${ti}`;
-            if (!seen.has(key)) {
-              seen.add(key);
-              edges.push({ s: i, t: ti });
-              nodes[i].deg += 1;
-              nodes[ti].deg += 1;
-            }
-          }
-        }
-      });
-      const positions = forceLayout(nodes, edges);
-      setGraph({ nodes, edges, positions });
+      const positions = forceLayout(ag.nodes as GNode[], ag.edges);
+      setGraph({ nodes: ag.nodes as GNode[], edges: ag.edges, positions });
     } catch (err) {
       if (gen === genRef.current) setLoadError(err instanceof Error ? err.message : '加载失败');
     } finally {
       if (gen === genRef.current) setGraphLoading(false);
     }
   }, []);
+
+  // 团队聚合建图（客户端合并——插件 fetchKbGraphMerged 的等价物）：
+  // 范围=effectiveKbTeam 团队成员（''=全部 Worker）；总预算 240 文件、单 Worker 60；
+  // 节点 id 前缀 `worker::`，边保留各 Worker 内部（跨 Worker 无边=插件同款）。
+  const loadMerged = useCallback(async () => {
+    const gen = ++mergedGenRef.current;
+    setMergedLoading(true);
+    setMergedGraph(null);
+    try {
+      const scope = effectiveKbTeam
+        ? teamGroups.find((g) => g.team === effectiveKbTeam)?.workers.map((wd) => wd.name) ?? []
+        : sortedWorkers.map((wd) => wd.name);
+      const nodes: GNode[] = [];
+      const edges: GEdge[] = [];
+      let budget = MAX_MERGED_FILES;
+      for (const w of scope) {
+        if (budget <= 0) break;
+        const ag = await buildAgentGraph(w, Math.min(MAX_GRAPH_FILES, budget));
+        budget -= ag.nodes.length;
+        const offset = nodes.length;
+        for (const n of ag.nodes) nodes.push({ ...n, id: `${w}::${n.id}`, agent: w });
+        for (const e of ag.edges) edges.push({ s: e.s + offset, t: e.t + offset });
+      }
+      if (gen !== mergedGenRef.current) return;
+      const positions = forceLayout(nodes, edges);
+      setMergedGraph({ nodes, edges, positions });
+    } catch {
+      if (gen === mergedGenRef.current) setMergedGraph(null);
+    } finally {
+      if (gen === mergedGenRef.current) setMergedLoading(false);
+    }
+  }, [effectiveKbTeam, teamGroups, sortedWorkers]);
+
+  // 聚合模式：切模式/切团队/团队列表变化 → 重拉（loadMerged 入口自带清旧图）
+  useEffect(() => {
+    if (graphMode !== 'merged') return;
+    // 宏任务触发（同 reload effect 模式：effect 内不同步 setState 链）
+    const t = setTimeout(() => { void loadMerged(); }, 0);
+    return () => clearTimeout(t);
+  }, [graphMode, effectiveKbTeam, teamGroups, loadMerged]);
 
   // 顶层文件树（四分类分组来源）+ 图谱，随 Worker 切换/刷新重载
   const reload = useCallback(async (w: string) => {
@@ -384,7 +548,7 @@ export function KnowledgeSection() {
     const t = setTimeout(() => {
       setGraph(null);
       setExpanded({});
-      setPreviewPath(null);
+      setPreview(null);
       void reload(effectiveWorker);
     }, 0);
     return () => clearTimeout(t);
@@ -425,37 +589,23 @@ export function KnowledgeSection() {
     }
   }, []);
 
-  const openPreview = useCallback(async (path: string) => {
-    setView('files');
-    setPreviewPath(path);
+  // 打开预览（v3：agentOverride=聚合模式跨 Worker 打开目标文件，
+  // **不切换当前 Worker**——插件 openFile(agentOverride) 同语义；
+  // 图谱卡保持不动，只更新预览卡）。
+  const openPreview = useCallback(async (path: string, agentOverride?: string) => {
+    const w = agentOverride || effectiveWorker;
+    setPreview({ path, worker: w });
     setPreviewText('');
     setPreviewError('');
     setPreviewLoading(true);
     try {
-      setPreviewText(await fetchFullContent(effectiveWorker, path));
+      setPreviewText(await fetchFullContent(w, path));
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : '读取失败');
     } finally {
       setPreviewLoading(false);
     }
   }, [effectiveWorker]);
-
-  // 团队透传：worker 选择器按 team 分组（optgroup），负责人标记
-  const teamGroups = useMemo(() => {
-    const list: WorkerResponse[] = workers ?? [];
-    const map = new Map<string, WorkerResponse[]>();
-    for (const wd of list) {
-      const team = wd.team || '';
-      if (!map.has(team)) map.set(team, []);
-      map.get(team)!.push(wd);
-    }
-    return Array.from(map.entries())
-      .sort(([a], [b]) => (a === b ? 0 : a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)))
-      .map(([team, list]) => ({
-        team,
-        workers: [...list].sort((x, y) => x.name.localeCompare(y.name)),
-      }));
-  }, [workers]);
 
   // 四分类分组（插件同款）：档案=顶层 md / 文件=其余顶层（只列不展开）/ 日记 memory / 知识库 digest
   const groups = useMemo(() => {
@@ -470,11 +620,85 @@ export function KnowledgeSection() {
     };
   }, [topEntries]);
 
+  // 当前生效图（单 Agent / 聚合）
+  const currentGraph = graphMode === 'merged' ? mergedGraph : graph;
+  const currentLoading = graphMode === 'merged' ? mergedLoading : graphLoading;
+  const mergedScopeCount = graphMode === 'merged'
+    ? (effectiveKbTeam
+        ? teamGroups.find((g) => g.team === effectiveKbTeam)?.workers.length ?? 0
+        : sortedWorkers.length)
+    : 0;
+
+  // 聚合图例（节点按 Worker 着色，插件 AGENT_PALETTE 顺序=首次出现序）
+  const agentLegend = useMemo(() => {
+    if (graphMode !== 'merged' || !currentGraph) return null;
+    const order: string[] = [];
+    for (const n of currentGraph.nodes) {
+      if (n.agent && !order.includes(n.agent)) order.push(n.agent);
+    }
+    if (order.length === 0) return null;
+    return order.map((name, i) => ({ name, color: AGENT_PALETTE[i % AGENT_PALETTE.length] }));
+  }, [graphMode, currentGraph]);
+
+  // 3D 输入（插件 G3DNodeInput 同构：id/name/path/agent）
+  const g3dNodes = useMemo<G3DNodeInput[]>(() => {
+    if (!currentGraph) return [];
+    return currentGraph.nodes.map((n) => ({
+      id: n.id,
+      name: n.label,
+      path: n.path,
+      agent: n.agent,
+    }));
+  }, [currentGraph]);
+  const g3dLinks = useMemo(() => {
+    if (!currentGraph) return [];
+    return currentGraph.edges.map((e) => ({
+      source: currentGraph.nodes[e.s].id,
+      target: currentGraph.nodes[e.t].id,
+    }));
+  }, [currentGraph]);
+  const colorFor3d = useCallback(
+    (n: G3DNodeInput): string => {
+      if (agentLegend && n.agent) {
+        return agentLegend.find((l) => l.name === n.agent)?.color ?? '#8c8c8c';
+      }
+      return n.path === 'MEMORY.md' ? '#f59e0b' : '#6366f1';
+    },
+    [agentLegend],
+  );
+
+  // 3D 选中条（节点名 + 出/入链计数——插件 {panel} 的轻量版）
+  const sel3d = useMemo(() => {
+    if (!selectedId3d || !currentGraph) return null;
+    const i = currentGraph.nodes.findIndex((n) => n.id === selectedId3d);
+    if (i < 0) return null;
+    let out = 0;
+    let inn = 0;
+    for (const e of currentGraph.edges) {
+      if (e.s === i) out += 1;
+      if (e.t === i) inn += 1;
+    }
+    return { node: currentGraph.nodes[i], out, inn };
+  }, [selectedId3d, currentGraph]);
+
+  // 3D 节点点击 → 开预览（聚合：`worker::path` 解析；单 Agent：path）
+  const onOpenNode3d = useCallback(
+    (n: G3DNodeInput) => {
+      const sep = n.id.indexOf('::');
+      if (graphMode === 'merged' && sep > 0) {
+        void openPreview(n.id.slice(sep + 2), n.id.slice(0, sep));
+        return;
+      }
+      if (n.path) void openPreview(n.path);
+    },
+    [graphMode, openPreview],
+  );
+
   return (
     <div className="space-y-4 p-4">
       <SectionHeader
         title="知识库"
-        description="集群 Worker 记忆只读视图（workbench 插件同款数据面：Controller Docker 代理）：档案 / 文件 / 日记 memory/** / 知识库 digest/** + wikilink 图谱"
+        description="集群 Worker 记忆只读视图（workbench 插件同款数据面：Controller Docker 代理）：档案 / 文件 / 日记 memory/** / 知识库 digest/** + wikilink 图谱（2D/3D · 团队聚合）"
         actions={
           <div className="flex items-center gap-2">
             <select
@@ -498,8 +722,12 @@ export function KnowledgeSection() {
               variant="ghost"
               size="sm"
               className="h-8 px-2 text-xs"
-              disabled={loading || graphLoading}
-              onClick={() => effectiveWorker && void reload(effectiveWorker)}
+              disabled={loading || graphLoading || mergedLoading}
+              onClick={() => {
+                if (!effectiveWorker) return;
+                void reload(effectiveWorker);
+                if (graphMode === 'merged') void loadMerged();
+              }}
             >
               <RefreshCw className={`mr-1 h-3.5 w-3.5 ${loading || graphLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
               刷新
@@ -515,146 +743,271 @@ export function KnowledgeSection() {
           {loadError}
         </div>
       ) : (
-        <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
-          {/* 左：KB 文件树 */}
-          <div className="rounded-md border border-border/60 p-2">
-            <div className="mb-2 flex items-center gap-2">
+        <>
+          {/* 图谱模式行（插件同款：当前 Agent 图谱 | 团队聚合图谱 + 聚合团队选择） */}
+          <div className="flex flex-wrap items-center gap-2">
+            <div className="flex gap-0.5 rounded-md border border-border/60 bg-transparent p-0.5">
               <Button
-                variant={view === 'files' ? 'secondary' : 'ghost'}
+                variant={graphMode === 'worker' ? 'secondary' : 'ghost'}
                 size="sm"
                 className="h-7 px-2 text-xs"
-                onClick={() => setView('files')}
+                onClick={() => { setSelectedId3d(''); setGraphMode('worker'); }}
               >
-                <FolderOpen className="mr-1 h-3 w-3" aria-hidden="true" />
-                文件
+                当前 Worker 图谱
               </Button>
               <Button
-                variant={view === 'graph' ? 'secondary' : 'ghost'}
+                variant={graphMode === 'merged' ? 'secondary' : 'ghost'}
                 size="sm"
                 className="h-7 px-2 text-xs"
-                onClick={() => setView('graph')}
+                onClick={() => { setSelectedId3d(''); setGraphMode('merged'); }}
               >
-                <Network className="mr-1 h-3 w-3" aria-hidden="true" />
-                图谱
+                <Users className="mr-1 h-3 w-3" aria-hidden="true" />
+                团队聚合图谱
               </Button>
-              <span className="ml-auto text-[10px] text-muted-foreground">{effectiveWorker || '—'}</span>
             </div>
-            <div className="space-y-0.5">
-              {groups === null ? (
-                <div className="flex items-center gap-2 px-1.5 py-1 text-xs text-muted-foreground">
-                  <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
-                  加载文件树…
-                </div>
-              ) : (
-                <>
-                  <GroupLabel text="档案" />
-                  {groups.archive.map((e) => (
-                    <FileRow key={e.path} entry={e} onFile={openPreview} />
-                  ))}
-                  {groups.archive.length === 0 && (
-                    <p className="px-4 py-0.5 text-[10px] text-muted-foreground/70">（无顶层 md）</p>
-                  )}
-                  <GroupLabel text="文件" />
-                  {groups.files.map((e) => (
-                    <FileRow key={e.path} entry={e} onFile={openPreview} />
-                  ))}
-                  {groups.topDirs.map((e) => (
-                    <DirRowReadOnly key={e.path} entry={e} />
-                  ))}
-                  {groups.files.length === 0 && groups.topDirs.length === 0 && (
-                    <p className="px-4 py-0.5 text-[10px] text-muted-foreground/70">（无）</p>
-                  )}
-                  {(['memory', 'digest'] as const).map((d) => {
-                    const root = d === 'memory' ? groups.memory : groups.digest;
-                    if (!root) return null;
-                    const entries = expanded[root.path];
-                    const open = !!entries;
-                    return (
-                      <div key={root.path}>
-                        <GroupLabel text={d === 'memory' ? '日记 memory' : '知识库 digest'} />
-                        <button
-                          type="button"
-                          className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-xs hover:bg-accent"
-                          onClick={() => {
-                            if (!open) void loadDir(root.path);
-                            else setExpanded((m) => ({ ...m, [root.path]: [] }));
-                          }}
-                        >
-                          {open
-                            ? <FolderOpen className="h-3.5 w-3.5" aria-hidden="true" />
-                            : <Folder className="h-3.5 w-3.5" aria-hidden="true" />}
-                          <span className="truncate font-medium">{root.name}/</span>
-                          {treeDirsLoading[root.path] && (
-                            <Loader2 className="ml-auto h-3 w-3 animate-spin" aria-hidden="true" />
-                          )}
-                        </button>
-                        {open && (entries ?? []).map((e) => (
-                          <TreeRow key={e.path} entry={e} depth={1} onFile={openPreview} onDir={(dir) => void loadDir(dir)} loading={treeDirsLoading} expandedMap={expanded} setExpanded={setExpanded} />
-                        ))}
-                      </div>
-                    );
-                  })}
-                </>
-              )}
-            </div>
+            {graphMode === 'merged' && teamGroups.length > 0 && (
+              <select
+                className="h-8 rounded-md border bg-transparent px-2 text-xs"
+                value={effectiveKbTeam}
+                onChange={(e) => setKbTeam(e.target.value)}
+                aria-label="聚合团队"
+              >
+                <option value="">全部团队（{sortedWorkers.length} Workers）</option>
+                {teamGroups.map((g) => (
+                  <option key={g.team} value={g.team}>
+                    {g.team}（{g.workers.length}）
+                  </option>
+                ))}
+              </select>
+            )}
+            <span className="ml-auto text-[10px] text-muted-foreground">
+              {graphMode === 'merged'
+                ? `聚合 ${mergedScopeCount} 个 Worker`
+                : effectiveWorker || '—'}
+            </span>
           </div>
 
-          {/* 右：图谱 / 预览 */}
-          <div className="flex min-h-[420px] flex-col rounded-md border border-border/60">
-            {view === 'graph' ? (
-              graphLoading || loading ? (
-                <div className="flex flex-1 items-center justify-center gap-2 text-xs text-muted-foreground">
-                  <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-                  构建 wikilink 图谱（抓取 ≤{MAX_GRAPH_FILES} 个 md 文件）…
+          <div className="grid gap-4 lg:grid-cols-[280px_1fr]">
+            {/* 左：KB 文件树（四分类，常驻——图谱不再占用此格） */}
+            <div className="rounded-md border border-border/60 p-2">
+              <div className="mb-2 flex items-center gap-2">
+                <FileText className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                <span className="text-xs font-medium">知识文件</span>
+                <span className="ml-auto truncate text-[10px] text-muted-foreground">{effectiveWorker || '—'}</span>
+              </div>
+              <div className="space-y-0.5">
+                {groups === null ? (
+                  <div className="flex items-center gap-2 px-1.5 py-1 text-xs text-muted-foreground">
+                    <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                    加载文件树…
+                  </div>
+                ) : (
+                  <>
+                    <GroupLabel text="档案" />
+                    {groups.archive.map((e) => (
+                      <FileRow key={e.path} entry={e} onFile={(p) => void openPreview(p)} />
+                    ))}
+                    {groups.archive.length === 0 && (
+                      <p className="px-4 py-0.5 text-[10px] text-muted-foreground/70">（无顶层 md）</p>
+                    )}
+                    <GroupLabel text="文件" />
+                    {groups.files.map((e) => (
+                      <FileRow key={e.path} entry={e} onFile={(p) => void openPreview(p)} />
+                    ))}
+                    {groups.topDirs.map((e) => (
+                      <DirRowReadOnly key={e.path} entry={e} />
+                    ))}
+                    {groups.files.length === 0 && groups.topDirs.length === 0 && (
+                      <p className="px-4 py-0.5 text-[10px] text-muted-foreground/70">（无）</p>
+                    )}
+                    {(['memory', 'digest'] as const).map((d) => {
+                      const root = d === 'memory' ? groups.memory : groups.digest;
+                      if (!root) return null;
+                      const entries = expanded[root.path];
+                      const open = !!entries;
+                      return (
+                        <div key={root.path}>
+                          <GroupLabel text={d === 'memory' ? '日记 memory' : '知识库 digest'} />
+                          <button
+                            type="button"
+                            className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-xs hover:bg-accent"
+                            onClick={() => {
+                              if (!open) void loadDir(root.path);
+                              else setExpanded((m) => ({ ...m, [root.path]: [] }));
+                            }}
+                          >
+                            {open
+                              ? <FolderOpen className="h-3.5 w-3.5" aria-hidden="true" />
+                              : <Folder className="h-3.5 w-3.5" aria-hidden="true" />}
+                            <span className="truncate font-medium">{root.name}/</span>
+                            {treeDirsLoading[root.path] && (
+                              <Loader2 className="ml-auto h-3 w-3 animate-spin" aria-hidden="true" />
+                            )}
+                          </button>
+                          {open && (entries ?? []).map((e) => (
+                            <TreeRow key={e.path} entry={e} depth={1} onFile={(p) => void openPreview(p)} onDir={(dir) => void loadDir(dir)} loading={treeDirsLoading} expandedMap={expanded} setExpanded={setExpanded} />
+                          ))}
+                        </div>
+                      );
+                    })}
+                  </>
+                )}
+              </div>
+            </div>
+
+            {/* 右：图谱卡（常驻）+ 预览卡（独立下置） */}
+            <div className="min-w-0 space-y-4">
+              {/* 图谱卡 */}
+              <div className="rounded-md border border-border/60">
+                <div className="flex flex-wrap items-center gap-2 border-b border-border/60 px-3 py-2">
+                  <Network className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
+                  <span className="text-xs font-medium">知识图谱（wikilink 引用网络）</span>
+                  {currentGraph && (
+                    <span className="text-[10px] text-muted-foreground">
+                      {currentGraph.nodes.length} 节点 · {currentGraph.edges.length} 边
+                    </span>
+                  )}
+                  {agentLegend ? (
+                    <span className="flex items-center gap-2">
+                      {agentLegend.map((l) => (
+                        <span key={l.name} className="inline-flex items-center gap-1 text-[10px] text-muted-foreground">
+                          <span className="inline-block h-2 w-2 rounded-full" style={{ background: l.color }} />
+                          {l.name}
+                        </span>
+                      ))}
+                    </span>
+                  ) : (
+                    <span className="text-[10px] text-muted-foreground">→ 引用方向</span>
+                  )}
+                  <div className="ml-auto flex items-center gap-1">
+                    <div className="flex gap-0.5 rounded-md border border-border/60 p-0.5">
+                      <Button
+                        variant={viewMode === '3d' ? 'secondary' : 'ghost'}
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => setViewMode('3d')}
+                      >
+                        3D
+                      </Button>
+                      <Button
+                        variant={viewMode === '2d' ? 'secondary' : 'ghost'}
+                        size="sm"
+                        className="h-6 px-2 text-xs"
+                        onClick={() => setViewMode('2d')}
+                      >
+                        2D
+                      </Button>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="h-7 px-2 text-xs"
+                      onClick={() => setGraphVisible((v) => !v)}
+                    >
+                      {graphVisible ? '收起' : '展开'}
+                    </Button>
+                  </div>
                 </div>
-              ) : graph ? (
-                <KnowledgeGraph nodes={graph.nodes} edges={graph.edges} positions={graph.positions} onSelect={(p) => void openPreview(p)} />
-              ) : (
-                <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">
-                  {graphLoading ? '加载中…' : '点「刷新」加载图谱'}
-                </div>
-              )
-            ) : previewPath ? (
-              <div className="flex flex-1 flex-col">
+                {graphVisible && (
+                  <div className="p-3">
+                    {currentLoading ? (
+                      <div className="flex h-[280px] items-center justify-center gap-2 text-xs text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                        {graphMode === 'merged'
+                          ? `构建团队聚合图谱（${mergedScopeCount} 个 Worker，抓取 ≤${MAX_MERGED_FILES} 个 md 文件）…`
+                          : `构建 wikilink 图谱（抓取 ≤${MAX_GRAPH_FILES} 个 md 文件）…`}
+                      </div>
+                    ) : !currentGraph || currentGraph.nodes.length === 0 ? (
+                      <div className="flex h-[280px] items-center justify-center text-xs text-muted-foreground">
+                        {graphMode === 'merged' ? '团队内暂无知识库文件' : '点「刷新」加载图谱'}
+                      </div>
+                    ) : viewMode === '3d' ? (
+                      <>
+                        <KnowledgeGraph3D
+                          nodes={g3dNodes}
+                          links={g3dLinks}
+                          colorFor={colorFor3d}
+                          isRoot={() => false}
+                          isDirect={() => false}
+                          onOpenNode={onOpenNode3d}
+                          onSelect={setSelectedId3d}
+                          onExit3D={() => setViewMode('2d')}
+                          height={480}
+                        />
+                        {sel3d && (
+                          <div className="mt-1 px-1 text-[11px] text-muted-foreground">
+                            选中：<span className="font-medium text-foreground">{sel3d.node.label}</span>
+                            {sel3d.node.agent && (
+                              <span className="ml-1 font-mono text-[10px]">{sel3d.node.agent}</span>
+                            )}
+                            <span className="ml-2">出链 {sel3d.out} · 入链 {sel3d.inn}</span>
+                            <span className="ml-2">点节点打开预览 · 点空白取消选中</span>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="h-[420px]">
+                        <KnowledgeGraph
+                          nodes={currentGraph.nodes}
+                          edges={currentGraph.edges}
+                          positions={currentGraph.positions}
+                          onSelect={(p, agent) => void openPreview(p, agent)}
+                          agentPalette={agentLegend ?? undefined}
+                        />
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 预览卡（独立——图谱卡永不消失；点节点/文件只更新此卡） */}
+              <div className="flex min-h-[140px] flex-col rounded-md border border-border/60">
                 <div className="flex items-center gap-2 border-b border-border/60 px-3 py-2">
-                  <Button variant="ghost" size="sm" className="h-6 px-1.5 text-xs" onClick={() => setPreviewPath(null)}>
-                    <ArrowLeft className="mr-1 h-3 w-3" aria-hidden="true" />
-                    返回
-                  </Button>
-                  <FileText className="h-3.5 w-3.5 text-muted-foreground" aria-hidden="true" />
-                  <span className="text-xs font-medium">{previewPath}</span>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="ml-auto h-6 px-1.5 text-xs"
-                    onClick={() => void downloadFile(effectiveWorker, previewPath)}
-                  >
-                    <Download className="mr-1 h-3 w-3" aria-hidden="true" />
-                    下载
-                  </Button>
+                  <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+                  <span className="truncate text-xs font-medium">{preview ? preview.path : '预览'}</span>
+                  {preview && preview.worker !== effectiveWorker && (
+                    <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">
+                      {preview.worker}
+                    </span>
+                  )}
+                  {preview && !previewLoading && !previewError && previewText && (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="ml-auto h-6 px-1.5 text-xs"
+                      onClick={() => void downloadFile(preview.worker, preview.path)}
+                    >
+                      <Download className="mr-1 h-3 w-3" aria-hidden="true" />
+                      下载
+                    </Button>
+                  )}
                 </div>
-                <div className="flex-1 overflow-auto p-4">
-                  {previewLoading ? (
+                <div className="max-h-[560px] flex-1 overflow-auto p-4">
+                  {!preview ? (
+                    <p className="py-6 text-center text-xs text-muted-foreground">
+                      点击左侧文件查看内容，或点图谱节点直接打开（预览与图谱相互独立）
+                    </p>
+                  ) : previewLoading ? (
                     <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+                      <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" />
                       读取中（分块 ≤{MAX_CHUNKS * CHUNK / 1024}KB）…
                     </div>
                   ) : previewError ? (
                     <p className="text-xs text-red-600">{previewError}</p>
-                  ) : previewPath.toLowerCase().endsWith('.md') ? (
-                    <MarkdownMessage content={previewText} />
+                  ) : previewText ? (
+                    preview.path.toLowerCase().endsWith('.md') ? (
+                      <MarkdownMessage content={previewText} />
+                    ) : (
+                      <pre className="whitespace-pre-wrap text-xs">{previewText}</pre>
+                    )
                   ) : (
-                    <pre className="whitespace-pre-wrap text-xs">{previewText}</pre>
+                    <p className="py-4 text-center text-xs text-muted-foreground">（空文件）</p>
                   )}
                 </div>
               </div>
-            ) : (
-              <div className="flex flex-1 items-center justify-center text-xs text-muted-foreground">
-                左侧点文件查看内容，或切「图谱」看 wikilink 引用网络
-              </div>
-            )}
+            </div>
           </div>
-        </div>
+        </>
       )}
     </div>
   );
