@@ -37,9 +37,11 @@ export function useModelSelection(): ModelSelection {
   const models = useModels();
   const routes = useAiRoutes();
   const sglang = useSglangModels();
-  const providers = models.data ?? [];
-  const aiRoutes = routes.data ?? [];
-  const sglangModels = sglang.data?.models ?? [];
+  // Stabilize the fallback arrays (logical expressions create a new ref per
+  // render, which would defeat the options memo below).
+  const providers = useMemo(() => models.data ?? [], [models.data]);
+  const aiRoutes = useMemo(() => routes.data ?? [], [routes.data]);
+  const sglangModels = useMemo(() => sglang.data?.models ?? [], [sglang.data]);
   const options = useMemo(
     () => buildModelSelectionOptions(aiRoutes, providers, sglangModels),
     [aiRoutes, providers, sglangModels],

@@ -1,7 +1,14 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { MessageBubble } from './MessageBubble';
+
+// WorkflowCard（v11 live overlay）内含 useQuery → 渲染需 QueryClientProvider。
+function renderWithProvider(ui: Parameters<typeof render>[0]) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: 0 } } });
+  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
 
 const markdownMock = vi.fn(({ content }: { content: string }) => <div>{content}</div>);
 vi.mock('../markdown-message', () => ({
@@ -13,7 +20,7 @@ afterEach(cleanup);
 describe('MessageBubble', () => {
   it('passes isStreaming to the text block renderer while streaming', () => {
     markdownMock.mockClear();
-    render(
+    renderWithProvider(
       <MessageBubble
         message={{
           id: '$streaming',
@@ -36,7 +43,7 @@ describe('MessageBubble', () => {
 
   it('leaves isStreaming off the text block renderer for finished messages', () => {
     markdownMock.mockClear();
-    render(
+    renderWithProvider(
       <MessageBubble
         message={{
           id: '$done',
@@ -56,7 +63,7 @@ describe('MessageBubble', () => {
     expect(props.isStreaming).toBeFalsy();
   });
   it('renders mixed text and tool blocks without repeating the raw card payload', () => {
-    render(
+    renderWithProvider(
       <MessageBubble
         message={{
           id: '$message',
@@ -79,7 +86,7 @@ describe('MessageBubble', () => {
   });
 
   it('uses the command renderer and safely displays invalid JSON arguments', () => {
-    render(
+    renderWithProvider(
       <MessageBubble
         message={{
           id: '$command',
@@ -113,7 +120,7 @@ describe('MessageBubble', () => {
       },
     ];
 
-    render(
+    renderWithProvider(
       <MessageBubble
         message={{
           id: '$a2ui',
@@ -134,7 +141,7 @@ describe('MessageBubble', () => {
   });
 
   it('renders Tool Guard approval prompts when confirmation replies are available', () => {
-    render(
+    renderWithProvider(
       <MessageBubble
         message={{
           id: '$confirmation',
@@ -167,7 +174,7 @@ Type /approve to approve, or send any message to deny.`,
   });
 
   it('renders AgentTeams workflow details from a structured message payload', () => {
-    render(
+    renderWithProvider(
       <MessageBubble
         message={{
           id: '$workflow',
@@ -199,7 +206,7 @@ Type /approve to approve, or send any message to deny.`,
   });
 
   it('uses expanded widths for text bubbles and workflow cards', () => {
-    const textMessage = render(
+    const textMessage = renderWithProvider(
       <MessageBubble
         message={{
           id: '$wide-content',
@@ -218,7 +225,7 @@ Type /approve to approve, or send any message to deny.`,
     expect(screen.getByText('宽内容').parentElement).toHaveClass('max-w-[min(92%,72ch)]');
     textMessage.unmount();
 
-    render(
+    renderWithProvider(
       <MessageBubble
         message={{
           id: '$wide-workflow',
@@ -286,7 +293,7 @@ Type /approve to approve, or send any message to deny.`,
       },
     },
   ])('$runtime runtime message renders its supported content', ({ runtime, content, isStreaming, assertRendered }) => {
-    render(
+    renderWithProvider(
       <MessageBubble
         message={{
           id: `$${runtime.toLowerCase()}`,
@@ -308,7 +315,7 @@ Type /approve to approve, or send any message to deny.`,
   });
 
   it('renders an attachment block for long-message metadata', () => {
-    render(
+    renderWithProvider(
       <MessageBubble
         message={{
           id: '$attachment',
@@ -337,7 +344,7 @@ Type /approve to approve, or send any message to deny.`,
   });
 
   it('renders a loading placeholder for an in-progress a2ui marker while streaming', () => {
-    render(
+    renderWithProvider(
       <MessageBubble
         message={{
           id: '$a2ui-streaming',
@@ -358,7 +365,7 @@ Type /approve to approve, or send any message to deny.`,
   });
 
   it('renders structured Agent run blocks as collapsible cards', () => {
-    render(
+    renderWithProvider(
       <MessageBubble
         message={{
           id: '$agent-run',
@@ -389,7 +396,7 @@ Type /approve to approve, or send any message to deny.`,
   });
 
   it('shows a single check for my message with no read receipts', () => {
-    render(
+    renderWithProvider(
       <MessageBubble
         message={{
           id: '$mine',
@@ -412,7 +419,7 @@ Type /approve to approve, or send any message to deny.`,
   });
 
   it('shows a double check when another user has read my message', () => {
-    render(
+    renderWithProvider(
       <MessageBubble
         message={{
           id: '$mine-read',
@@ -437,7 +444,7 @@ Type /approve to approve, or send any message to deny.`,
   });
 
   it('does not count my own receipt as read by another user', () => {
-    render(
+    renderWithProvider(
       <MessageBubble
         message={{
           id: '$mine-self',

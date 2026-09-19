@@ -1,8 +1,11 @@
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Progress } from '@/components/ui/progress';
+import { isProjectMiss, workflowLiveFromProject } from '@/lib/chat-workflow-live';
+import { getProjectWorkflow } from '@/lib/agentteams-projects-api';
 import type { WorkflowItem, WorkflowPayload } from '@/lib/a2ui/workflow';
 import { CircleCheck, CircleX, Loader2, Workflow } from 'lucide-react';
+import { useQuery } from '@tanstack/react-query';
 
 const COMPLETE_STATUSES = new Set(['completed', 'success', 'done']);
 const ERROR_STATUSES = new Set(['failed', 'error', 'cancelled', 'canceled']);
@@ -54,12 +57,35 @@ function StepGlyph({ status }: { status?: string }) {
 }
 
 export function WorkflowCard({ payload }: { payload: WorkflowPayload }) {
-  const title = payload.title || payload.name || '工作流';
   const runId = payload.runId || payload.run_id;
-  const subagents = Array.isArray(payload.subagents) ? payload.subagents : [];
-  const steps = Array.isArray(payload.steps) ? payload.steps : [];
+  // live 刷新（第 11 轮）：项目工作流卡是一次性发布的快照，任务推进在
+  // controller 侧 → 按 runId 轮询项目 workflow 正源（与任务看板同源同频 15s）
+  // overlay 状态/步骤/参与 Worker。workerflow 卡（type=workerflow）运行时靠
+  // m.replace 实时编辑消息本体（消息管线已聚合）→ 不探正源。
+  // runId 非项目（404/409/400）→ 停探，永久回退快照。
+  const isWorkerflow = payload.type === 'workerflow';
+  const liveQuery = useQuery({
+    queryKey: ['chat-workflow-live', String(runId ?? '')],
+    queryFn: () => getProjectWorkflow(String(runId), { includeTasks: true }),
+    enabled: !!runId && !isWorkerflow,
+    refetchInterval: (q) => (isProjectMiss(q.state.error) ? false : 15000),
+    retry: false,
+    staleTime: 5000,
+  });
+  const live = liveQuery.data ? workflowLiveFromProject(liveQuery.data) : null;
+  const liveReady = liveQuery.isSuccess && live != null; // 查询成功=正源接通
+
+  const title = live?.title || payload.title || payload.name || '工作流';
+  const status = live?.status ?? payload.status;
+  const subagents =
+    live && live.subagents.length > 0 ? live.subagents : Array.isArray(payload.subagents) ? payload.subagents : [];
+  const steps =
+    live && live.steps.length > 0 ? live.steps : Array.isArray(payload.steps) ? payload.steps : [];
   const completedSteps = steps.filter((step) => COMPLETE_STATUSES.has(step.status || '')).length;
   const progress = steps.length ? (completedSteps / steps.length) * 100 : 0;
+  const liveStamp = liveReady
+    ? new Date(liveQuery.dataUpdatedAt).toLocaleTimeString('zh-CN', { hour12: false })
+    : null;
 
   return (
     <Card className="my-2 w-[min(100%,56rem)] max-w-full border-l-4 border-l-violet-500 py-4">
@@ -68,8 +94,18 @@ export function WorkflowCard({ payload }: { payload: WorkflowPayload }) {
           <CardTitle className="flex items-center gap-2 text-sm">
             <Workflow className="h-4 w-4 text-violet-600 dark:text-violet-400" />
             {title}
+            {/* LIVE 徽标：正源接通且 overlay 生效才显示（快照兜底无噪音）。 */}
+            {liveReady && (
+              <span
+                className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-600 dark:text-emerald-400"
+                title={`controller 正源 15s 轮询 · 最近更新 ${liveStamp}`}
+              >
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" aria-hidden="true" />
+                live {liveStamp}
+              </span>
+            )}
           </CardTitle>
-          <StatusBadge status={payload.status} />
+          <StatusBadge status={status} />
         </div>
         {runId && <p className="font-mono text-xs text-muted-foreground">runId: {runId}</p>}
       </CardHeader>

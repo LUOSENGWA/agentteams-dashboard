@@ -1,0 +1,156 @@
+/**
+ * 聊天工作流卡片 live 刷新（第 11 轮）单测。
+ *
+ * 契约（/tmp/dash-live，main 72e3613 起）：
+ *   · 项目卡（runId=项目 id，type≠workerflow）→ 轮询 getProjectWorkflow 正源，
+ *     overlay 状态/步骤/参与 Worker，LIVE 徽标显示轮询时间戳
+ *   · workerflow 卡（type=workerflow）→ 不探正源（本体靠 m.replace 已 live）
+ *   · runId 非项目（404/409/400）→ 停探，渲染快照（无 LIVE 徽标）
+ *   · 正源无 overlay 内容（planning 无 DAG）→ 快照兜底，无 LIVE 徽标
+ */
+
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import '@testing-library/jest-dom/vitest';
+import type { ReactElement } from 'react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+
+afterEach(cleanup);
+
+import { WorkflowCard } from './workflow-card';
+import { workflowLiveFromProject, isProjectMiss } from '@/lib/chat-workflow-live';
+import { ApiError } from '@/lib/api-error';
+import type { WorkflowPayload } from '@/lib/a2ui/workflow';
+import type { WorkflowResponse } from '@/lib/agentteams-projects-api';
+
+const mockWorkflow = vi.fn();
+vi.mock('@/lib/agentteams-projects-api', () => ({
+  getProjectWorkflow: (...args: unknown[]) => mockWorkflow(...args),
+}));
+
+function renderWithQuery(ui: ReactElement) {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, gcTime: 0 } },
+  });
+  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+}
+
+const projectPayload: WorkflowPayload = {
+  type: 'project',
+  runId: 'proj-42',
+  status: 'active',
+  title: '官网改版',
+  steps: [
+    { id: 's1', name: '快照步骤一', status: 'running' },
+    { id: 's2', name: '快照步骤二', status: 'pending' },
+  ],
+  subagents: [{ id: 'w1', name: 'worker-1' }],
+};
+
+const liveResponse: WorkflowResponse = {
+  project_id: 'proj-42',
+  status: 'active',
+  title: '官网改版',
+  nodes: [
+    { id: 'n1', name: '需求拆解', status: 'completed', assignee: 'worker-1' },
+    { id: 'n2', name: '编码实现', status: 'in-progress', assignee: 'worker-2' },
+    { id: 'n3', name: '集成验收', status: 'pending' },
+  ],
+  edges: [],
+  next: [],
+  interrupts: [],
+  values: { project_id: 'proj-42', title: '官网改版', status: 'active' },
+  tasks_detail: [
+    { task_id: 'n1', status: 'completed', assigned_to: 'worker-1', summary: '' },
+    { task_id: 'n2', status: 'active', assigned_to: 'worker-2', summary: '' },
+    { task_id: 'n2b', status: 'active', assigned_to: 'worker-2', summary: '' },
+  ],
+};
+
+describe('workflowLiveFromProject（正源 → 卡片 overlay 映射）', () => {
+  it('① nodes→steps（name/status/assignee→assignedTo），空 assignee 不带字段', () => {
+    const live = workflowLiveFromProject(liveResponse)!;
+    expect(live.steps).toEqual([
+      { id: 'n1', name: '需求拆解', status: 'completed', assignedTo: 'worker-1' },
+      { id: 'n2', name: '编码实现', status: 'in-progress', assignedTo: 'worker-2' },
+      { id: 'n3', name: '集成验收', status: 'pending' },
+    ]);
+    expect(live.status).toBe('active');
+    expect(live.title).toBe('官网改版');
+  });
+
+  it('② workers=tasks_detail.assigned_to 去重（稳定顺序，worker-2 两条只出现一次）', () => {
+    const live = workflowLiveFromProject(liveResponse)!;
+    expect(live.subagents).toEqual([
+      { id: 'worker-1', name: 'worker-1' },
+      { id: 'worker-2', name: 'worker-2' },
+    ]);
+  });
+
+  it('③ planning（无 DAG 无任务）→ 纯状态 overlay（planning/paused 状态实时有价值），空 steps 由卡片回退快照', () => {
+    const live = workflowLiveFromProject({ project_id: 'p', title: '', status: 'planning', nodes: [], edges: [], next: [], interrupts: [] });
+    expect(live.status).toBe('planning');
+    expect(live.steps).toEqual([]);
+    expect(live.subagents).toEqual([]);
+  });
+});
+
+describe('isProjectMiss（停探判定）', () => {
+  it('④ 404/409/400 = 非项目 → true；500/网络错误/非 ApiError → false', () => {
+    expect(isProjectMiss(new ApiError('project not found', 404, 'test'))).toBe(true);
+    expect(isProjectMiss(new ApiError('ambiguous', 409, 'test'))).toBe(true);
+    expect(isProjectMiss(new ApiError('bad id', 400, 'test'))).toBe(true);
+    expect(isProjectMiss(new ApiError('boom', 500, 'test'))).toBe(false);
+    expect(isProjectMiss(new Error('network'))).toBe(false);
+  });
+});
+
+describe('WorkflowCard live overlay（渲染契约）', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
+  it('⑤ 项目卡：正源接通 → LIVE 徽标 + live 步骤替换快照步骤 + 状态跟正源', async () => {
+    mockWorkflow.mockResolvedValue(liveResponse);
+    renderWithQuery(<WorkflowCard payload={projectPayload} />);
+    expect(await screen.findByText(/live \d{2}:\d{2}:\d{2}/)).toBeInTheDocument();
+    // live 步骤（正源）渲染、快照步骤消失
+    expect(screen.getByText('需求拆解')).toBeInTheDocument();
+    expect(screen.getByText('编码实现')).toBeInTheDocument();
+    expect(screen.queryByText('快照步骤一')).not.toBeInTheDocument();
+    // 参与 Worker 去重后两位
+    expect(screen.getByText('worker-2')).toBeInTheDocument();
+    expect(mockWorkflow).toHaveBeenCalledWith('proj-42', { includeTasks: true });
+  });
+
+  it('⑥ workerflow 卡：不探正源（0 次请求），渲染快照', async () => {
+    const wfPayload: WorkflowPayload = {
+      ...projectPayload,
+      type: 'workerflow',
+      runId: 'run-abc123',
+    };
+    renderWithQuery(<WorkflowCard payload={wfPayload} />);
+    await waitFor(() => expect(screen.getByText('快照步骤一')).toBeInTheDocument());
+    expect(mockWorkflow).not.toHaveBeenCalled();
+    expect(screen.queryByText(/live \d{2}:\d{2}:\d{2}/)).not.toBeInTheDocument();
+  });
+
+  it('⑦ runId 非项目（404）→ 停探 + 快照兜底 + 无 LIVE 徽标', async () => {
+    mockWorkflow.mockRejectedValue(new ApiError('project not found', 404, 'test'));
+    renderWithQuery(<WorkflowCard payload={projectPayload} />);
+    await waitFor(() => expect(mockWorkflow).toHaveBeenCalledTimes(1));
+    expect(screen.getByText('快照步骤一')).toBeInTheDocument();
+    expect(screen.queryByText(/live \d{2}:\d{2}:\d{2}/)).not.toBeInTheDocument();
+    // 停探：再等一轮不会二次请求（refetchInterval=false）
+    await new Promise((r) => setTimeout(r, 30));
+    expect(mockWorkflow).toHaveBeenCalledTimes(1);
+  });
+
+  it('⑧ planning（空 DAG 有状态）→ LIVE 徽标（状态实时）+ 步骤回退快照', async () => {
+    mockWorkflow.mockResolvedValue({ project_id: 'proj-42', title: '', status: 'planning', nodes: [], edges: [], next: [], interrupts: [] });
+    renderWithQuery(<WorkflowCard payload={projectPayload} />);
+    await waitFor(() => expect(mockWorkflow).toHaveBeenCalledTimes(1));
+    expect(screen.getByText('快照步骤一')).toBeInTheDocument();
+    expect(await screen.findByText(/live \d{2}:\d{2}:\d{2}/)).toBeInTheDocument();
+  });
+});
