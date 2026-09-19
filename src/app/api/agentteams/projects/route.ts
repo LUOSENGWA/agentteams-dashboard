@@ -3,6 +3,43 @@ import { getControllerUrl, proxyToAgentTeams } from '../proxy-helper';
 
 export const dynamic = 'force-dynamic';
 
+/**
+ * Merge two controller project records that share one project_id.
+ *
+ * The controller lists one row per plan/mode record, and stale rows may carry
+ * only partial fields (empty team_id / plan_type / mode). Merging must keep
+ * the first non-empty value per field so the populated row wins while empty
+ * rows still contribute any unique fields.
+ */
+function mergeProjectRecords(
+  base: Record<string, unknown>,
+  next: Record<string, unknown>,
+): Record<string, unknown> {
+  const out: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(next)) {
+    const current = out[key];
+    const currentEmpty = current === undefined || current === null || current === '';
+    const valueEmpty = value === undefined || value === null || value === '';
+    if (currentEmpty && !valueEmpty) out[key] = value;
+  }
+  return out;
+}
+
+/** Dedupe the controller project list by project_id (see mergeProjectRecords). */
+function dedupeProjects(projects: unknown[]): Record<string, unknown>[] {
+  const merged = new Map<string, Record<string, unknown>>();
+  for (const entry of projects) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue;
+    const record = entry as Record<string, unknown>;
+    const id = typeof record.project_id === 'string' ? record.project_id : '';
+    // Records without an id cannot be merged safely — keep them as-is.
+    const key = id || JSON.stringify(record);
+    const prev = merged.get(key);
+    merged.set(key, prev ? mergeProjectRecords(prev, record) : record);
+  }
+  return Array.from(merged.values());
+}
+
 // GET /api/agentteams/projects
 //
 // Proxies the AgentTeams controller project list endpoint
@@ -31,6 +68,24 @@ export async function GET(request: NextRequest) {
   });
 
   if (res.ok) {
+    // Same project_id can appear once per plan/mode record (some rows with
+    // only partial fields). Duplicates break the dashboard tree (duplicate
+    // React keys → ghost rows), inflate kind counts, and make workflow
+    // lookups ambiguous across teams — merge them before responding.
+    try {
+      const body = (await res.json()) as Record<string, unknown>;
+      if (Array.isArray(body.projects)) {
+        const projects = dedupeProjects(body.projects);
+        return NextResponse.json(
+          { ...body, projects, total: projects.length },
+          { status: res.status },
+        );
+      }
+      // Unexpected shape: body is already consumed — re-emit it as-is.
+      return NextResponse.json(body, { status: res.status });
+    } catch {
+      // Non-JSON or unreadable body — fall through to the raw passthrough.
+    }
     return res;
   }
 
