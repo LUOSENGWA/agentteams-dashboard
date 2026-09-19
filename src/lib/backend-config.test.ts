@@ -301,7 +301,7 @@ describe('isTestTargetAllowed', () => {
     }
     // Legitimate targets (incl. private LAN, which is the self-config posture)
     // are unaffected.
-    expect(isTestTargetAllowed('http://192.168.54.107:8001/')).toBe(true);
+    expect(isTestTargetAllowed('http://192.168.1.107:8001/')).toBe(true);
     expect(isTestTargetAllowed('http://10.0.0.5:8900/')).toBe(true);
     expect(isTestTargetAllowed('http://localhost:8001/')).toBe(true);
   });

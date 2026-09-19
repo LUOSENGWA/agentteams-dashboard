@@ -371,7 +371,7 @@ export function orderedCandidates(name: BackendName): string[] {
 // Shared (multi-user) deployment mode — F1f
 //
 // DASHBOARD_SHARED_MODE=1 marks an instance that MULTIPLE humans share
-// (e.g. Node1: admin L1 + team L2 on one container). The plugin's
+// (e.g. a shared single-container deployment: admin L1 + team L2 on one container). The plugin's
 // "whoever uses this host edits this config" model assumes one instance per
 // human; on a shared instance that model is an attack surface (an L2
 // overwriting the backend config redirects EVERY user's data plane). In

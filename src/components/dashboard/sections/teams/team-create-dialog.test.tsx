@@ -151,7 +151,7 @@ describe('TeamCreateDialog (plugin parity: members come from existing Workers on
   });
 });
 
-describe('TeamCreateDialog 内联新建 Worker（9/13 罗总验收：参考插件）', () => {
+describe('TeamCreateDialog 内联新建 Worker（9/13 装验反馈：参考插件）', () => {
   const expand = () => fireEvent.click(screen.getByRole('button', { name: /新建 Worker/ }));
   const nameInput = () => screen.getByPlaceholderText('worker-name') as HTMLInputElement;
   const createButton = () => screen.getByRole('button', { name: '创建并加入团队' });

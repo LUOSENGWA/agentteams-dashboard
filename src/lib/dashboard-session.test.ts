@@ -38,7 +38,7 @@ describe('mapCrLevelToDashLevel (E5 inversion)', () => {
 describe('createSession / validateSessionToken', () => {
   it('round-trips user, mapped level, teams and credential', () => {
     const { sessionId, cookieValue } = createSession({
-      user: 'sunzong',
+      user: 'bob',
       crLevel: 2,
       teams: ['biz-team'],
       credential: { kind: 'matrix', token: 'syt_token_x' },
@@ -46,7 +46,7 @@ describe('createSession / validateSessionToken', () => {
     expect(sessionId).toHaveLength(64);
     const session = validateSessionToken(cookieValue);
     expect(session).not.toBeNull();
-    expect(session?.user).toBe('sunzong');
+    expect(session?.user).toBe('bob');
     expect(session?.level).toBe(2);
     expect(session?.crLevel).toBe(2);
     expect(session?.teams).toEqual(['biz-team']);
@@ -54,43 +54,43 @@ describe('createSession / validateSessionToken', () => {
   });
 
   it('maps L1 (CRD 1) to dashboard level 3 with SA credential', () => {
-    const { cookieValue } = createSession({ user: 'luo', crLevel: 1, credential: { kind: 'sa' } });
+    const { cookieValue } = createSession({ user: 'carol', crLevel: 1, credential: { kind: 'sa' } });
     expect(validateSessionToken(cookieValue)?.level).toBe(3);
     expect(validateSessionToken(cookieValue)?.credential).toEqual({ kind: 'sa' });
   });
 
   it('rejects a tampered payload', () => {
-    const { cookieValue } = createSession({ user: 'luo', crLevel: 1, credential: { kind: 'sa' } });
+    const { cookieValue } = createSession({ user: 'carol', crLevel: 1, credential: { kind: 'sa' } });
     const [encoded] = cookieValue.split('.');
     const tampered = Buffer.from(
-      JSON.stringify({ sid: (JSON.parse(Buffer.from(encoded, 'base64url').toString()) as { sid: string }).sid, user: 'luo', iat: Date.now(), exp: Date.now() + 100000 }),
+      JSON.stringify({ sid: (JSON.parse(Buffer.from(encoded, 'base64url').toString()) as { sid: string }).sid, user: 'carol', iat: Date.now(), exp: Date.now() + 100000 }),
     ).toString('base64url');
     expect(validateSessionToken(`${tampered}.${cookieValue.split('.')[1]}`)).toBeNull();
   });
 
   it('rejects a token signed with a different secret', () => {
-    const { cookieValue } = createSession({ user: 'luo', crLevel: 1, credential: { kind: 'sa' } });
+    const { cookieValue } = createSession({ user: 'carol', crLevel: 1, credential: { kind: 'sa' } });
     const encoded = cookieValue.split('.')[0];
     const otherSig = createHmac('sha256', 'b'.repeat(64)).update(encoded).digest('base64url');
     expect(validateSessionToken(`${encoded}.${otherSig}`)).toBeNull();
   });
 
   it('rejects an expired token (valid signature, past exp)', () => {
-    const payload = JSON.stringify({ sid: randomBytes(32).toString('hex'), user: 'luo', iat: 1, exp: 2 });
+    const payload = JSON.stringify({ sid: randomBytes(32).toString('hex'), user: 'carol', iat: 1, exp: 2 });
     const encoded = Buffer.from(payload).toString('base64url');
     const signature = createHmac('sha256', SECRET).update(encoded).digest('base64url');
     expect(validateSessionToken(`${encoded}.${signature}`)).toBeNull();
   });
 
   it('rejects a session destroyed server-side even with a valid cookie', () => {
-    const { sessionId, cookieValue } = createSession({ user: 'luo', crLevel: 1, credential: { kind: 'sa' } });
+    const { sessionId, cookieValue } = createSession({ user: 'carol', crLevel: 1, credential: { kind: 'sa' } });
     destroySession(sessionId);
     expect(validateSessionToken(cookieValue)).toBeNull();
   });
 
   it('never returns a token in the cookie value (tokens stay server-side)', () => {
     const { cookieValue } = createSession({
-      user: 'sunzong',
+      user: 'bob',
       crLevel: 2,
       credential: { kind: 'matrix', token: 'SECRET_MATRIX_TOKEN' },
     });
@@ -111,10 +111,10 @@ describe('store identity across module instances (middleware vs route bundles)',
     // the middleware bundle vs the app-router bundle in the standalone server).
     // @ts-expect-error query-suffixed specifier is not resolvable by tsc
     const modB = await import('./dashboard-session?instance=2');
-    const { cookieValue } = modA.createSession({ user: 'luo', crLevel: 1, credential: { kind: 'sa' } });
+    const { cookieValue } = modA.createSession({ user: 'carol', crLevel: 1, credential: { kind: 'sa' } });
     expect(modB.validateSessionToken(cookieValue)).not.toBeNull();
     // Logout in one bundle must be visible in the other.
-    const second = modA.createSession({ user: 'sunzong', crLevel: 2, credential: { kind: 'matrix', token: 't' } });
+    const second = modA.createSession({ user: 'bob', crLevel: 2, credential: { kind: 'matrix', token: 't' } });
     modA.destroySession(second.sessionId);
     expect(modB.validateSessionToken(second.cookieValue)).toBeNull();
   });
@@ -123,21 +123,21 @@ describe('store identity across module instances (middleware vs route bundles)',
 describe('secret handling (fail closed)', () => {
   it('refuses to create sessions without DASHBOARD_SESSION_SECRET', () => {
     delete process.env.DASHBOARD_SESSION_SECRET;
-    expect(() => createSession({ user: 'luo', crLevel: 1, credential: { kind: 'sa' } })).toThrow();
+    expect(() => createSession({ user: 'carol', crLevel: 1, credential: { kind: 'sa' } })).toThrow();
   });
 
   it('refuses short secrets (< 32 bytes hex)', () => {
     process.env.DASHBOARD_SESSION_SECRET = 'short';
-    expect(() => createSession({ user: 'luo', crLevel: 1, credential: { kind: 'sa' } })).toThrow();
+    expect(() => createSession({ user: 'carol', crLevel: 1, credential: { kind: 'sa' } })).toThrow();
     expect(validateSessionToken('x.y')).toBeNull();
   });
 });
 
 describe('cookie plumbing', () => {
   it('parses a Cookie header and resolves the session from a request', () => {
-    const { cookieValue } = createSession({ user: 'maizong', crLevel: 2, teams: ['market-team'], credential: { kind: 'matrix', token: 't' } });
+    const { cookieValue } = createSession({ user: 'alice', crLevel: 2, teams: ['market-team'], credential: { kind: 'matrix', token: 't' } });
     const session = getSessionFromRequest(fakeRequest(`other=1; ${SESSION_COOKIE_NAME}=${cookieValue}`));
-    expect(session?.user).toBe('maizong');
+    expect(session?.user).toBe('alice');
     expect(session?.teams).toEqual(['market-team']);
   });
 

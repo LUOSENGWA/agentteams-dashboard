@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 /**
- * 产物 tab 图标（9/14 罗总：「看看别的图标是什么风格，然后用 SVG 画一个
+ * 产物 tab 图标（9/14 装验反馈：「看看别的图标是什么风格，然后用 SVG 画一个
  * 箱子之类的东西」）。侧边栏其余图标均为 lucide 线性风格——24×24 viewBox、
  * stroke=2、round linecap/linejoin、无填充。
  *

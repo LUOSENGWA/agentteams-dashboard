@@ -2,7 +2,7 @@
 //
 // Two independent layers must both accept Higress Console's 'EQUAL'
 // matchType (dashboard-created routes write 'EXACT'; Console-created routes
-// write 'EQUAL' — Node1 live data, 2026-09-10):
+// write 'EQUAL' — shared-deployment live data, 2026-09-10):
 //   1. lib layer — listAvailableRequestModelAliases accepts EQUAL (22b23a2,
 //      covered in model-bindings.test.ts).
 //   2. client chain — higressApi.listRoutes() normalizes EQUAL→EXACT via

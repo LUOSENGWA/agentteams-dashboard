@@ -14,7 +14,7 @@
 //   - post-login, standalone (default, one instance per user): any logged-in
 //     user (L1 or L2) may create or update the config — plugin parity, the
 //     instance's user IS the plugin's "user of this host".
-//   - post-login, shared (DASHBOARD_SHARED_MODE=1, e.g. Node1 multi-user):
+//   - post-login, shared (DASHBOARD_SHARED_MODE=1, e.g. a shared multi-user deployment):
 //     only level-3 (admin) sessions may save (A). An L2 overwriting the
 //     backend config on a shared instance would redirect EVERY user's data
 //     plane (config file > env, global) — that is attack surface ①.

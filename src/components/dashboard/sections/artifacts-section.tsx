@@ -1,6 +1,6 @@
 'use client';
 
-// 产物（9/14 罗总：「在左边加个产物的 tab，照搬插件的产物功能」——方向：
+// 产物（9/14 装验反馈：「在左边加个产物的 tab，照搬插件的产物功能」——方向：
 // 插件 Artifacts.tsx → dashboard 侧边栏 section）。
 //
 // 功能对齐插件 Artifacts tab（v0.4.98 再版 9 形态）：
@@ -12,7 +12,7 @@
 //     （fetch→blob，代理透传 controller JSON 错误体→显示真实原因）
 //   · 降级横幅：api-not-deployed（404 未升级）/ controller-error（5xx）
 //
-// 9/14 UX 对齐插件（罗总验收反馈五件，插件 Artifacts.tsx 逐项对照落码）：
+// 9/14 UX 对齐插件（装验反馈五件，插件 Artifacts.tsx 逐项对照落码）：
 //   ① 排序空转修复——上游列表端点 v1.2.3 无 created_at/updated_at（插件注释
 //     实锤），pluginTs 多源兜底同款：真实字段 → project_id 内嵌日期
 //     （YYYYMMDD 段近似）；树节点第二行显 团队·时间，排序结果可感知

@@ -254,7 +254,7 @@ export function BackendSetupPage({ onDone, reconfigure = false }: { onDone: () =
         // F1g: clear the ?setup=1 deep link before onDone() (a reload) —
         // otherwise the reloaded page re-reads ?setup=1, forceSetup stays
         // true, and the user is stuck on this page and must hunt for the
-        // "返回登录页" escape hatch (Luo-zong 9/9 acceptance).
+        // "返回登录页" escape hatch (install-verify 9/9 acceptance).
         if (window.location.search) {
           window.history.replaceState(null, '', window.location.pathname + window.location.hash);
         }

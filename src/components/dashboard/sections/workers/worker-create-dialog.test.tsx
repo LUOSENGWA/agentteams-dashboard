@@ -87,7 +87,7 @@ const renderDialog = (
   return { onChange, onSubmit };
 };
 
-describe('WorkerCreateDialog 模型写前校验（9/13 罗总验收：参考插件 G2）', () => {
+describe('WorkerCreateDialog 模型写前校验（9/13 装验反馈：参考插件 G2）', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();

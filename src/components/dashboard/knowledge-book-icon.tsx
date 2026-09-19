@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 /**
- * 知识库 tab 图标（9/14 罗总：「知识库加个新 tab，图标用 SVG 画个不违和契合
+ * 知识库 tab 图标（9/14 装验反馈：「知识库加个新 tab，图标用 SVG 画个不违和契合
  * 风格的，像画产物那个那样，画本书」）。侧边栏其余图标均为 lucide 线性风格——
  * 24×24 viewBox、stroke=2、round linecap/linejoin、无填充。本图标为手绘同款规格：
  * 一本摊开的书（中缝 + 左右两页 + 页缘），语义=知识库。区别于 lucide 现成的

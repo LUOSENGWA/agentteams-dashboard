@@ -44,7 +44,7 @@ const RUNTIME_OPTIONS: { value: WorkerRuntime; label: string }[] = [
 
 /** 建队内联新建 Worker 的空白表单（对齐插件 nw 初始态）。
  * role：对齐插件 CrdManage 成员行 { name, role }——新建 Worker 后选择
- * Leader（team_leader）还是普通 Worker（9/13 罗总：dashboard 建队 leader
+ * Leader（team_leader）还是普通 Worker（9/13 装验反馈：dashboard 建队 leader
  * 只能从现有的选，应参考插件允许新建即 leader）。 */
 const EMPTY_NEW_WORKER = {
   name: '',
@@ -56,7 +56,7 @@ const EMPTY_NEW_WORKER = {
 
 /**
  * 创建团队（对齐插件建队卡：Worker 从已有 CR 选择，**且可内联新建 Worker**
- * ——9/13 罗总验收反馈，参考插件 CrdManage「＋ 新建 Worker（Worker CRD）」
+ * ——9/13 装验反馈，参考插件 CrdManage「＋ 新建 Worker（Worker CRD）」
  * 折叠区：先 POST /workers 显式建 CR，再把名字编入团队；Controller 调和
  * 拉镜像起容器（数分钟就绪），可先保存团队，Worker 就绪后自动生效）。
  */
