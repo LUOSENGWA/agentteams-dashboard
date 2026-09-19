@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { useSyncExternalStore, useState } from 'react';
 import { MessageSquare, PanelLeftClose, Search } from 'lucide-react';
 
 /** Element-style resizable room list: drag the right edge to change width. */
@@ -19,6 +19,40 @@ function loadSidebarWidth(): number {
     /* storage unavailable — fall through to default */
   }
   return SIDEBAR_DEFAULT_W;
+}
+
+// Module-level persisted-width store (useSyncExternalStore): the width
+// hydrates from localStorage WITHOUT an effect setState (no cascading
+// render), and SSR gets the default via the server snapshot.
+let sidebarWidthCache: number | null = null;
+const sidebarWidthListeners = new Set<() => void>();
+
+function readSidebarWidthStore(): number {
+  if (typeof window === 'undefined') return SIDEBAR_DEFAULT_W;
+  if (sidebarWidthCache === null) sidebarWidthCache = loadSidebarWidth();
+  return sidebarWidthCache;
+}
+
+const subscribeSidebarWidth = (cb: () => void): (() => void) => {
+  sidebarWidthListeners.add(cb);
+  return () => {
+    sidebarWidthListeners.delete(cb);
+  };
+};
+
+/** Live width update (drag) — no persistence until the pointer is up. */
+function publishSidebarWidth(w: number): void {
+  sidebarWidthCache = w;
+  sidebarWidthListeners.forEach((l) => l());
+}
+
+function persistSidebarWidth(w: number): void {
+  sidebarWidthCache = w;
+  try {
+    window.localStorage.setItem(SIDEBAR_W_KEY, String(w));
+  } catch {
+    /* non-persistent environment — width still applied for this session */
+  }
 }
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -99,37 +133,29 @@ export function ChatRoomSidebar({
   const timeOrdered = sortRoomsByRecency(visible);
   const shortId = shortUserId(userId);
 
-  // Resizable width (persisted). Hydrate from localStorage after mount so
-  // SSR and the first paint agree on the default.
-  const [width, setWidth] = useState(SIDEBAR_DEFAULT_W);
+  // Resizable width (persisted) via the module store above — SSR and the
+  // first client paint agree on the default; the persisted width applies
+  // from the first client render (store snapshot), no mount-time setState.
+  const width = useSyncExternalStore(
+    subscribeSidebarWidth,
+    readSidebarWidthStore,
+    () => SIDEBAR_DEFAULT_W,
+  );
   const [isResizing, setIsResizing] = useState(false);
-  const widthRef = useRef(SIDEBAR_DEFAULT_W);
-  useEffect(() => {
-    const w = loadSidebarWidth();
-    widthRef.current = w;
-    setWidth(w);
-  }, []);
-  useEffect(() => {
-    widthRef.current = width;
-  }, [width]);
 
   const startResize = (e: React.PointerEvent) => {
     e.preventDefault();
     const startX = e.clientX;
-    const startW = widthRef.current;
+    const startW = readSidebarWidthStore();
     setIsResizing(true);
     const onMove = (ev: PointerEvent) => {
-      setWidth(Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, startW + ev.clientX - startX)));
+      publishSidebarWidth(Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, startW + ev.clientX - startX)));
     };
     const onUp = () => {
       window.removeEventListener('pointermove', onMove);
       window.removeEventListener('pointerup', onUp);
       setIsResizing(false);
-      try {
-        window.localStorage.setItem(SIDEBAR_W_KEY, String(widthRef.current));
-      } catch {
-        /* non-persistent environment — width still applied for this session */
-      }
+      persistSidebarWidth(readSidebarWidthStore());
     };
     window.addEventListener('pointermove', onMove);
     window.addEventListener('pointerup', onUp);
