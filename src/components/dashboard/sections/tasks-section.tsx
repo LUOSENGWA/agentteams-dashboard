@@ -872,10 +872,18 @@ export function TasksSection() {
         </div>
       )}
 
-      {/* View: Projects (cards + selected project plan) */}
+      {/* View: Projects (cards + selected project plan)
+          9/17 装验反馈 G4：row 容器固定撑满剩余屏高（round-4 同 220px
+          顶部偏移常量）——双栏各自内部滚动，滚到底不再带着整页往下滚
+          （overscroll-contain 双保险）。
+          9/17 验收第六轮：补 lg:grid-rows-[minmax(0,1fr)]——只给容器固定
+          高度时隐式行仍是 auto 轨道，子元素 h-full 百分比对 auto 轨道
+          解析失败（退化为内容高度），右栏 scroller 因此没有约束高度=
+          不可滚动（上一装验轮反馈「右边无法滚动」根因）。minmax(0,1fr)
+          让唯一行=容器全高（定高），h-full 链才逐级成立。 */}
       {view === 'projects' && (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-1 space-y-3">
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 lg:h-[calc(100vh-220px)] lg:grid-rows-[minmax(0,1fr)]">
+          <div className="lg:col-span-1 space-y-3 lg:h-full lg:overflow-y-auto lg:overscroll-contain lg:pr-1">
             {board.projects.length === 0 ? (
               <Card className="glass-card">
                 <CardContent className="p-8 text-center">
@@ -899,9 +907,14 @@ export function TasksSection() {
               ))
             )}
           </div>
-          <div className="lg:col-span-2">
+          <div className="lg:col-span-2 lg:h-full">
             {selectedProject ? (
-              <Card className="glass-card">
+              <Card className="glass-card lg:h-full lg:min-h-0">
+                {/* G4（9/17 装验反馈）：row 已固定撑满屏高 → 右栏详情
+                    直接 h-full 顶满行高（Card py-6 自带上下留白），
+                    内部滚动 + overscroll-contain 止滚轮连锁。移动端
+                    保持旧 max-h（无固定行高）。 */}
+                <div className="max-h-[calc(100vh-260px)] lg:max-h-none lg:h-full overflow-y-auto overscroll-contain">
                 <CardContent className="p-5 space-y-4">
                   <div className="space-y-1">
                     <div className="flex items-center gap-2 flex-wrap">
@@ -944,6 +957,7 @@ export function TasksSection() {
                     </div>
                   )}
                 </CardContent>
+                </div>
               </Card>
             ) : (
               <Card className="glass-card">
