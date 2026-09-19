@@ -354,3 +354,68 @@ export async function getProjectHistorySnapshot(
     signal,
   );
 }
+
+// ----- project event stream (task transitions, upstream PR #1233) -----
+
+/**
+ * One task state-transition event (controller `projectEvent`).
+ * The event stream is the transition engine's history feed: every
+ * delegate/ack/submit/report_progress/cancel writes one entry.
+ */
+export interface ProjectEvent {
+  /** ISO timestamp (second precision). */
+  ts: string;
+  task_id: string;
+  /** previous status ("" for created). */
+  from: string;
+  /** new status (planned/assigned/in_progress/submitted/completed/…). */
+  to: string;
+  actor?: string;
+  /** the MCP tool action that caused the transition. */
+  action: string;
+  note?: string;
+  /** writer-persisted monotonic identity (absent on legacy entries). */
+  seq?: number;
+}
+
+export interface ProjectEventsResponse {
+  project_id: string;
+  /** Page of events, oldest first (page 1 = the beginning). */
+  events: ProjectEvent[];
+  /** Opaque cursor for the next page; absent on the last page. */
+  next_cursor?: string;
+  /**
+   * True when the presented cursor is well-formed but its anchor event
+   * no longer resolves (truncated out of the retained 50-entry window,
+   * legacy snapshot drift, or pre-seq cursor format). The caller must
+   * drop the cursor and reload from the beginning.
+   */
+  cursor_expired?: boolean;
+}
+
+/**
+ * Page the task-transition event stream for one project.
+ *
+ * - `limit` clamped 1..200 by the controller (default 50).
+ * - `cursor` is opaque — pass `next_cursor` back verbatim.
+ * - `teamId` disambiguates cross-team duplicate project ids
+ *   (bare id → 409), same contract as the workflow/history endpoints.
+ *
+ * 404 passes through as ApiError when the Controller predates #1233 —
+ * the panel renders the "active after Controller upgrade" placeholder.
+ */
+export async function getProjectEvents(
+  projectId: string,
+  teamId?: string,
+  options: { limit?: number; cursor?: string; signal?: AbortSignal } = {},
+): Promise<ProjectEventsResponse> {
+  const params = new URLSearchParams();
+  if (teamId) params.set('team', teamId);
+  if (options.limit) params.set('limit', String(options.limit));
+  if (options.cursor) params.set('cursor', options.cursor);
+  const qs = params.toString();
+  return requestJson<ProjectEventsResponse>(
+    `${PROJECTS_URL}/${encodeURIComponent(projectId)}/events${qs ? `?${qs}` : ''}`,
+    options.signal,
+  );
+}
