@@ -1,7 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { GitBranch, FolderKanban, CircleAlert, Download, Loader2, RefreshCw, Pause, Play, Map as MapIcon, Ban, List, LayoutGrid } from 'lucide-react';
+import { GitBranch, FolderKanban, CircleAlert, Download, Loader2, RefreshCw, Pause, Play, Map as MapIcon, Ban, List, LayoutGrid, ChevronDown } from 'lucide-react';
 import { toast } from 'sonner';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -225,6 +225,11 @@ function TaskDetailRow({
     : [];
   const cancellable =
     !!task.status && !UNCANCELLABLE_STATUSES.has(task.status);
+  // 任务级巡检（#1230）：spec / 状态转换审计 / tracing 过滤提示——展开块，
+  // 数据全部来自 includeTasks 的 tasks_detail（history 由转换引擎写入 task meta）。
+  const [expanded, setExpanded] = useState(false);
+  const history = Array.isArray(task.history) ? task.history : [];
+  const hasExtra = !!task.spec_path || history.length > 0;
   return (
     <div className="rounded-lg border bg-background/40 p-2 text-xs">
       <div className="flex items-center gap-2 flex-wrap">
@@ -248,7 +253,64 @@ function TaskDetailRow({
         {cancellable && (
           <CancelTaskButton projectId={projectId} taskId={task.task_id} teamId={teamId} />
         )}
+        {hasExtra && (
+          <button
+            type="button"
+            onClick={() => setExpanded((v) => !v)}
+            className="text-muted-foreground hover:text-foreground transition-colors"
+            title={expanded ? '收起任务巡检详情' : '展开任务巡检详情（spec / 状态转换 / tracing）'}
+          >
+            <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+          </button>
+        )}
       </div>
+      {expanded && hasExtra && (
+        <div className="pt-1.5 mt-1.5 border-t space-y-1.5">
+          {task.spec_path ? (
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-muted-foreground shrink-0">规格：</span>
+              <ArtifactLink
+                href={getTaskArtifactUrl(projectId, task.task_id, task.spec_path)}
+                label={task.spec_path.split('/').pop() || task.spec_path}
+              />
+            </div>
+          ) : null}
+          {history.length > 0 && (
+            <div>
+              <p className="text-[10px] text-muted-foreground mb-1">
+                状态转换（{history.length}，新→旧）
+              </p>
+              <div className="space-y-0.5 max-h-40 overflow-y-auto">
+                {[...history].reverse().map((h, i) => (
+                  <div key={h.seq ?? i} className="flex gap-1.5 items-baseline font-mono text-[10px]">
+                    <span className="text-muted-foreground shrink-0">
+                      {String(h.ts).replace('T', ' ').slice(5, 16)}
+                    </span>
+                    <span>
+                      {h.from || '∅'} → <b>{h.to}</b>
+                    </span>
+                    <span className="text-muted-foreground shrink-0">{h.action}</span>
+                    {h.actor ? (
+                      <span className="text-muted-foreground/70 shrink-0">（{h.actor}）</span>
+                    ) : null}
+                    {h.note ? (
+                      <span
+                        className="text-muted-foreground/70 truncate max-w-[220px]"
+                        title={h.note}
+                      >
+                        {h.note}
+                      </span>
+                    ) : null}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          <p className="text-[10px] font-mono text-muted-foreground/80 break-all">
+            tracing 过滤：agentteams.project.id={projectId} · agentteams.task.id={task.task_id}
+          </p>
+        </div>
+      )}
       {(task.result_path || deliverables.length > 0) && (
         <div className="flex items-center gap-2 flex-wrap pt-1">
           <span className="text-[10px] text-muted-foreground shrink-0">产物：</span>
@@ -1201,7 +1263,7 @@ export function ProjectsSection() {
 
           {/* Workflow detail */}
           <Card className="glass-card lg:col-span-2">
-            <CardContent className="p-4">
+            <CardContent className="p-4 max-h-[calc(100vh-160px)] overflow-y-auto overscroll-contain">
               {selected ? (
                 <WorkflowDetail projectId={selected.project_id} teamId={selected.team_id} />
               ) : (
@@ -1228,7 +1290,7 @@ export function ProjectsSection() {
           </div>
           {selected && (
             <Card className="glass-card">
-              <CardContent className="p-4">
+              <CardContent className="p-4 max-h-[calc(100vh-160px)] overflow-y-auto overscroll-contain">
                 <WorkflowDetail projectId={selected.project_id} teamId={selected.team_id} />
               </CardContent>
             </Card>

@@ -113,6 +113,18 @@ export interface WorkflowLoopTask {
   status?: string;
 }
 
+/** Mirrors taskTransition: one auditable task state change from the task
+ *  meta `history` array (written by the TeamHarness transition engine). */
+export interface TaskTransition {
+  ts: string;
+  from?: string;
+  to: string;
+  action: string;
+  actor?: string;
+  note?: string;
+  seq?: number;
+}
+
 /** Mirrors taskDetail, returned when ?includeTasks=true. */
 export interface WorkflowTaskDetail {
   task_id: string;
@@ -125,6 +137,8 @@ export interface WorkflowTaskDetail {
   deliverables?: unknown[];
   result_path?: string;
   cancel_reason?: string;
+  /** 任务状态转换审计轨迹（#1230 巡检契约；旧版 controller 无此字段）。 */
+  history?: TaskTransition[];
 }
 
 export interface WorkflowResponse {
