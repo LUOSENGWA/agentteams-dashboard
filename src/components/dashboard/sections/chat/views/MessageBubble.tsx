@@ -20,6 +20,7 @@ import { AttachmentCard } from '../attachment-card';
 import { recordToolCalls } from '@/lib/tool-call-counter';
 import { Check, CheckCheck, Loader2 } from 'lucide-react';
 import { RuntimeBadge } from '@/components/dashboard/phase-badge';
+import type { WorkerSessionState } from '@/lib/worker-session-state';
 
 interface MessageBubbleProps {
   message: DisplayMessage;
@@ -40,6 +41,11 @@ interface MessageBubbleProps {
   /** Latest m.read receipts of every user in the room (for ✓✓ read indicator). */
   readReceipts?: Record<string, ReadReceiptEntry>;
   currentUserId?: string | null;
+  /**
+   * Live session state of the sender, when the sender is a worker (A17
+   * status dot on the avatar). Undefined for humans / unknown senders.
+   */
+  senderStatus?: WorkerSessionState | null;
 }
 
 function MessageTime({ timestamp }: { timestamp: number }) {
@@ -92,6 +98,43 @@ function AvatarWithInitials({ sender, label, isMe }: { sender: string; label: st
         {label.slice(0, 2).toUpperCase()}
       </div>
     </Avatar>
+  );
+}
+
+/**
+ * A17 task status dot, rendered at the bottom-right corner of a worker's
+ * avatar in the group chat (NOT on the worker-management page — 罗总
+ * 9/18: the indicator belongs on the chat-room avatars).
+ *
+ *   running = blue breathing (task-level heartbeat, unbounded)
+ *   done    = green steady (finished within 10 min, then decays to idle)
+ *   idle    = dim gray
+ */
+function WorkerStatusDot({ state }: { state: WorkerSessionState }) {
+  if (state === 'running') {
+    return (
+      <span
+        className="worker-status-breathe absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-sky-500 ring-2 ring-background"
+        title="运行中"
+        aria-label="运行中"
+      />
+    );
+  }
+  if (state === 'done') {
+    return (
+      <span
+        className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-background"
+        title="已完成（10 分钟内）"
+        aria-label="已完成"
+      />
+    );
+  }
+  return (
+    <span
+      className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-zinc-400/70 ring-2 ring-background"
+      title="空闲"
+      aria-label="空闲"
+    />
   );
 }
 
@@ -152,6 +195,7 @@ export function MessageBubble({
   memberMap,
   readReceipts,
   currentUserId,
+  senderStatus,
 }: MessageBubbleProps) {
   const [isHovered, setIsHovered] = useState(false);
   const [showActions, setShowActions] = useState(false);
@@ -277,7 +321,10 @@ export function MessageBubble({
       {/* Avatar column: mirrors the bubble side (own messages on the right). */}
       <div className="w-7 shrink-0">
         {showAvatar && (
-          <AvatarWithInitials sender={message.sender} label={senderLabel} isMe={message.isMe} />
+          <div className="relative w-7 h-7">
+            <AvatarWithInitials sender={message.sender} label={senderLabel} isMe={message.isMe} />
+            {senderStatus && !message.isMe && <WorkerStatusDot state={senderStatus} />}
+          </div>
         )}
       </div>
 

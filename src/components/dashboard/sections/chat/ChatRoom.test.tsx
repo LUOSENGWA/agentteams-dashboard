@@ -84,6 +84,13 @@ vi.mock('@/hooks/use-matrix', async (importOriginal) => {
   };
 });
 
+vi.mock('@/hooks/use-worker-session-state', () => ({
+  // These hooks hit react-query (worker list) which the render harness below
+  // does not wrap in a QueryClientProvider.
+  useWorkerAgentStatusMap: () => ({}),
+  useSessionTick: () => 0,
+}));
+
 vi.mock('framer-motion', () => ({
   motion: { div: forwardRef((props: Record<string, unknown>, ref: ForwardedRef<HTMLDivElement>) => <div ref={ref} {...props} />) },
   AnimatePresence: ({ children }: { children: React.ReactNode }) => <>{children}</>,
