@@ -125,6 +125,30 @@ describe('buildRooms', () => {
   });
 });
 
+  it('includes sync-only rooms (project rooms) as unknown', () => {
+    const rooms = buildRooms(undefined, undefined, undefined, {
+      '!proj:matrix': { roomName: '项目群', lastMessageTs: 123, unreadCount: 2 },
+      '!noname:matrix': { lastMessageTs: 55 },
+    });
+    expect(rooms).toHaveLength(1);
+    expect(rooms[0]).toMatchObject({
+      id: '!proj:matrix',
+      name: '项目群',
+      type: 'unknown',
+      lastMessageTs: 123,
+      unreadCount: 2,
+    });
+  });
+
+  it('does not duplicate resource rooms that carry a roomName', () => {
+    const workers = [worker({ roomID: '!w1:matrix' })];
+    const rooms = buildRooms(workers, undefined, undefined, {
+      '!w1:matrix': { roomName: 'w1 房间' },
+    });
+    expect(rooms.filter((r) => r.id === '!w1:matrix')).toHaveLength(1);
+    expect(rooms[0].type).toBe('worker');
+  });
+
 describe('filterRooms', () => {
   const rooms: RoomInfo[] = [
     { id: '!a:matrix', name: 'Alpha Team', type: 'team', members: ['@alice:matrix'], parentTeam: 'alpha', phase: 'Active' },

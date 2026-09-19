@@ -123,6 +123,23 @@ export function useGlobalMatrixSync(): void {
             }
           }),
         );
+        // 12.13：房间名采集——对全部已加入房间（上限 80）取 m.room.name，
+        // 填 meta.roomName（项目群等未归类房间在侧栏出现的前提；一次/会话）。
+        const nameRooms = roomsResp.joined_rooms.slice(0, 80);
+        await Promise.all(
+          nameRooms.map(async (rid) => {
+            if (cancelled) return;
+            try {
+              const state = await matrixApi.getRoomState(homeserver, accessToken, rid);
+              const nameEv = state.find((e) => e.type === 'm.room.name');
+              const content = (nameEv?.content ?? {}) as { name?: unknown };
+              const nm = typeof content.name === 'string' ? content.name.trim() : '';
+              if (nm) useRoomMetaStore.getState().setRoomMeta(rid, { roomName: nm });
+            } catch {
+              /* state may be restricted — skip */
+            }
+          }),
+        );
       } catch {
         /* getJoinedRooms may fail if Matrix is unreachable — sync loop will keep trying */
       }
@@ -168,6 +185,7 @@ export function useGlobalMatrixSync(): void {
       rid: string,
       roomData: {
         timeline?: { events: Array<{ origin_server_ts?: number; type?: string; content?: { body?: unknown; msgtype?: string } }> };
+        state?: { events?: Array<{ type?: string; content?: Record<string, unknown> }> };
         unread_notifications?: { notification_count: number; highlight_count: number };
       },
     ) => {
@@ -189,6 +207,18 @@ export function useGlobalMatrixSync(): void {
       if (unread) {
         metaPartial.unreadCount = unread.notification_count;
         metaPartial.unreadHighlightCount = unread.highlight_count;
+      }
+      // 12.13：房间名采集（/sync state 段）——未归类房间（项目群等）
+      // 侧栏可见性的前提；增量 sync 只在改名时携带，老房间由
+      // loadHistorical 的 state 一次性补齐。
+      for (const se of roomData.state?.events || []) {
+        if (se.type === 'm.room.name' && typeof se.content?.name === 'string') {
+          const nm = se.content.name.trim();
+          if (nm) {
+            metaPartial.roomName = nm;
+            break;
+          }
+        }
       }
       if (Object.keys(metaPartial).length > 0) {
         useRoomMetaStore.getState().setRoomMeta(rid, metaPartial);

@@ -96,6 +96,13 @@ export interface RoomMeta {
    * counter on `m.fully_read` and keep returning the old count).
    */
   clearedAt?: number;
+  /**
+   * Room display name (m.room.name from /sync state or /rooms/{id}/state).
+   * Lets the sidebar surface rooms with no AgentTeams resource behind them
+   * (project rooms etc.) — previously invisible because buildRooms only
+   * derives resource-backed rooms.
+   */
+  roomName?: string;
 }
 
 interface RoomMetaStore {
