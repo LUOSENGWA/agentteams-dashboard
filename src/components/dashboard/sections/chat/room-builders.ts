@@ -8,6 +8,8 @@ export interface RoomMetaInput {
   unreadHighlightCount?: number;
   /** Room name captured by the global sync (used for sync-only rooms). */
   roomName?: string;
+  /** Joined member count captured by the global sync (kind filter). */
+  memberCount?: number;
 }
 
 /** Lookup table for per-room meta. Keys are Matrix room ids. */
@@ -29,7 +31,10 @@ export function buildRooms(
   const lookup = metaByRoomId ?? {};
   const enrich = (
     rid: string,
-  ): Pick<RoomInfo, 'lastMessageTs' | 'lastMessagePreview' | 'unreadCount' | 'unreadHighlightCount'> => {
+  ): Pick<
+    RoomInfo,
+    'lastMessageTs' | 'lastMessagePreview' | 'unreadCount' | 'unreadHighlightCount' | 'memberCount'
+  > => {
     const m = lookup[rid];
     if (!m) return {};
     return {
@@ -37,6 +42,7 @@ export function buildRooms(
       lastMessagePreview: m.lastMessagePreview,
       unreadCount: m.unreadCount,
       unreadHighlightCount: m.unreadHighlightCount,
+      memberCount: m.memberCount,
     };
   };
 
@@ -51,6 +57,7 @@ export function buildRooms(
         parentTeam: team.name,
         phase: team.phase,
         team,
+        memberCount: (team.workerNames?.length ?? 0) + 1,
         ...enrich(team.teamRoomID),
       });
     }
@@ -67,6 +74,7 @@ export function buildRooms(
         workerName: worker.name,
         phase: worker.phase,
         runtime: worker.runtime,
+        memberCount: 2,
         ...enrich(worker.roomID),
       });
     }
@@ -85,6 +93,7 @@ export function buildRooms(
         matrixUserId: manager.matrixUserID,
         parentTeam: leadingTeam?.name,
         phase: manager.phase,
+        memberCount: 2,
         ...enrich(chatRoomId),
       });
     }

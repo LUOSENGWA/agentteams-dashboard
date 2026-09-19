@@ -22,4 +22,6 @@ export interface RoomInfo {
   unreadCount?: number;
   /** Unread count of @mentions / highlighted messages. */
   unreadHighlightCount?: number;
+  /** Joined member count (drives the 群组/私聊 kind filter; >2 = group). */
+  memberCount?: number;
 }

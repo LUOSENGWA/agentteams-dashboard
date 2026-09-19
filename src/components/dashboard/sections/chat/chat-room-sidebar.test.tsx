@@ -91,6 +91,21 @@ describe('ChatRoomSidebar', () => {
     expect(screen.getByText('QwenPaw')).toBeInTheDocument();
   });
 
+  it('filters by kind: 群组 / 私聊 chips', () => {
+    renderSidebar({
+      rooms: [
+        room({ id: '!g:test', name: 'GroupRoom', type: 'team', memberCount: 5, lastMessageTs: 10 }),
+        room({ id: '!d:test', name: 'DmRoom', type: 'worker', memberCount: 2, lastMessageTs: 20 }),
+      ],
+    });
+    fireEvent.click(screen.getByText('群组'));
+    expect(screen.getByText('GroupRoom')).toBeInTheDocument();
+    expect(screen.queryByText('DmRoom')).toBeNull();
+    fireEvent.click(screen.getByText('私聊'));
+    expect(screen.getByText('DmRoom')).toBeInTheDocument();
+    expect(screen.queryByText('GroupRoom')).toBeNull();
+  });
+
   it('switches to type-grouped view via the toggle', () => {
     renderSidebar();
     fireEvent.click(screen.getByText('类型'));

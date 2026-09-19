@@ -60,14 +60,25 @@ export function ChatRoomSidebar({
   onCollapse: () => void;
 }) {
   const [filter, setFilter] = useState('');
+  // 12.15（装验反馈「加上像插件那样的分类」）：全部/群组/私聊——群组=成员>2
+  // （plugin 同款口径）；与排序模式正交。
+  const [kindFilter, setKindFilter] = useState<'all' | 'group' | 'dm'>('all');
   const filtered = filterRooms(rooms, filter);
-  const groups = groupRoomsByType(filtered);
+  const visible =
+    kindFilter === 'all'
+      ? filtered
+      : filtered.filter((r) =>
+          kindFilter === 'group'
+            ? (r.memberCount ?? 0) > 2
+            : (r.memberCount ?? 0) <= 2,
+        );
+  const groups = groupRoomsByType(visible);
   // 12.15（装验反馈「项目群被丢进『其他』、要和 Element/插件一样排序」）：
   // 默认「按时间」=Element/插件同款的单一时间序混合列表；「按类型」保留
   // 分组视图（团队/Agent/Manager/房间）。
   const sortMode = useSyncExternalStore(subscribeSort, readSortStore, () => 'time' as const);
   const changeSort = publishSort;
-  const timeOrdered = sortRoomsByRecency(filtered);
+  const timeOrdered = sortRoomsByRecency(visible);
   const shortId = shortUserId(userId);
 
   return (
@@ -76,7 +87,20 @@ export function ChatRoomSidebar({
         <div className="flex items-center justify-between mb-2">
           <span className="text-xs font-semibold tracking-wide">会话</span>
           <div className="flex items-center gap-1">
-            <span className="text-[10px] text-muted-foreground">{filtered.length} 个房间</span>
+            <span className="text-[10px] text-muted-foreground">{visible.length} 个房间</span>
+            <div className="flex items-center rounded border border-border p-0.5" role="group" aria-label="房间分类">
+              {(['all', 'group', 'dm'] as const).map((k) => (
+                <button
+                  key={k}
+                  type="button"
+                  className={`rounded px-1.5 py-0.5 text-[10px] ${kindFilter === k ? 'bg-accent text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+                  onClick={() => setKindFilter(k)}
+                  title={k === 'all' ? '全部房间' : k === 'group' ? '群组（成员 > 2）' : '私聊（成员 ≤ 2）'}
+                >
+                  {k === 'all' ? '全部' : k === 'group' ? '群组' : '私聊'}
+                </button>
+              ))}
+            </div>
             <div className="flex items-center rounded border border-border p-0.5" role="group" aria-label="房间排序">
               <button
                 type="button"

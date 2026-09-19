@@ -103,6 +103,11 @@ export interface RoomMeta {
    * derives resource-backed rooms.
    */
   roomName?: string;
+  /**
+   * Joined member count (sync summary m.joined_member_count, refined by the
+   * one-shot state pass). Drives the plugin-style 群组/私聊 sidebar filter.
+   */
+  memberCount?: number;
 }
 
 interface RoomMetaStore {
