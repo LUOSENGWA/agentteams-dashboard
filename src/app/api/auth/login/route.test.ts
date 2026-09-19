@@ -12,7 +12,7 @@ import {
   HigressConsoleConfigurationError,
 } from '../../higress/proxy-helper';
 import { getAuthToken, getControllerUrl } from '../../agentteams/proxy-helper';
-import { __resetSessionStoreForTests, SESSION_COOKIE_NAME } from '@/lib/dashboard-session';
+import { __resetSessionStoreForTests, SESSION_COOKIE_NAME, validateSessionToken } from '@/lib/dashboard-session';
 import { forgetWorking } from '@/lib/backend-config';
 
 vi.mock('../../higress/proxy-helper', () => ({
@@ -30,6 +30,13 @@ vi.mock('../../higress/proxy-helper', () => ({
       super(`Higress Console deployment configuration error: ${reason}`);
     }
   },
+  // 12.16: real impl for the server-bound Console session capture.
+  collectSetCookieHeader: (h: Headers) =>
+    h
+      .getSetCookie()
+      .map((c: string) => c.split(';')[0].trim())
+      .filter((c: string) => c.includes('='))
+      .join('; ') || undefined,
 }));
 
 vi.mock('../../agentteams/proxy-helper', () => ({
@@ -410,6 +417,15 @@ describe('POST /api/auth/login (dual track, M19)', () => {
     );
     // The admin verification's Console cookie must NOT be forwarded.
     expect(response.headers.getSetCookie().every((c) => !c.startsWith('_hi_sess='))).toBe(true);
+    // 12.16: but it IS bound to the dashboard session server-side, so the
+    // operator's own login can manage the model gateway.
+    const sessionCookie = response.headers
+      .getSetCookie()
+      .find((c) => c.startsWith(`${SESSION_COOKIE_NAME}=`));
+    expect(sessionCookie).toBeTruthy();
+    const value = (sessionCookie as string).split(';')[0].slice(SESSION_COOKIE_NAME.length + 1);
+    const boundSession = validateSessionToken(value);
+    expect(boundSession?.consoleCookie).toBe('_hi_sess=abc');
   });
 
   it('Matrix: CR level 1 WITHOUT admin credentials → 400 with a clear hint', async () => {

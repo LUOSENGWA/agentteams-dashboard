@@ -2,12 +2,13 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET } from './route';
-import { validateHigressSession } from '@/lib/api-auth';
+import { validateHigressCookieString, validateHigressSession } from '@/lib/api-auth';
 
 // 12.15：路由对 Higress 会话做真实校验（Console 探测）——测试按默认
 // 「无有效会话」mock，逐用例可覆写。
 vi.mock('@/lib/api-auth', () => ({
   validateHigressSession: vi.fn(async () => ({ valid: false, user: null })),
+  validateHigressCookieString: vi.fn(async () => ({ valid: false, user: null })),
 }));
 import {
   SESSION_COOKIE_NAME,
@@ -81,6 +82,23 @@ describe('GET /api/auth/session (M19 dashboard session)', () => {
       await GET(requestWith(`${SESSION_COOKIE_NAME}=${cookieValue}; _hi_sess=abc`))
     ).json();
     expect(data.higressSession).toBe(true);
+  });
+
+  it('reports higressSession true for a server-bound Console session (L1 + admin verification)', async () => {
+    vi.mocked(validateHigressSession).mockResolvedValueOnce({ valid: false, user: null });
+    vi.mocked(validateHigressCookieString).mockResolvedValueOnce({
+      valid: true,
+      user: { name: 'admin', level: 3 },
+    });
+    const { cookieValue } = createSession({
+      user: 'luo',
+      crLevel: 1,
+      credential: { kind: 'sa' },
+      consoleCookie: '_hi_sess=abc',
+    });
+    const data = await (await GET(requestWith(`${SESSION_COOKIE_NAME}=${cookieValue}`))).json();
+    expect(data.higressSession).toBe(true);
+    expect(validateHigressCookieString).toHaveBeenCalledWith('_hi_sess=abc');
   });
 
   it('ignores unrelated cookies (no session cookie present)', async () => {

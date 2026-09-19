@@ -114,6 +114,17 @@ export function prepareAiRoutePayload(body: Record<string, unknown>): Record<str
   return payload;
 }
 
+/** 12.16: Set-Cookie 头列表 → 可直接用于下一请求的 Cookie 值串（name=value）。
+ *  用于把管理员验证得到的 Console 会话「服务端绑定」进 dashboard 会话
+ *  （不转发给浏览器——见 access.ts 的绑定校验）。 */
+export function collectSetCookieHeader(sourceHeaders: Headers): string | undefined {
+  const parts = sourceHeaders
+    .getSetCookie()
+    .map((c) => c.split(';')[0]?.trim())
+    .filter((c): c is string => Boolean(c && c.includes('=')));
+  return parts.length > 0 ? parts.join('; ') : undefined;
+}
+
 export function forwardCookies(sourceHeaders: Headers, targetHeaders: Headers): void {
   const setCookie = sourceHeaders.getSetCookie();
   for (const cookie of setCookie) {

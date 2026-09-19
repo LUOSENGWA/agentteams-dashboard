@@ -8,7 +8,7 @@
 // level gate; the security boundary remains server-side (middleware +
 // Controller A2).
 import { NextRequest, NextResponse } from 'next/server';
-import { validateHigressSession } from '@/lib/api-auth';
+import { validateHigressCookieString, validateHigressSession } from '@/lib/api-auth';
 import { getSessionFromRequest } from '@/lib/dashboard-session';
 
 export async function GET(request: NextRequest) {
@@ -23,6 +23,13 @@ export async function GET(request: NextRequest) {
   let higressSession = false;
   try {
     higressSession = (await validateHigressSession(request)).valid;
+    if (!higressSession) {
+      // 12.16: server-bound Console session (L1 + admin verification).
+      const bound = getSessionFromRequest(request);
+      if (bound?.consoleCookie) {
+        higressSession = (await validateHigressCookieString(bound.consoleCookie)).valid;
+      }
+    }
   } catch {
     higressSession = false;
   }
