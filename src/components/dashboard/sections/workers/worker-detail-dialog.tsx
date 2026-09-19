@@ -13,6 +13,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useWorkerSkills, useUploadWorkerSkill } from '@/hooks/use-agentteams-worker-skills';
 import { PluginDetailBlocks } from '@/components/plugins/plugin-detail-blocks';
+import { WorkerRuntimeConfigPanel } from '@/components/dashboard/sections/workers/worker-runtime-config-panel';
 import { WorkerSkillAssign } from './worker-skill-assign';
 
 const DETAIL_FIELDS: Array<[string, (_w: WorkerResponse) => string]> = [
@@ -155,6 +156,10 @@ export function WorkerDetailDialog({
                   </div>
                 </div>
               )}
+
+              {/* B5: runtime-config 编辑（#1231 消费；上游未合并时 404 占位横幅）。
+                  key=worker.name：换 worker 重挂载，编辑态自然清零 */}
+              <WorkerRuntimeConfigPanel key={worker.name} workerName={worker.name} />
 
               <WorkerSkillAssign worker={worker} onSaved={onSaved} />
 
