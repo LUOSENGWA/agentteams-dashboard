@@ -23,6 +23,8 @@ interface EventTileProps {
   currentUserId?: string | null;
   /** Live session state of the sender when it is a worker (A17 dot). */
   senderStatus?: WorkerSessionState | null;
+  /** Opens a worker's read-only QwenPaw sessions (avatar click, C / #1295). */
+  onOpenWorkerChats?: (_workerName: string) => void;
 }
 
 export function EventTile({
@@ -42,6 +44,7 @@ export function EventTile({
   readReceipts,
   currentUserId,
   senderStatus,
+  onOpenWorkerChats,
 }: EventTileProps) {
   return (
     <MessageBubble
@@ -61,6 +64,7 @@ export function EventTile({
       readReceipts={readReceipts}
       currentUserId={currentUserId}
       senderStatus={senderStatus}
+      onOpenWorkerChats={onOpenWorkerChats}
     />
   );
 }

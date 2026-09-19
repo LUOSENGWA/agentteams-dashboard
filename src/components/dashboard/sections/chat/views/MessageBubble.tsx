@@ -36,6 +36,11 @@ interface MessageBubbleProps {
   onSendConfirmation?: (_content: string) => void;
   /** Opens the owning worker's files panel (team rooms: multi-worker source). */
   onOpenWorkerFiles?: (_message: DisplayMessage) => void;
+  /**
+   * Opens the owning worker's read-only QwenPaw sessions (C / #1295).
+   * Only worker senders get a clickable avatar; humans do not.
+   */
+  onOpenWorkerChats?: (_workerName: string) => void;
   senderShort?: string;
   memberMap?: Record<string, string>;
   /** Latest m.read receipts of every user in the room (for ✓✓ read indicator). */
@@ -191,6 +196,7 @@ export function MessageBubble({
   onCancel,
   onSendConfirmation,
   onOpenWorkerFiles,
+  onOpenWorkerChats,
   senderShort,
   memberMap,
   readReceipts,
@@ -318,13 +324,30 @@ export function MessageBubble({
         setShowActions(v => !v);
       }}
     >
-      {/* Avatar column: mirrors the bubble side (own messages on the right). */}
+      {/* Avatar column: mirrors the bubble side (own messages on the right).
+          C (#1295): worker senders' avatars are clickable → read-only
+          QwenPaw sessions of that worker ("补头": the headless worker's
+          sessions, viewable from the room). */}
       <div className="w-7 shrink-0">
         {showAvatar && (
-          <div className="relative w-7 h-7">
+          <button
+            type="button"
+            disabled={!message.workerName || !onOpenWorkerChats}
+            onClick={(e) => {
+              e.stopPropagation();
+              if (message.workerName && onOpenWorkerChats) onOpenWorkerChats(message.workerName);
+            }}
+            title={message.workerName && onOpenWorkerChats ? `查看 ${senderLabel} 的会话` : undefined}
+            aria-label={message.workerName && onOpenWorkerChats ? `查看 ${senderLabel} 的会话` : undefined}
+            className={
+              message.workerName && onOpenWorkerChats
+                ? 'relative w-7 h-7 cursor-pointer rounded-full hover:opacity-80 transition-opacity focus:outline-none focus:ring-2 focus:ring-primary/50'
+                : 'relative w-7 h-7'
+            }
+          >
             <AvatarWithInitials sender={message.sender} label={senderLabel} isMe={message.isMe} />
             {senderStatus && !message.isMe && <WorkerStatusDot state={senderStatus} />}
-          </div>
+          </button>
         )}
       </div>
 

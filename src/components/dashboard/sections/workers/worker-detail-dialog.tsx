@@ -16,7 +16,6 @@ import { PluginDetailBlocks } from '@/components/plugins/plugin-detail-blocks';
 import { WorkerRuntimeConfigPanel } from '@/components/dashboard/sections/workers/worker-runtime-config-panel';
 import { WorkerSkillAssign } from './worker-skill-assign';
 import { WorkerChannelsPanel } from '@/components/dashboard/sections/workers/worker-channels-panel';
-import { WorkerChatsPanel } from '@/components/dashboard/sections/workers/worker-chats-panel';
 
 const DETAIL_FIELDS: Array<[string, (_w: WorkerResponse) => string]> = [
   ['名称', (w) => w.name],
@@ -172,10 +171,6 @@ export function WorkerDetailDialog({
                   挂载在 PluginDetailBlocks 之后——与 B5（runtime-config，挂在其前）
                   保持独立 PR 零 hunk 重叠 */}
               <WorkerChannelsPanel key={`channels-${worker.name}`} workerName={worker.name} />
-
-              {/* C: 会话只读（#1295 等合并；给无头 QwenPaw Worker「补头」——
-                  列表 → agent 上下文详情；404 占位横幅） */}
-              <WorkerChatsPanel key={`chats-${worker.name}`} workerName={worker.name} />
             </div>
           )}
         </DialogContent>
