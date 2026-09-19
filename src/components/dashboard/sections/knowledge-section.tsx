@@ -1,13 +1,15 @@
 'use client';
 
-// B7 知识库（#1208 workspace-files 消费）。形态=8/17 对接方案 3.3 定案：
+// 知识库 v2（workbench 插件同款数据面，9/16 装验定案「照插件做」）。
 //   · 数据面：/api/agentteams/workers/[name]/workspace-files/{tree|file-metadata|file-content}
-//     KB 布局固定三根：MEMORY.md（根文件）/ memory/** / digest/**——
-//     Controller D3 生死线禁 path="" 根列表，故不探根、按固定布局懒展开
+//     后端=Controller Docker 代理 tarball 只读（route.ts 内注释；旧 Controller 即开即用，
+//     不再依赖 #1208 端点）——404=真实故障（容器/工作区缺失），直接显示服务端错误。
+//   · KB 布局（插件四分类）：档案=顶层 md / 文件=其余顶层条目（只列不展开）/
+//     日记=memory/** / 知识库=digest/**（懒展开：展开仅 memory/**·digest/**）
+//   · 选择器：团队透传（optgroup 按 team 分组 + 负责人标记）
 //   · 图谱：wikilink 2D 力导向（[[title]] 从 md 内容客户端解析，无新上游依赖；
 //     dashboard 不引 three.js——深交互留给插件宿主版，本处=简化渲染+点节点开预览）
-//   · 预览：file-content 分块读（offset/eof 循环）→ md 走 MarkdownMessage
-// 降级：#1208 未合并 → 上游 404 → 占位横幅（同 B4/B5 先例）。
+//   · 预览：file-content 分块读（offset/eof 循环；v2 后端单块 ≤1MB 即 eof）
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -24,6 +26,7 @@ import { Button } from '@/components/ui/button';
 import { SectionHeader } from '@/components/dashboard/section-header';
 import { MarkdownMessage } from '@/components/dashboard/sections/chat/markdown-message';
 import { useWorkers } from '@/hooks/use-agentteams-workers';
+import type { WorkerResponse } from '@/lib/agentteams-api';
 
 // ── 类型（#1208 D2 / QwenPaw workspace_files.py 实锤形状）──────────────────
 interface TreeEntry {
@@ -57,15 +60,24 @@ const CHUNK = 200_000; // file-content 单块
 const MAX_CHUNKS = 8; // 单文件最多 1.6MB
 
 // ── 数据获取 ───────────────────────────────────────────────────────────────
-async function fetchTree(worker: string, dir: string): Promise<TreeEntry[] | null> {
+/** 服务端错误消息提取（v2：404=真实故障，消息来自 route.ts）。 */
+async function httpError(res: Response, what: string): Promise<Error> {
+  let msg = `${what} → HTTP ${res.status}`;
+  try {
+    const b = (await res.json()) as { error?: string };
+    if (b?.error) msg = b.error;
+  } catch { /* 非 JSON 错误体，保留状态码消息 */ }
+  return new Error(msg);
+}
+
+async function fetchTree(worker: string, dir: string): Promise<TreeEntry[]> {
   let cursor: string | null = null;
   const out: TreeEntry[] = [];
   for (let page = 0; page < 5; page += 1) {
     const qs = new URLSearchParams({ path: dir });
     if (cursor) qs.set('cursor', cursor);
     const res = await fetch(`${base(worker)}/tree?${qs.toString()}`, { cache: 'no-store' });
-    if (res.status === 404) return null; // #1208 未合并（版本门/未部署）
-    if (!res.ok) throw new Error(`tree ${dir} → HTTP ${res.status}`);
+    if (!res.ok) throw await httpError(res, `tree ${dir}`);
     const body = (await res.json()) as TreeResponse;
     out.push(...(body.entries ?? []));
     if (!body.has_more || !body.next_cursor) break;
@@ -74,14 +86,13 @@ async function fetchTree(worker: string, dir: string): Promise<TreeEntry[] | nul
   return out;
 }
 
-async function fetchFullContent(worker: string, path: string, cap = MAX_CHUNKS): Promise<string | null> {
+async function fetchFullContent(worker: string, path: string, cap = MAX_CHUNKS): Promise<string> {
   let offset = 0;
   let out = '';
   for (let i = 0; i < cap; i += 1) {
     const qs = new URLSearchParams({ path, offset: String(offset), limit: String(CHUNK) });
     const res = await fetch(`${base(worker)}/file-content?${qs.toString()}`, { cache: 'no-store' });
-    if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`file-content ${path} → HTTP ${res.status}`);
+    if (!res.ok) throw await httpError(res, `file-content ${path}`);
     const body = (await res.json()) as FileContentResponse;
     out += body.content ?? '';
     if (body.eof) return out;
@@ -91,33 +102,28 @@ async function fetchFullContent(worker: string, path: string, cap = MAX_CHUNKS):
   return out;
 }
 
-/** 收集 KB 内全部 md 文件（MEMORY.md + memory/** + digest/**，深度≤4） */
-async function collectMdFiles(worker: string): Promise<{ files: string[]; unavailable: boolean }> {
-  const files: string[] = ['MEMORY.md'];
+/** 收集 KB 内全部 md 文件（顶层档案 md + memory/** + digest/**，深度≤4） */
+async function collectMdFiles(worker: string): Promise<string[]> {
+  const top = await fetchTree(worker, ''); // 顶层失败=致命（工作区不可达）
+  const files: string[] = top
+    .filter((e) => e.kind === 'file' && e.name.toLowerCase().endsWith('.md'))
+    .map((e) => e.path);
   const walk = async (dir: string, depth: number): Promise<void> => {
     if (depth > 4) return;
-    let entries: TreeEntry[] | null;
+    let entries: TreeEntry[];
     try {
       entries = await fetchTree(worker, dir);
     } catch {
       return; // 单目录失败不拖垮全量
     }
-    if (entries === null) return;
     for (const e of entries) {
       if (e.kind === 'directory') await walk(e.path, depth + 1);
       else if (e.name.toLowerCase().endsWith('.md')) files.push(e.path);
     }
   };
-  let unavailable = false;
-  const r1 = await fetchTree(worker, 'memory');
-  if (r1 === null) unavailable = true;
-  const r2 = await fetchTree(worker, 'digest');
-  if (r2 === null) unavailable = true;
-  if (unavailable) return { files: [], unavailable: true };
-  if (r1) await walk('memory', 1);
-  if (r2) await walk('digest', 1);
-  // 去重（MEMORY.md 不在 memory/ 内，此处仅防重复目录文件）
-  return { files: Array.from(new Set(files)), unavailable: false };
+  await Promise.all([walk('memory', 1), walk('digest', 1)]);
+  // 去重（顶层档案与子树不重叠，此处仅防重复）
+  return Array.from(new Set(files));
 }
 
 /** wikilink [[title]] / [[title|alias]] / [[title#anchor]] → title */
@@ -267,7 +273,7 @@ export function KnowledgeSection() {
   const [worker, setWorker] = useState('');
   const effectiveWorker = worker || workers?.[0]?.name || '';
 
-  const [unavailable, setUnavailable] = useState(false);
+  const [topEntries, setTopEntries] = useState<TreeEntry[] | null>(null);
   const [loadError, setLoadError] = useState('');
   const [loading, setLoading] = useState(false);
   const [graphLoading, setGraphLoading] = useState(false);
@@ -286,12 +292,12 @@ export function KnowledgeSection() {
     setGraphLoading(true);
     setGraph(null);
     try {
-      const { files, unavailable: un } = await collectMdFiles(w);
+      const files = await collectMdFiles(w);
       if (gen !== genRef.current) return;
-      if (un) { setUnavailable(true); return; }
-      // MEMORY.md 永远在（KB 布局根文件）
+      // MEMORY.md 若在（KB 布局根文件）优先入图
+      const hasMemory = files.includes('MEMORY.md');
       const targets = files.filter((f) => f !== 'MEMORY.md').slice(0, MAX_GRAPH_FILES - 1);
-      const all = ['MEMORY.md', ...targets];
+      const all = hasMemory ? ['MEMORY.md', ...targets] : files.slice(0, MAX_GRAPH_FILES);
       const contents: (string | null)[] = new Array(all.length).fill(null);
       let idx = 0;
       const concurrency = 6;
@@ -344,26 +350,37 @@ export function KnowledgeSection() {
     }
   }, []);
 
+  // 顶层文件树（四分类分组来源）+ 图谱，随 Worker 切换/刷新重载
+  const reload = useCallback(async (w: string) => {
+    setLoadError('');
+    setTopEntries(null);
+    setLoading(true);
+    try {
+      setTopEntries(await fetchTree(w, ''));
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : '文件树加载失败');
+    } finally {
+      setLoading(false);
+    }
+    void loadGraph(w);
+  }, [loadGraph]);
+
   // 延迟一个宏任务（同 B5：避免 effect 同步阶段 setState 链）
   useEffect(() => {
     if (!effectiveWorker) return;
     const t = setTimeout(() => {
-      setUnavailable(false);
-      setLoadError('');
       setGraph(null);
       setExpanded({});
       setPreviewPath(null);
-      setLoading(true);
-      void loadGraph(effectiveWorker).finally(() => setLoading(false));
+      void reload(effectiveWorker);
     }, 0);
     return () => clearTimeout(t);
-  }, [effectiveWorker, loadGraph]);
+  }, [effectiveWorker, reload]);
 
   const loadDir = useCallback(async (dir: string) => {
     setTreeDirsLoading((m) => ({ ...m, [dir]: true }));
     try {
       const entries = await fetchTree(effectiveWorker, dir);
-      if (entries === null) { setUnavailable(true); return; }
       setExpanded((m) => ({ ...m, [dir]: entries }));
     } catch (err) {
       setLoadError(err instanceof Error ? err.message : '目录加载失败');
@@ -379,9 +396,7 @@ export function KnowledgeSection() {
     setPreviewError('');
     setPreviewLoading(true);
     try {
-      const text = await fetchFullContent(effectiveWorker, path);
-      if (text === null) { setPreviewError('文件不存在或端点未就绪'); }
-      else { setPreviewText(text); }
+      setPreviewText(await fetchFullContent(effectiveWorker, path));
     } catch (err) {
       setPreviewError(err instanceof Error ? err.message : '读取失败');
     } finally {
@@ -389,27 +404,58 @@ export function KnowledgeSection() {
     }
   }, [effectiveWorker]);
 
-  const treeRoots: { label: string; path: string; kind: 'file' | 'directory' }[] = [
-    { label: 'MEMORY.md', path: 'MEMORY.md', kind: 'file' },
-    { label: 'memory', path: 'memory', kind: 'directory' },
-    { label: 'digest', path: 'digest', kind: 'directory' },
-  ];
+  // 团队透传：worker 选择器按 team 分组（optgroup），负责人标记
+  const teamGroups = useMemo(() => {
+    const list: WorkerResponse[] = workers ?? [];
+    const map = new Map<string, WorkerResponse[]>();
+    for (const wd of list) {
+      const team = wd.team || '';
+      if (!map.has(team)) map.set(team, []);
+      map.get(team)!.push(wd);
+    }
+    return Array.from(map.entries())
+      .sort(([a], [b]) => (a === b ? 0 : a === '' ? 1 : b === '' ? -1 : a.localeCompare(b)))
+      .map(([team, list]) => ({
+        team,
+        workers: [...list].sort((x, y) => x.name.localeCompare(y.name)),
+      }));
+  }, [workers]);
+
+  // 四分类分组（插件同款）：档案=顶层 md / 文件=其余顶层（只列不展开）/ 日记 memory / 知识库 digest
+  const groups = useMemo(() => {
+    if (topEntries === null) return null;
+    const isMd = (e: TreeEntry) => e.kind === 'file' && e.name.toLowerCase().endsWith('.md');
+    return {
+      archive: topEntries.filter(isMd),
+      files: topEntries.filter((e) => e.kind === 'file' && !isMd(e)),
+      topDirs: topEntries.filter((e) => e.kind === 'directory' && e.path !== 'memory' && e.path !== 'digest'),
+      memory: topEntries.find((e) => e.kind === 'directory' && e.path === 'memory') ?? null,
+      digest: topEntries.find((e) => e.kind === 'directory' && e.path === 'digest') ?? null,
+    };
+  }, [topEntries]);
 
   return (
     <div className="space-y-4 p-4">
       <SectionHeader
         title="知识库"
-        description="集群 Worker 记忆只读视图（#1208 workspace-files）：MEMORY.md / memory/** / digest/** + wikilink 图谱"
+        description="集群 Worker 记忆只读视图（workbench 插件同款数据面：Controller Docker 代理）：档案 / 文件 / 日记 memory/** / 知识库 digest/** + wikilink 图谱"
         actions={
           <div className="flex items-center gap-2">
             <select
-              className="h-8 rounded-md border bg-transparent px-2 text-xs"
+              className="h-8 max-w-[220px] rounded-md border bg-transparent px-2 text-xs"
               value={effectiveWorker}
               onChange={(e) => setWorker(e.target.value)}
-              aria-label="选择 Worker"
+              aria-label="选择 Worker（按团队分组）"
             >
-              {(workers ?? []).map((wd) => (
-                <option key={wd.name} value={wd.name}>{wd.name}</option>
+              {teamGroups.length === 0 && <option value="">（无 Worker）</option>}
+              {teamGroups.map((g) => (
+                <optgroup key={g.team || 'ungrouped'} label={g.team || '未分组'}>
+                  {g.workers.map((wd) => (
+                    <option key={wd.name} value={wd.name}>
+                      {wd.name}{/leader/i.test(wd.role || '') ? ' · 负责人' : ''}
+                    </option>
+                  ))}
+                </optgroup>
               ))}
             </select>
             <Button
@@ -417,7 +463,7 @@ export function KnowledgeSection() {
               size="sm"
               className="h-8 px-2 text-xs"
               disabled={loading || graphLoading}
-              onClick={() => effectiveWorker && void loadGraph(effectiveWorker)}
+              onClick={() => effectiveWorker && void reload(effectiveWorker)}
             >
               <RefreshCw className={`mr-1 h-3.5 w-3.5 ${loading || graphLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
               刷新
@@ -427,12 +473,7 @@ export function KnowledgeSection() {
         isRefreshing={loading || graphLoading}
       />
 
-      {unavailable ? (
-        <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
-          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
-          <span>当前 Controller 版本未提供知识库端点，升级 AgentTeams 后自动生效。</span>
-        </div>
-      ) : loadError ? (
+      {loadError ? (
         <div className="flex items-center gap-2 rounded-md border border-red-300 bg-red-50 p-3 text-xs text-red-700 dark:border-red-800 dark:bg-red-950/40 dark:text-red-300">
           <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
           {loadError}
@@ -463,34 +504,62 @@ export function KnowledgeSection() {
               <span className="ml-auto text-[10px] text-muted-foreground">{effectiveWorker || '—'}</span>
             </div>
             <div className="space-y-0.5">
-              {treeRoots.map((root) => {
-                const entries = expanded[root.path];
-                const open = !!entries;
-                return (
-                  <div key={root.path}>
-                    <button
-                      type="button"
-                      className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-xs hover:bg-accent"
-                      onClick={() => {
-                        if (root.kind === 'file') void openPreview(root.path);
-                        else if (!open) void loadDir(root.path);
-                        else setExpanded((m) => ({ ...m, [root.path]: [] }));
-                      }}
-                    >
-                      {root.kind === 'directory'
-                        ? (open ? <FolderOpen className="h-3.5 w-3.5" aria-hidden="true" /> : <Folder className="h-3.5 w-3.5" aria-hidden="true" />)
-                        : <FileText className="h-3.5 w-3.5" aria-hidden="true" />}
-                      <span className="truncate font-medium">{root.label}</span>
-                      {root.kind === 'directory' && treeDirsLoading[root.path] && (
-                        <Loader2 className="ml-auto h-3 w-3 animate-spin" aria-hidden="true" />
-                      )}
-                    </button>
-                    {open && (entries ?? []).map((e) => (
-                      <TreeRow key={e.path} entry={e} depth={1} onFile={openPreview} onDir={(d) => void loadDir(d)} loading={treeDirsLoading} expandedMap={expanded} setExpanded={setExpanded} />
-                    ))}
-                  </div>
-                );
-              })}
+              {groups === null ? (
+                <div className="flex items-center gap-2 px-1.5 py-1 text-xs text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" aria-hidden="true" />
+                  加载文件树…
+                </div>
+              ) : (
+                <>
+                  <GroupLabel text="档案" />
+                  {groups.archive.map((e) => (
+                    <FileRow key={e.path} entry={e} onFile={openPreview} />
+                  ))}
+                  {groups.archive.length === 0 && (
+                    <p className="px-4 py-0.5 text-[10px] text-muted-foreground/70">（无顶层 md）</p>
+                  )}
+                  <GroupLabel text="文件" />
+                  {groups.files.map((e) => (
+                    <FileRow key={e.path} entry={e} onFile={openPreview} />
+                  ))}
+                  {groups.topDirs.map((e) => (
+                    <DirRowReadOnly key={e.path} entry={e} />
+                  ))}
+                  {groups.files.length === 0 && groups.topDirs.length === 0 && (
+                    <p className="px-4 py-0.5 text-[10px] text-muted-foreground/70">（无）</p>
+                  )}
+                  {(['memory', 'digest'] as const).map((d) => {
+                    const root = d === 'memory' ? groups.memory : groups.digest;
+                    if (!root) return null;
+                    const entries = expanded[root.path];
+                    const open = !!entries;
+                    return (
+                      <div key={root.path}>
+                        <GroupLabel text={d === 'memory' ? '日记 memory' : '知识库 digest'} />
+                        <button
+                          type="button"
+                          className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-xs hover:bg-accent"
+                          onClick={() => {
+                            if (!open) void loadDir(root.path);
+                            else setExpanded((m) => ({ ...m, [root.path]: [] }));
+                          }}
+                        >
+                          {open
+                            ? <FolderOpen className="h-3.5 w-3.5" aria-hidden="true" />
+                            : <Folder className="h-3.5 w-3.5" aria-hidden="true" />}
+                          <span className="truncate font-medium">{root.name}/</span>
+                          {treeDirsLoading[root.path] && (
+                            <Loader2 className="ml-auto h-3 w-3 animate-spin" aria-hidden="true" />
+                          )}
+                        </button>
+                        {open && (entries ?? []).map((e) => (
+                          <TreeRow key={e.path} entry={e} depth={1} onFile={openPreview} onDir={(dir) => void loadDir(dir)} loading={treeDirsLoading} expandedMap={expanded} setExpanded={setExpanded} />
+                        ))}
+                      </div>
+                    );
+                  })}
+                </>
+              )}
             </div>
           </div>
 
@@ -542,6 +611,42 @@ export function KnowledgeSection() {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+function GroupLabel({ text }: { text: string }) {
+  return (
+    <p className="px-1.5 pt-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+      {text}
+    </p>
+  );
+}
+
+function FileRow({ entry, onFile }: { entry: TreeEntry; onFile: (_p: string) => void }) {
+  return (
+    <button
+      type="button"
+      className="flex w-full items-center gap-1.5 rounded px-1.5 py-0.5 text-xs hover:bg-accent"
+      style={{ paddingLeft: '22px' }}
+      onClick={() => onFile(entry.path)}
+    >
+      <FileText className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      <span className="truncate">{entry.name}</span>
+    </button>
+  );
+}
+
+/** 顶层目录：只列不展开（插件同款——展开仅限 memory/** 与 digest/**）。 */
+function DirRowReadOnly({ entry }: { entry: TreeEntry }) {
+  return (
+    <div
+      className="flex w-full items-center gap-1.5 rounded px-1.5 py-0.5 text-xs text-muted-foreground"
+      style={{ paddingLeft: '22px' }}
+      title="顶层目录只列不展开"
+    >
+      <Folder className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+      <span className="truncate">{entry.name}/</span>
     </div>
   );
 }
