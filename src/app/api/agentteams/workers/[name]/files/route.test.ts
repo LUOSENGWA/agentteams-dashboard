@@ -69,4 +69,27 @@ describe('GET /api/agentteams/workers/[name]/files', () => {
 
     expect(response.status).toBe(400);
   });
+
+  it('B1：敏感文件（credentials.yaml / credentials/ 目录 / .ssh）不进入列表', async () => {
+    listObjects.mockReturnValue(createObjectStream([
+      { name: 'w1/MEMORY.md', size: 120 },
+      { name: 'w1/credentials.yaml', size: 4547 },
+      { prefix: 'w1/credentials/' },
+      { name: 'w1/.ssh/id_rsa', size: 2600 },
+      { prefix: 'w1/memory/' },
+    ]));
+
+    const response = await GET(new NextRequest('http://localhost'), {
+      params: Promise.resolve({ name: 'w1' }),
+    });
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    const keys = body.objects.map((o: { key: string }) => o.key);
+    expect(keys).toContain('w1/MEMORY.md');
+    expect(keys).toContain('w1/memory/');
+    expect(keys).not.toContain('w1/credentials.yaml');
+    expect(keys).not.toContain('w1/credentials/');
+    expect(keys).not.toContain('w1/.ssh/id_rsa');
+  });
 });

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createMinioClient, getMinioBucket } from '@/lib/minio-client';
 import { isValidNameSegment } from '@/lib/skill-package';
 import { enforceServerSideRbac } from '@/lib/server-auth';
+import { isSensitiveFileName } from '@/lib/sensitive-files';
 
 async function hasPrefix(client: ReturnType<typeof createMinioClient>, bucket: string, prefix: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -49,6 +50,12 @@ export async function POST(
     const keyPrefix = `${rootPrefix}${dirSuffix}`;
     const safeFileName = file.name.replace(/[<>:"/\\|?*]/g, '_');
     const key = `${keyPrefix}${safeFileName}`;
+
+    // B1：敏感路径禁写（防借上传覆盖 credentials.yaml 等凭证文件）
+    const rel = key.replace(/^agents\//, '').startsWith(`${name}/`) ? key.replace(/^agents\//, '').slice(name.length + 1) : '';
+    if (isSensitiveFileName(safeFileName, rel)) {
+      return NextResponse.json({ error: '禁止写入敏感文件路径' }, { status: 403 });
+    }
 
     const buffer = Buffer.from(await file.arrayBuffer());
     await client.putObject(bucket, key, buffer, file.size, {
