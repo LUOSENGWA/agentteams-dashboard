@@ -39,3 +39,33 @@ export function WorkerSessionRunningDot({ running }: { running: boolean }) {
   if (!running) return null;
   return <WorkerSessionDot state="running" />;
 }
+
+// Avatar-corner variant (9/18 chat convention, reused 9/19 by the member
+// list): 10px dot pinned to the avatar's bottom-right with a ring in the
+// surface color. Same three states / colors as the message-bubble dots.
+// The parent element must be `relative`.
+const CORNER_STYLE: Record<WorkerSessionState, { className: string; label: string }> = {
+  running: {
+    className: 'worker-status-breathe bg-sky-500',
+    label: '运行中',
+  },
+  done: { className: 'bg-emerald-500', label: '已完成（10 分钟内）' },
+  idle: { className: 'bg-zinc-400/70', label: '空闲' },
+};
+
+export function WorkerSessionCornerDot({
+  state,
+  ringClassName = 'ring-background',
+}: {
+  state: WorkerSessionState;
+  ringClassName?: string;
+}) {
+  const s = CORNER_STYLE[state];
+  return (
+    <span
+      className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full ring-2 ${ringClassName} ${s.className}`}
+      title={s.label}
+      aria-label={s.label}
+    />
+  );
+}
