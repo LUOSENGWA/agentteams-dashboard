@@ -213,7 +213,7 @@ docker build -t agentteams-dashboard:local .
 | `AGENTTEAMS_CONTROLLER_URL` | AgentTeams Controller endpoint (server-side proxy) | `http://agentteams-controller:8090` |
 | `NEXT_PUBLIC_AGENTTEAMS_CONTROLLER_URL` | Browser-facing Controller URL (optional) | — |
 | `NEXT_PUBLIC_MATRIX_API_URL` | Matrix Homeserver endpoint | — |
-| `MATRIX_HOMESERVER_ALLOWLIST` | Comma-separated homeserver hostnames allowed through the Matrix proxy (exclusive once set) | — |
+| `MATRIX_HOMESERVER_ALLOWLIST` | Comma-separated homeserver hostnames allowed through the Matrix proxy (exclusive once set). **Required for private-network / LAN deployments** — homeserver URLs on private ranges (e.g. `192.168.*`) are rejected by the SSRF guard by default and would break login and all Matrix traffic | — |
 | `AGENTTEAMS_AUTH_TOKEN` | Controller auth token — enables the L1 admin-password login path and (with `DASHBOARD_SHARED_MODE=1`) is the only admin credential source | — |
 | `AGENTTEAMS_AUTH_TOKEN_FILE` | Token file path (supports rotation) | — |
 | `DASHBOARD_SESSION_SECRET` | HMAC secret for session cookies — **required** for login | — |
