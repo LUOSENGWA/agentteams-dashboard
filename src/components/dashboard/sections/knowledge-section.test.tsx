@@ -105,4 +105,20 @@ describe('B7 KnowledgeSection（#1208 消费）', () => {
     expect(await screen.findByText('memory/a.md')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId('md').textContent).toBe('see [[b]] and [[MEMORY]]'));
   });
+
+  it('⑤ 502 → 错误横幅透出 controller 详情（worker workspace API unreachable）', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => ({
+        ok: false,
+        status: 502,
+        headers: new Headers(),
+        json: async () => ({ message: 'worker workspace API unreachable' }),
+      }) as unknown as Response),
+    );
+    render(<KnowledgeSection />);
+    expect(
+      await screen.findByText(/tree memory → worker workspace API unreachable/),
+    ).toBeInTheDocument();
+  });
 });

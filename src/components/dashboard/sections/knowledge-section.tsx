@@ -56,6 +56,18 @@ const MAX_GRAPH_FILES = 60; // 图谱内容抓取上限（防大 KB 拖死）
 const CHUNK = 200_000; // file-content 单块
 const MAX_CHUNKS = 8; // 单文件最多 1.6MB
 
+/** Controller 错误体 → 可读文案（{message}/{error} 优先，解析失败退回状态码）。 */
+async function errorMessage(res: Response): Promise<string> {
+  try {
+    const body = (await res.json()) as { message?: unknown; error?: unknown };
+    if (typeof body?.message === 'string' && body.message) return body.message;
+    if (typeof body?.error === 'string' && body.error) return body.error;
+  } catch {
+    // 非 JSON 错误体；保留状态码
+  }
+  return `HTTP ${res.status}`;
+}
+
 // ── 数据获取 ───────────────────────────────────────────────────────────────
 async function fetchTree(worker: string, dir: string): Promise<TreeEntry[] | null> {
   let cursor: string | null = null;
@@ -65,7 +77,7 @@ async function fetchTree(worker: string, dir: string): Promise<TreeEntry[] | nul
     if (cursor) qs.set('cursor', cursor);
     const res = await fetch(`${base(worker)}/tree?${qs.toString()}`, { cache: 'no-store' });
     if (res.status === 404) return null; // #1208 未合并（版本门/未部署）
-    if (!res.ok) throw new Error(`tree ${dir} → HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`tree ${dir} → ${await errorMessage(res)}`);
     const body = (await res.json()) as TreeResponse;
     out.push(...(body.entries ?? []));
     if (!body.has_more || !body.next_cursor) break;
@@ -81,7 +93,7 @@ async function fetchFullContent(worker: string, path: string, cap = MAX_CHUNKS):
     const qs = new URLSearchParams({ path, offset: String(offset), limit: String(CHUNK) });
     const res = await fetch(`${base(worker)}/file-content?${qs.toString()}`, { cache: 'no-store' });
     if (res.status === 404) return null;
-    if (!res.ok) throw new Error(`file-content ${path} → HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`file-content ${path} → ${await errorMessage(res)}`);
     const body = (await res.json()) as FileContentResponse;
     out += body.content ?? '';
     if (body.eof) return out;
