@@ -369,7 +369,8 @@ export const KB2D = {
   CHIP_H: 26,        // 成员节点 chip 高
   HUB_H: 34,         // hub（簇横幅）chip 高
   CHIP_PAD_X: 12,    // chip 左右内边距（各）
-  FONT_W: 6.2,       // 11px 字体平均字宽（中英文混合估）
+  FONT_W: 6.2,       // 11px 字体拉丁平均字宽
+  FONT_W_CJK: 11,    // 11px 字体 CJK 全角字宽（= 字号，1:1；12.12 与插件同款）
   MIN_W: 44,
   MAX_W: 180,
   GAP_X: 16,         // 簇内网格列距
@@ -417,10 +418,24 @@ export function focusView(points: Array<{ x: number; y: number }>, pad = 70): Ra
   return { minX: minX - pad, minY: minY - pad, width: maxX - minX + pad * 2, height: maxY - minY + pad * 2 };
 }
 
+/** CJK 加权文本像素宽（11px 字体：CJK/全角 ≈ 字号，拉丁 ≈ FONT_W）。
+ *  12.12：原 label.length * FONT_W 对中文名低估 ~44%，圆角 chip 内文字外溢压盖
+ *  （「簇重叠」双端复报根因之一）；chipWidth 与标签截断共用同一估宽。
+ *  与插件 KnowledgeBase.textWidthUnits 同款同值。 */
+export function textWidthUnits(label: string): number {
+  let units = 0;
+  for (const ch of label) {
+    units += /[\u2e80-\u9fff\uf900-\ufaff\uff00-\uffef\u3000-\u303f]/.test(ch)
+      ? KB2D.FONT_W_CJK
+      : KB2D.FONT_W;
+  }
+  return units;
+}
+
 /** chip 宽：按 label 估宽，钳制 [MIN_W, MAX_W]。 */
 export function chipWidth(label: string, h: number = KB2D.CHIP_H): number {
   void h; // 宽度与高度无关，签名保留便于双端对齐
-  const w = label.length * KB2D.FONT_W + KB2D.CHIP_PAD_X * 2;
+  const w = textWidthUnits(label) + KB2D.CHIP_PAD_X * 2;
   return Math.min(KB2D.MAX_W, Math.max(KB2D.MIN_W, Math.round(w)));
 }
 
@@ -566,10 +581,14 @@ export function clusterGridLayout(
     }
     if (row.length > 0) rowsBlocks.push(row);
   }
-  rowsBlocks.forEach((row, ri) => {
+  // 12.12：yTop 改累计行高（原 ri*( 本行 max 高+gap) 行高不等时跨行重叠——
+  // 「簇重叠」真根因；与插件同款修复（数值复现：588×104px 块重叠）。
+  let yAcc = 0;
+  rowsBlocks.forEach((row) => {
     const rowW = row.reduce((acc, b) => acc + b.w, 0) + (row.length - 1) * KB2D.BLOCK_GAP_X;
     let x = -rowW / 2;
-    const yTop = ri * (Math.max(...row.map((b) => b.h)) + KB2D.BLOCK_GAP_Y);
+    const yTop = yAcc;
+    yAcc += Math.max(...row.map((b) => b.h)) + KB2D.BLOCK_GAP_Y;
     for (const b of row) {
       // 行内块顶对齐（hub 横幅一条线，最直观）。
       const cx = x + b.w / 2;
@@ -990,7 +1009,16 @@ export function KnowledgeGraph({
           const dim = dimmed(node.id);
           const hovered = hover === i;
           const active = hover == null || adjacent.has(i);
-          const maxChars = Math.max(3, Math.floor((s.w - 14) / KB2D.FONT_W));
+          // 12.12：截断按 CJK 加权宽逐字累加（与 chipWidth 同口径），不再一律 / FONT_W。
+          let usedW = 0;
+          let maxChars = 0;
+          for (let ci = 0; ci < node.label.length; ci += 1) {
+            const cw = textWidthUnits(node.label[ci]);
+            if (usedW + cw > s.w - 14) break;
+            usedW += cw;
+            maxChars = ci + 1;
+          }
+          maxChars = Math.max(3, maxChars);
           const shown = node.label.length > maxChars ? `${node.label.slice(0, maxChars - 1)}…` : node.label;
           return (
             <g

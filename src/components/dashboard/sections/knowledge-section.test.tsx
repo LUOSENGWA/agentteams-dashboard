@@ -27,6 +27,7 @@ import {
   KnowledgeGraph,
   assembleGraph,
   clusterGridLayout,
+  chipWidth,
   KB2D,
   focusView,
   clampZoomView,
@@ -633,5 +634,50 @@ describe('KnowledgeGraph v3（缩放/聚焦交互）', () => {
     fireEvent.doubleClick(labelParent(svg, 'a.md'));
     const chip = screen.getByRole('button', { name: /a\.md/ });
     expect(chip.textContent).toContain('a.md');
+  });
+});
+
+// ── 12.12 回归：「簇重叠」行堆叠真根因 + CJK 字宽（双端同款修复）────────────
+describe('clusterGridLayout 12.12 回归（簇重叠行堆叠 + CJK 字宽）', () => {
+  const node = (id: string, extra: Partial<GNode> = {}): GNode => ({
+    id, path: id, label: id, deg: 0, isMemory: false, ...extra,
+  });
+  const pairsOf = (nodes: GNode[], edges: Array<[string, string]>) =>
+    edges.filter(([a, b]) => nodes.some((n) => n.id === a) && nodes.some((n) => n.id === b));
+
+  it('⑭ 多行堆叠：行高不等 → 无跨行重叠（「簇重叠」真根因回归）', () => {
+    const long = '系统架构与部署方案设计说明文档'; // 15 CJK → MAX_W clamp
+    const nodes: GNode[] = [node('w-a'), node('w-b'), node('w-c'), node('w-d')];
+    const pairs: Array<[string, string]> = [];
+    for (let i = 0; i < 40; i += 1) { const id = `w-a/f${i}`; nodes.push(node(id, { label: `${long}A${i}` })); pairs.push(['w-a', id]); }
+    nodes.push(node('w-b/f0', { label: `${long}B` })); pairs.push(['w-b', 'w-b/f0']);
+    for (let i = 0; i < 8; i += 1) { const id = `w-c/f${i}`; nodes.push(node(id, { label: `${long}C${i}` })); pairs.push(['w-c', id]); }
+    for (let i = 0; i < 4; i += 1) { const id = `w-d/f${i}`; nodes.push(node(id, { label: `${long}D${i}` })); pairs.push(['w-d', id]); }
+    const r = clusterGridLayout(nodes, pairsOf(nodes, pairs));
+    const ids = nodes.map((n) => n.id);
+    for (let i = 0; i < ids.length; i += 1) {
+      for (let j = i + 1; j < ids.length; j += 1) {
+        const pa = r.pos.get(ids[i])!; const sa = r.size.get(ids[i])!;
+        const pb = r.pos.get(ids[j])!; const sb = r.size.get(ids[j])!;
+        const sep = pa.x + sa.w / 2 <= pb.x - sb.w / 2 + 1e-6 || pb.x + sb.w / 2 <= pa.x - sa.w / 2 + 1e-6
+          || pa.y + sa.h / 2 <= pb.y - sb.h / 2 + 1e-6 || pb.y + sb.h / 2 <= pa.y - sa.h / 2 + 1e-6;
+        expect(sep, `${ids[i]} × ${ids[j]} 重叠`).toBe(true);
+      }
+    }
+    const bs = r.blocks;
+    for (let i = 0; i < bs.length; i += 1) {
+      for (let j = i + 1; j < bs.length; j += 1) {
+        const sep = bs[i].minX + bs[i].w <= bs[j].minX + 1e-6 || bs[j].minX + bs[j].w <= bs[i].minX + 1e-6
+          || bs[i].minY + bs[i].h <= bs[j].minY + 1e-6 || bs[j].minY + bs[j].h <= bs[i].minY + 1e-6;
+        expect(sep, `${bs[i].hubId} × ${bs[j].hubId} 块重叠`).toBe(true);
+      }
+    }
+  });
+
+  it('⑮ CJK 字宽加权：中文名 chip 不再低估（与插件同款）', () => {
+    expect(chipWidth('知识库')).toBe(3 * KB2D.FONT_W_CJK + KB2D.CHIP_PAD_X * 2);
+    expect(chipWidth('知识库架构设计')).toBe(7 * KB2D.FONT_W_CJK + KB2D.CHIP_PAD_X * 2);
+    // 纯拉丁维持原估宽；过短照旧钳到 MIN_W
+    expect(chipWidth('ab')).toBe(KB2D.MIN_W);
   });
 });
