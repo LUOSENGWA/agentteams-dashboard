@@ -82,10 +82,14 @@ interface GraphData {
   nodes: GNode[];
   edges: GEdge[];
   pos: Map<string, { x: number; y: number }>;
+  /** 节点 id → chip 尺寸（v4 矩形 chip）。 */
+  size: Map<string, { w: number; h: number }>;
+  /** 簇块包围盒（v4 虚线框 + 聚焦视野）。 */
+  blocks: ClusterBlock[];
   view: RadialView;
-  /** 节点 id → 扇区 hub id（2D 聚焦/簇淡出归属）。 */
+  /** 节点 id → 簇 hub id（2D 聚焦/簇淡出归属）。 */
   sectorOf: Map<string, string>;
-  /** 扇区 hub id 列表（2D 聚焦目标 + 边界弧线）。 */
+  /** 簇 hub id 列表（2D 聚焦目标 + 虚线框顺序）。 */
   hubs: string[];
 }
 
@@ -344,52 +348,38 @@ async function buildAgentGraph(worker: string, cap: number): Promise<{ nodes: Om
   return assembleGraph(all, contents);
 }
 
-// ── 2D 分层径向布局（v2，替代 v1 纯力导向；插件 KnowledgeBase 同算法同值）──
-// v1 力导向问题：无类别意识（不同分类节点混叠）、稠密边成毛球、标签互相
-// 压盖。v2 = 扇区 + 深度环：
-//   扇区 = 虚拟分类根（单 Worker 模式）/ Worker（聚合模式，顺序=agentOrder）；
-//   hub  = 扇区中心角小半径处（单扇区时置于圆心）；
-//   深度 = 自 hub 的 BFS 层（无向边），depth d 节点落在环半径 R0+(d-1)*DR（DMAX 封顶）；
-//   环   = 按 label 排序等角分布；单环过密（每节点弧长 <34px）自动外溢同心环；
-//   视野 = 按内容自适应（替代固定 760×420）。
-// 纯函数、无 Math.random——确定性布局可单测复现。
+// ── 2D 簇矩形布局（v4，第 12 轮；替代 v2/v3 分层径向；插件 KnowledgeBase 同算法同值）──
+// 径向的结构性问题（装验反馈 9/18「很乱、不够直观、看不清楚」）：
+//   ① 环上按弧长排节点 → 标签沿弧旋转挤压，簇一多就糊成一团；
+//   ② 深度环 + 过密外溢同心环 → 同一分类的文件散在不同半径上，看不出从属；
+//   ③ 跨簇边全是节点级曲线 → 毛球。
+// v4 = 簇矩形块（block）：
+//   每簇一块（hub 横幅置顶 + 成员网格），块间大留白（BLOCK_GAP_*）；
+//   标签水平直排、永不重叠（网格保证）；跨簇边收敛为「块-块」单线
+//   （hub 中心到 hub 中心，簇对去重）——毛球消失；
+//   簇轮廓虚线框 = 簇分离视觉锚（替代 v3 扇区边界弧）。
+// 纯函数、无 Math.random——确定性布局可单测复现（与 v2/v3 同款纪律）。
 export interface RadialView { minX: number; minY: number; width: number; height: number }
 
-// ── 2D 缩放 / 聚焦 / 簇分离 纯函数（v3，第 11 轮；插件 KnowledgeBase 同算法同值）──
+/** 簇块包围盒（渲染虚线框 + 聚焦视野）。 */
+export interface ClusterBlock { hubId: string; minX: number; minY: number; w: number; h: number }
 
-/** 扇区间隙角（弧度）：簇分离——相邻扇区间留出的空白楔。
- * 扇区越多单扇区越窄，间隙随之收窄（R>6 时 0.24rad≈13.7°）。
- * 旧公式 half=(π/R)*0.92 在 R≥8 时半角超过扇区角一半 → 相邻扇区弧带重叠，
- * 新公式从几何上保证 2*half+GAP = 2π/R（整圆恒等）。 */
-export function sectorGapAngle(sectorCount: number): number {
-  return sectorCount <= 6 ? 0.38 : 0.24;
-}
-
-/** 单扇区半角（弧度）。单扇区=整圆。R≥2 时严格小于旧值 (π/R)*0.92。 */
-export function sectorHalfAngle(sectorCount: number): number {
-  if (sectorCount <= 0) return 0;
-  if (sectorCount === 1) return Math.PI;
-  return Math.max(0.05, (Math.PI * 2 / sectorCount - sectorGapAngle(sectorCount)) / 2);
-}
-
-/** 聚焦目标：扇区（hub 簇）或单节点邻域。 */
-export type FocusTarget = { kind: 'sector'; hubId: string } | { kind: 'node'; id: string };
-
-/** 一组点的包围盒 + 留白（聚焦视野）。空集 → null。 */
-export function focusView(points: Array<{ x: number; y: number }>, pad = 70): RadialView | null {
-  if (points.length === 0) return null;
-  let minX = Infinity;
-  let minY = Infinity;
-  let maxX = -Infinity;
-  let maxY = -Infinity;
-  for (const p of points) {
-    minX = Math.min(minX, p.x);
-    minY = Math.min(minY, p.y);
-    maxX = Math.max(maxX, p.x);
-    maxY = Math.max(maxY, p.y);
-  }
-  return { minX: minX - pad, minY: minY - pad, width: maxX - minX + pad * 2, height: maxY - minY + pad * 2 };
-}
+// 几何常量（双端同值——插件镜像时逐字对齐，勿单端调参）。
+export const KB2D = {
+  CHIP_H: 26,        // 成员节点 chip 高
+  HUB_H: 34,         // hub（簇横幅）chip 高
+  CHIP_PAD_X: 12,    // chip 左右内边距（各）
+  FONT_W: 6.2,       // 11px 字体平均字宽（中英文混合估）
+  MIN_W: 44,
+  MAX_W: 180,
+  GAP_X: 16,         // 簇内网格列距
+  GAP_Y: 14,         // 簇内网格行距
+  HUB_GAP_Y: 12,     // hub 与成员网格间距
+  BLOCK_GAP_X: 88,   // 簇块间横向留白（「分开簇」）
+  BLOCK_GAP_Y: 72,   // 簇块间纵向留白
+  ROW_MAX_W: 1560,   // 块流式换行阈值
+  PAD: 64,           // 视野留白
+} as const;
 
 /** 缩放钳制：zoom = fit.width / vb.width 必须落在 [minZoom, maxZoom]，
  * 越界时以当前视野中心为锚回缩。平移不限（自由拖，复位按钮兜底）。 */
@@ -408,25 +398,62 @@ export function clampZoomView(
   return { minX: cx - width / 2, minY: cy - (vb.height * (width / vb.width)) / 2, width, height: vb.height * (width / vb.width) };
 }
 
-/** 缩放后的标签薄化：zoom 超过阈值时文件标签不可读（SVG 等比放大），
- * 只保留 hub 标签 + 悬停标签。 */
-export const LABEL_CULL_ZOOM = 2.5;
-export function radialLayout(
+/** 聚焦目标：簇（块）或单节点邻域。 */
+export type FocusTarget = { kind: 'sector'; hubId: string } | { kind: 'node'; id: string };
+
+/** 一组点的包围盒 + 留白（聚焦视野）。空集 → null。 */
+export function focusView(points: Array<{ x: number; y: number }>, pad = 70): RadialView | null {
+  if (points.length === 0) return null;
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const p of points) {
+    minX = Math.min(minX, p.x);
+    minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x);
+    maxY = Math.max(maxY, p.y);
+  }
+  return { minX: minX - pad, minY: minY - pad, width: maxX - minX + pad * 2, height: maxY - minY + pad * 2 };
+}
+
+/** chip 宽：按 label 估宽，钳制 [MIN_W, MAX_W]。 */
+export function chipWidth(label: string, h: number = KB2D.CHIP_H): number {
+  void h; // 宽度与高度无关，签名保留便于双端对齐
+  const w = label.length * KB2D.FONT_W + KB2D.CHIP_PAD_X * 2;
+  return Math.min(KB2D.MAX_W, Math.max(KB2D.MIN_W, Math.round(w)));
+}
+
+export interface ClusterLayout {
+  /** 节点 id → chip 中心。 */
+  pos: Map<string, { x: number; y: number }>;
+  /** 节点 id → chip 尺寸（渲染 rect）。 */
+  size: Map<string, { w: number; h: number }>;
+  /** 节点 id → 所属簇 hub 的节点 id。 */
+  sectorOf: Map<string, string>;
+  /** 簇 hub 的节点 id 列表（顺序=簇顺序）。 */
+  hubs: string[];
+  /** 簇块包围盒（虚线框 + 聚焦）。 */
+  blocks: ClusterBlock[];
+  /** 自适应视野。 */
+  view: RadialView;
+}
+
+export function clusterGridLayout(
   nodes: GNode[],
   edgePairs: Array<[string, string]>,
   agentOrder?: string[],
-): {
-  pos: Map<string, { x: number; y: number }>;
-  view: RadialView;
-  /** 节点 id → 所属扇区 hub 的节点 id（聚焦/簇淡出的归属依据）。 */
-  sectorOf: Map<string, string>;
-  /** 扇区 hub 的节点 id 列表（顺序=扇区顺序）。 */
-  hubs: string[];
-} {
+): ClusterLayout {
   const n = nodes.length;
-  const pos = new Map<string, { x: number; y: number }>();
-  const sectorOf = new Map<string, string>();
-  if (n === 0) return { pos, view: { minX: -380, minY: -210, width: 760, height: 420 }, sectorOf, hubs: [] };
+  const empty: ClusterLayout = {
+    pos: new Map(),
+    size: new Map(),
+    sectorOf: new Map(),
+    hubs: [],
+    blocks: [],
+    view: { minX: -380, minY: -210, width: 760, height: 420 },
+  };
+  if (n === 0) return empty;
   const idxOf = new Map<string, number>(nodes.map((nd, i) => [nd.id, i]));
   const adj: number[][] = Array.from({ length: n }, () => []);
   const deg = new Array<number>(n).fill(0);
@@ -436,122 +463,184 @@ export function radialLayout(
     if (i == null || j == null || i === j) continue;
     adj[i].push(j); adj[j].push(i); deg[i] += 1; deg[j] += 1;
   }
-  // 1) 扇区 hub：聚合模式=每 Worker 一个（virtual 根优先，否则度数最高文件）；
-  //    单 Worker=各虚拟分类根；无根时取度数 top3 文件作伪根。
+  // 1) 簇 = 连通分量（v4 语义：一块=一个连通簇）。
+  //    聚合模式例外：簇按 agent 字段划分（Worker 块），不被跨 Worker 链接切碎。
   const degRank = (x: number, y: number) =>
     deg[x] - deg[y] || nodes[x].label.localeCompare(nodes[y].label) || x - y;
+  const sectorIdx = new Array<number>(n).fill(-1);
   const sectors: { hub: number }[] = [];
   if (agentOrder && agentOrder.length > 0) {
-    for (const agent of agentOrder) {
+    agentOrder.forEach((agent, si) => {
       const members: number[] = [];
       nodes.forEach((nd, i) => { if (nd.agent === agent) members.push(i); });
-      if (members.length === 0) continue;
+      if (members.length === 0) return;
       let hub = -1;
       for (const i of members) if (nd_virtual(nodes[i])) { hub = i; break; }
       if (hub < 0) { members.sort(degRank); hub = members[0]; }
       sectors.push({ hub });
-    }
+      nodes.forEach((nd, i) => { if (nd.agent === agent) sectorIdx[i] = si; });
+    });
   } else {
-    const virtuals: number[] = [];
-    nodes.forEach((nd, i) => { if (nd_virtual(nd)) virtuals.push(i); });
-    if (virtuals.length > 0) virtuals.forEach((hub) => sectors.push({ hub }));
-    else nodes.map((_, i) => i).sort(degRank).slice(0, Math.min(3, n))
-      .forEach((hub) => sectors.push({ hub }));
+    // 连通分量（按最小节点序确定顺序）→ 每分量一个簇：
+    // hub = 分量内 virtual 根（首个）；无 virtual → 分量内最高度数节点。
+    const comp = new Array<number>(n).fill(-1);
+    let ci = 0;
+    for (let s = 0; s < n; s += 1) {
+      if (comp[s] !== -1) continue;
+      const queue = [s];
+      comp[s] = ci;
+      let head = 0;
+      while (head < queue.length) {
+        const u = queue[head];
+        head += 1;
+        for (const v of adj[u]) if (comp[v] === -1) { comp[v] = ci; queue.push(v); }
+      }
+      ci += 1;
+    }
+    for (let c = 0; c < ci; c += 1) {
+      const members: number[] = [];
+      for (let i = 0; i < n; i += 1) if (comp[i] === c) members.push(i);
+      let hub = -1;
+      for (const i of members) if (nd_virtual(nodes[i])) { hub = i; break; }
+      if (hub < 0) { members.sort(degRank); hub = members[0]; }
+      sectors.push({ hub });
+      members.forEach((i) => { sectorIdx[i] = sectors.length - 1; });
+    }
   }
   if (sectors.length === 0) sectors.push({ hub: 0 });
-  // 2) 多源 BFS：每节点归属扇区（首个到达的 hub）+ 深度；孤立节点挂末扇区 depth 1。
+  // 未归属节点（agent 不在列表/陈旧数据）→ 挂末簇，不丢点。
+  nodes.forEach((_, i) => { if (sectorIdx[i] === -1) sectorIdx[i] = sectors.length - 1; });
   const depth = new Array<number>(n).fill(-1);
-  const sectorIdx = new Array<number>(n).fill(-1);
   {
     const queue: number[] = [];
-    sectors.forEach((s, si) => { depth[s.hub] = 0; sectorIdx[s.hub] = si; queue.push(s.hub); });
+    sectors.forEach((s) => { depth[s.hub] = 0; queue.push(s.hub); });
     let head = 0;
     while (head < queue.length) {
       const u = queue[head];
       head += 1;
       for (const v of adj[u]) {
-        if (depth[v] === -1) { depth[v] = depth[u] + 1; sectorIdx[v] = sectorIdx[u]; queue.push(v); }
+        if (depth[v] === -1) { depth[v] = depth[u] + 1; queue.push(v); }
       }
     }
-    for (let i = 0; i < n; i += 1) {
-      if (depth[i] === -1) { depth[i] = 1; sectorIdx[i] = sectors.length - 1; }
-    }
+    for (let i = 0; i < n; i += 1) if (depth[i] === -1) depth[i] = 1;
   }
-  // 3) 几何：扇区中心角 + 深度环（label 序等角分布 + 过密外溢同心环）。
-  const R0 = 96;       // depth 1 环半径
-  const DR = 58;       // 每层深度环间距
-  const DMAX = 5;      // 深度显示封顶（更深归外环）
-  const RING_GAP = 46; // 过密外溢环的额外间距（标签行高留白）
-  const ARC_PER_NODE = 40; // 单环每节点最小弧长（px，≈10px 字体短标签）
-  const R = sectors.length;
-  sectors.forEach((s, si) => {
-    const theta = -Math.PI / 2 + (si * 2 * Math.PI) / R;
-    // 簇分离：扇区间留 GAP 空白楔（旧 (π/R)*0.92 在 R≥8 时相邻弧带重叠）。
-    const half = sectorHalfAngle(R);
-    const hubR = R === 1 ? 0 : 46;
-    pos.set(nodes[s.hub].id, { x: Math.cos(theta) * hubR, y: Math.sin(theta) * hubR });
-    sectorOf.set(nodes[s.hub].id, nodes[s.hub].id);
-    const byDepth = new Map<number, number[]>();
+  // 2) 逐簇排块：hub 横幅置顶 + 成员网格（depth 升序 → label 升序，确定性）。
+  const pos = new Map<string, { x: number; y: number }>();
+  const size = new Map<string, { w: number; h: number }>();
+  const sectorOf = new Map<string, string>();
+  interface PlacedBlock { hub: number; members: number[]; w: number; h: number; hubW: number }
+  const placed: PlacedBlock[] = sectors.map((s) => {
+    const members: number[] = [];
     for (let i = 0; i < n; i += 1) {
-      if (sectorIdx[i] !== si || i === s.hub) continue;
-      const d = Math.min(DMAX, Math.max(1, depth[i]));
-      const arr = byDepth.get(d);
-      if (arr) arr.push(i); else byDepth.set(d, [i]);
+      if (sectorIdx[i] === sectors.indexOf(s) && i !== s.hub) members.push(i);
     }
-    byDepth.forEach((arr, d) => {
-      arr.sort((x, y) => nodes[x].label.localeCompare(nodes[y].label) || x - y);
-      const baseR = R0 + (d - 1) * DR;
-      const rings: number[][] = [];
-      for (const i of arr) {
-        const cur = rings[rings.length - 1];
-        const r = baseR + (rings.length - 1) * RING_GAP;
-        // 容量按扇区弧长（2*half*r）而非整圆——扇区制布局下整圆公式
-        // 会系统性低估密度（大扇区环挤爆的根因）。
-        const cap = Math.max(4, Math.floor((2 * half * r) / ARC_PER_NODE));
-        if (cur && cur.length < cap) cur.push(i); else rings.push([i]);
-      }
-      rings.forEach((ring, ri) => {
-        const r = baseR + ri * RING_GAP;
-        ring.forEach((i, k) => {
-          const a = theta - half + ((k + 0.5) * 2 * half) / ring.length;
-          pos.set(nodes[i].id, { x: Math.cos(a) * r, y: Math.sin(a) * r });
-          sectorOf.set(nodes[i].id, nodes[s.hub].id);
-        });
-      });
-    });
+    members.sort((x, y) => depth[x] - depth[y] || nodes[x].label.localeCompare(nodes[y].label) || x - y);
+    const m = members.length;
+    const cols = m <= 1 ? 1 : m <= 3 ? 2 : m <= 8 ? 3 : m <= 15 ? 4 : m <= 24 ? 5 : 6;
+    const rows = Math.ceil(m / cols);
+    const widths = members.map((i) => chipWidth(nodes[i].label));
+    const cellW = widths.length > 0 ? Math.max(...widths) : 0;
+    const hubW = chipWidth(nodes[s.hub].label, KB2D.HUB_H);
+    const gridW = cols * cellW + (cols - 1) * KB2D.GAP_X;
+    const w = Math.max(gridW, hubW);
+    const h = KB2D.HUB_H + KB2D.HUB_GAP_Y + (rows > 0 ? rows * KB2D.CHIP_H + (rows - 1) * KB2D.GAP_Y : 0);
+    return { hub: s.hub, members, w, h, hubW };
   });
-  // 4) 视野自适应（含标签留白）。
+  // 3) 块流式布局（按簇顺序，超 ROW_MAX_W 换行，行内整体居中）。
+  const rowsBlocks: PlacedBlock[][] = [];
+  {
+    let row: PlacedBlock[] = [];
+    let rowW = 0;
+    for (const b of placed) {
+      const need = row.length === 0 ? b.w : rowW + KB2D.BLOCK_GAP_X + b.w;
+      if (row.length > 0 && need > KB2D.ROW_MAX_W) {
+        rowsBlocks.push(row);
+        row = [b];
+        rowW = b.w;
+      } else {
+        row.push(b);
+        rowW = need;
+      }
+    }
+    if (row.length > 0) rowsBlocks.push(row);
+  }
+  rowsBlocks.forEach((row, ri) => {
+    const rowW = row.reduce((acc, b) => acc + b.w, 0) + (row.length - 1) * KB2D.BLOCK_GAP_X;
+    let x = -rowW / 2;
+    const yTop = ri * (Math.max(...row.map((b) => b.h)) + KB2D.BLOCK_GAP_Y);
+    for (const b of row) {
+      // 行内块顶对齐（hub 横幅一条线，最直观）。
+      const cx = x + b.w / 2;
+      const hubY = yTop + KB2D.HUB_H / 2;
+      pos.set(nodes[b.hub].id, { x: cx, y: hubY });
+      size.set(nodes[b.hub].id, { w: b.hubW, h: KB2D.HUB_H });
+      sectorOf.set(nodes[b.hub].id, nodes[b.hub].id);
+      const m = b.members.length;
+      const cols = m <= 1 ? 1 : m <= 3 ? 2 : m <= 8 ? 3 : m <= 15 ? 4 : m <= 24 ? 5 : 6;
+      const widths = b.members.map((i) => chipWidth(nodes[i].label));
+      const cellW = widths.length > 0 ? Math.max(...widths) : 0;
+      const gridX0 = x + (b.w - (cols * cellW + (cols - 1) * KB2D.GAP_X)) / 2;
+      const gridY0 = yTop + KB2D.HUB_H + KB2D.HUB_GAP_Y;
+      b.members.forEach((i, k) => {
+        const r = Math.floor(k / cols);
+        const c = k % cols;
+        const nw = chipWidth(nodes[i].label);
+        const px = gridX0 + c * (cellW + KB2D.GAP_X) + cellW / 2;
+        const py = gridY0 + r * (KB2D.CHIP_H + KB2D.GAP_Y) + KB2D.CHIP_H / 2;
+        pos.set(nodes[i].id, { x: px, y: py });
+        size.set(nodes[i].id, { w: nw, h: KB2D.CHIP_H });
+        sectorOf.set(nodes[i].id, nodes[b.hub].id);
+      });
+      x += b.w + KB2D.BLOCK_GAP_X;
+    }
+  });
+  // 4) 簇块包围盒（含 chip 半宽半高的外扩）。
+  const blocks: ClusterBlock[] = placed.map((b) => {
+    // 块原点=行内左缘 x0（渲染需 x0——这里从 hub 中心反推）。
+    const hubPos = pos.get(nodes[b.hub].id)!;
+    return {
+      hubId: nodes[b.hub].id,
+      minX: hubPos.x - b.w / 2,
+      minY: hubPos.y - KB2D.HUB_H / 2 - 8,
+      w: b.w + 16,
+      h: b.h + 16,
+    };
+  });
+  // 5) 视野自适应。
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  pos.forEach((p) => {
-    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
-    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+  blocks.forEach((b) => {
+    minX = Math.min(minX, b.minX); minY = Math.min(minY, b.minY);
+    maxX = Math.max(maxX, b.minX + b.w); maxY = Math.max(maxY, b.minY + b.h);
   });
   if (!Number.isFinite(minX)) { minX = -380; minY = -210; maxX = 380; maxY = 210; }
-  const pad = 64;
   return {
     pos,
-    view: { minX: minX - pad, minY: minY - pad, width: maxX - minX + pad * 2, height: maxY - minY + pad * 2 },
+    size,
     sectorOf,
     hubs: sectors.map((s) => nodes[s.hub].id),
+    blocks,
+    view: { minX: minX - KB2D.PAD, minY: minY - KB2D.PAD, width: maxX - minX + KB2D.PAD * 2, height: maxY - minY + KB2D.PAD * 2 },
   };
 }
+
 /** GNode 的 virtual 判定（聚合模式 id 带 worker 前缀，virtual 标志仍在原字段）。 */
 function nd_virtual(nd: GNode): boolean {
   return Boolean(nd.virtual) || nd.id.startsWith('virtual:');
 }
 
-// ── 2D 图谱子组件（v3：缩放/平移 + 聚焦 + 簇分离）──────────────────────────
-// 第 11 轮（装验反馈 9/18「2D 太乱，加缩放、最好聚焦、分开簇」）：
-//   ① 缩放：wheel 光标锚点缩放（钳制 0.25×–8×）+ 拖拽平移 + ＋/－/复位按钮
-//   ② 聚焦：点簇根（hub）→ 动画收敛到簇 bbox + 簇外淡出 0.1 + 退出 chip；
-//      文件节点双击=邻域聚焦（节点+一度邻接）；单击文件=预览（语义不变）；
-//      Esc / 背景单击 / chip / 复位=退出
-//   ③ 簇分离：扇区 GAP 空白楔（radialLayout 已改）+ 虚线扇区边界弧
-//   ④ 高倍薄化：zoom>2.5× 时只留簇根+悬停标签（SVG 文字等比放大不可读）
+// ── 2D 图谱子组件（v4：簇矩形块 + 缩放/平移 + 聚焦）──────────────────────
+// 第 12 轮（装验反馈 9/18 晚「2D 很乱、不够直观、看不清楚」）：
+//   ① 布局=簇矩形块（clusterGridLayout）：hub 横幅置顶 + 成员网格，
+//      块间大留白，标签水平直排永不重叠（网格保证）——直观=「文件夹」；
+//   ② 跨簇边收敛为块-块单线（hub 中心连线、簇对去重）——毛球消失；
+//   ③ 簇轮廓虚线框 = 簇分离视觉锚；
+//   ④ 缩放/平移/聚焦/悬停高亮/Esc 交互与 v3 一致（wheel 锚点缩放 0.25×–8×）。
 export function KnowledgeGraph({
   nodes,
   edges,
   pos,
+  size,
+  blocks,
   view,
   onSelect,
   agentPalette,
@@ -561,13 +650,17 @@ export function KnowledgeGraph({
   nodes: GNode[];
   edges: GEdge[];
   pos: Map<string, { x: number; y: number }>;
+  /** 节点 id → chip 尺寸（v4 矩形 chip 渲染）。 */
+  size: Map<string, { w: number; h: number }>;
+  /** 簇块包围盒（v4 虚线框）。 */
+  blocks: ClusterBlock[];
   view: RadialView;
   onSelect: (_path: string, _agent?: string) => void;
   /** 聚合模式：按 Worker 着色（插件 agentLegend 同款）。 */
   agentPalette?: { name: string; color: string }[];
-  /** 节点 id → 所属扇区 hub id（radialLayout 产出，聚焦归属）。 */
+  /** 节点 id → 所属簇 hub id（clusterGridLayout 产出，聚焦归属）。 */
   sectorOf?: Map<string, string>;
-  /** 扇区 hub id 列表（聚焦目标 + 边界弧）。 */
+  /** 簇 hub id 列表（聚焦目标 + 虚线框顺序）。 */
   hubs?: string[];
 }) {
   const [hover, setHover] = useState<number | null>(null);
@@ -593,8 +686,6 @@ export function KnowledgeGraph({
   // 事件处理器/动画帧读 ref 镜像（effect 同步，不在 render 阶段写 ref）。
   useEffect(() => { vbRef.current = vb; });
   useEffect(() => { focusRef.current = focus; });
-
-  const zoom = view.width / Math.max(1e-6, vb.width);
 
   const cancelAnim = useCallback(() => {
     if (animRaf.current) cancelAnimationFrame(animRaf.current);
@@ -777,12 +868,23 @@ export function KnowledgeGraph({
     }
     return set;
   }, [hover, edges]);
-  // 9/17 验收第六轮：全节点挂标签（与插件同标准；旧聚合 top14 被「不是每个
-  // 点都有标题」否决）。悬停仍补显示全名。
-  const labeledIds = useMemo(() => {
-    if (!agentPalette) return null;
-    return new Set([...nodes.keys()]);
-  }, [nodes, agentPalette]);
+  // 跨簇边收敛：同簇对只画一条 hub→hub 线（块-块语义），簇内边=节点级。
+  // 注意：必须在空态 early return 之前（hook 顺序铁律）。
+  const crossHubEdges = useMemo(() => {
+    const seen = new Set<string>();
+    const out: Array<{ i: number; a: string; b: string }> = [];
+    edges.forEach((e, i) => {
+      const sa = sectorOf?.get(nodes[e.s].id) ?? nodes[e.s].id;
+      const sb = sectorOf?.get(nodes[e.t].id) ?? nodes[e.t].id;
+      if (sa === sb) return;
+      const key = sa < sb ? `${sa}|${sb}` : `${sb}|${sa}`;
+      if (seen.has(key)) return;
+      seen.add(key);
+      out.push({ i, a: sa, b: sb });
+    });
+    return out;
+  }, [edges, nodes, sectorOf]);
+  // v4：网格布局标签永不重叠 → 全节点恒挂标签（不再薄化/白名单）。
   if (nodes.length === 0) {
     return <p className="p-4 text-xs text-muted-foreground">该 Worker 暂无知识库文件（MEMORY.md/memory/digest）。</p>;
   }
@@ -794,11 +896,9 @@ export function KnowledgeGraph({
     return node.isMemory ? '#f59e0b' : '#6366f1';
   };
   const strokeOf = (i: number): string => {
-    if (agentPalette && nodes[i].agent) return 'rgba(0,0,0,0.25)';
+    if (agentPalette && nodes[i].agent) return 'rgba(0,0,0,0.35)';
     return nodes[i].isMemory ? '#b45309' : '#4338ca';
   };
-  // ④ 高倍薄化：>2.5× 只留簇根+悬停标签。
-  const cullLabels = zoom > LABEL_CULL_ZOOM;
   const dimmed = (id: string): boolean => focusSet != null && !focusSet.has(id);
   const focusLabel = focus
     ? nodes.find((nd) => (focus.kind === 'sector' ? nd.id === focus.hubId : nd.id === focus.id))?.label
@@ -821,26 +921,28 @@ export function KnowledgeGraph({
         onMouseUp={onSvgMouseUp}
         onMouseLeave={() => { dragRef.current = null; setPanning(false); }}
       >
-        {/* ③ 扇区边界虚线弧（簇分离视觉锚）。 */}
-        {hubs && hubs.length > 1 && hubs.map((hubId, si) => {
-          const theta = -Math.PI / 2 + (si * 2 * Math.PI) / hubs.length;
-          const half = sectorHalfAngle(hubs.length);
-          const rMid = 190;
-          const a1 = theta - half;
-          const a2 = theta + half;
-          return (
-            <path
-              key={hubId}
-              d={`M ${Math.cos(a1) * rMid} ${Math.sin(a1) * rMid} A ${rMid} ${rMid} 0 ${2 * half > Math.PI ? 1 : 0} 1 ${Math.cos(a2) * rMid} ${Math.sin(a2) * rMid}`}
-              fill="none"
-              stroke={hubColorOf(hubId)}
-              strokeOpacity={0.14}
-              strokeWidth={1}
-              strokeDasharray="3 5"
-            />
-          );
-        })}
+        {/* ③ 簇块虚线框（簇分离视觉锚，替代 v3 扇区边界弧）。 */}
+        {blocks.map((b) => (
+          <rect
+            key={`blk-${b.hubId}`}
+            x={b.minX}
+            y={b.minY}
+            width={b.w}
+            height={b.h}
+            rx={16}
+            fill={hubColorOf(b.hubId)}
+            fillOpacity={0.045}
+            stroke={hubColorOf(b.hubId)}
+            strokeOpacity={0.3}
+            strokeWidth={1}
+            strokeDasharray="4 5"
+          />
+        ))}
+        {/* ②a 簇内边：节点级（chip 之下，悬停邻边高亮）。 */}
         {edges.map((e, i) => {
+          const sa = sectorOf?.get(nodes[e.s].id) ?? nodes[e.s].id;
+          const sb = sectorOf?.get(nodes[e.t].id) ?? nodes[e.t].id;
+          if (sa !== sb) return null; // 跨簇边走下面的 hub 线层
           const a = pos.get(nodes[e.s].id);
           const b = pos.get(nodes[e.t].id);
           if (!a || !b) return null;
@@ -853,62 +955,91 @@ export function KnowledgeGraph({
               x2={b.x}
               y2={b.y}
               stroke={hover != null && adjacent.has(i) ? '#f59e0b' : '#94a3b8'}
-              strokeOpacity={(hover == null ? 0.3 : adjacent.has(i) ? 0.85 : 0.08) * inFocus}
-              strokeWidth={hover != null && adjacent.has(i) ? 1.6 : 1}
+              strokeOpacity={(hover == null ? 0.35 : adjacent.has(i) ? 0.9 : 0.1) * inFocus}
+              strokeWidth={hover != null && adjacent.has(i) ? 1.8 : 1.2}
             />
           );
         })}
+        {/* ②b 跨簇边：簇对去重后的 hub→hub 块级单线（v4 毛球治理）。 */}
+        {crossHubEdges.map(({ a, b }) => {
+          const pa = pos.get(a);
+          const pb = pos.get(b);
+          if (!pa || !pb) return null;
+          const inFocus = focusSet ? (focusSet.has(a) && focusSet.has(b) ? 1 : 0.15) : 1;
+          return (
+            <line
+              key={`x-${a}-${b}`}
+              x1={pa.x}
+              y1={pa.y}
+              x2={pb.x}
+              y2={pb.y}
+              stroke={hubColorOf(a)}
+              strokeOpacity={0.22 * inFocus}
+              strokeWidth={1.4}
+            />
+          );
+        })}
+        {/* ① 节点=矩形 chip（标签恒显，网格保证不重叠；悬停=描边加粗+邻接保留）。 */}
         {nodes.map((node, i) => {
           const p = pos.get(node.id);
-          if (!p) return null;
+          const s = size.get(node.id);
+          if (!p || !s) return null;
           const isHub = hubSet.has(node.id);
           const dim = dimmed(node.id);
+          const hovered = hover === i;
+          const active = hover == null || adjacent.has(i);
+          const maxChars = Math.max(3, Math.floor((s.w - 14) / KB2D.FONT_W));
+          const shown = node.label.length > maxChars ? `${node.label.slice(0, maxChars - 1)}…` : node.label;
           return (
-          <g
-            key={node.id}
-            transform={`translate(${p.x}, ${p.y})`}
-            className="cursor-pointer"
-            onMouseEnter={() => setHover(i)}
-            onMouseLeave={() => setHover(null)}
-            onClick={(e) => {
-              e.stopPropagation(); // 不触发 svg 背景逻辑（退出聚焦）
-              if (focusHubSet.has(node.id)) {
-                applyFocus({ kind: 'sector', hubId: node.id });
-                return;
-              }
-              onSelect(node.path, node.agent);
-            }}
-            onDoubleClick={(e) => {
-              e.stopPropagation();
-              if (isHub) applyFocus({ kind: 'sector', hubId: node.id });
-              else applyFocus({ kind: 'node', id: node.id });
-            }}
-          >
-            <circle
-              r={hover === i ? Math.min(15, 6 + node.deg * 1.2) : Math.min(13, 5 + node.deg)}
-              fill={colorOf(i)}
-              fillOpacity={dim ? 0.1 : hover == null || adjacent.has(i) ? 0.75 : 0.25}
-              stroke={strokeOf(i)}
-              strokeOpacity={dim ? 0.1 : 1}
-            />
-            {(!agentPalette || hover === i || (labeledIds?.has(i) ?? false)) &&
-              (!cullLabels || hover === i || isHub) && !dim && (
-                <text
-                  y={-Math.min(13, 5 + node.deg) - 4}
-                  textAnchor="middle"
-                  className="select-none"
-                  fontSize="10"
-                  fill="currentColor"
-                  opacity={hover == null || adjacent.has(i) ? 0.85 : 0.3}
-                  style={{ paintOrder: 'stroke' }}
-                  stroke="var(--card)"
-                  strokeWidth="3"
-                  strokeLinejoin="round"
-                >
-                  {node.label.length > 14 ? `${node.label.slice(0, 14)}…` : node.label}
-                </text>
-              )}
-          </g>
+            <g
+              key={node.id}
+              transform={`translate(${p.x}, ${p.y})`}
+              className="cursor-pointer"
+              onMouseEnter={() => setHover(i)}
+              onMouseLeave={() => setHover(null)}
+              onClick={(e) => {
+                e.stopPropagation(); // 不触发 svg 背景逻辑（退出聚焦）
+                if (focusHubSet.has(node.id)) {
+                  applyFocus({ kind: 'sector', hubId: node.id });
+                  return;
+                }
+                onSelect(node.path, node.agent);
+              }}
+              onDoubleClick={(e) => {
+                e.stopPropagation();
+                if (isHub) applyFocus({ kind: 'sector', hubId: node.id });
+                else applyFocus({ kind: 'node', id: node.id });
+              }}
+            >
+              <rect
+                x={-s.w / 2}
+                y={-s.h / 2}
+                width={s.w}
+                height={s.h}
+                rx={s.h / 2}
+                fill={colorOf(i)}
+                fillOpacity={dim ? 0.06 : hovered ? 0.32 : isHub ? 0.22 : 0.13}
+                stroke={strokeOf(i)}
+                strokeOpacity={dim ? 0.15 : hovered ? 1 : 0.75}
+                strokeWidth={hovered ? 2 : isHub ? 1.6 : 1.2}
+              />
+              <text
+                y={4}
+                textAnchor="middle"
+                className="select-none"
+                fontSize={isHub ? 11.5 : 11}
+                fontWeight={isHub ? 600 : 400}
+                fill="currentColor"
+                opacity={dim ? 0.2 : active ? 0.92 : 0.3}
+                style={{ paintOrder: 'stroke' }}
+                stroke="var(--card)"
+                strokeWidth="3"
+                strokeLinejoin="round"
+              >
+                {shown}
+              </text>
+              {!dim && <title>{node.label}</title>}
+            </g>
           );
         })}
       </svg>
@@ -1037,8 +1168,8 @@ export function KnowledgeSection() {
       const pairs = ag.edges.map(
         (e) => [ag.nodes[e.s].id, ag.nodes[e.t].id] as [string, string],
       );
-      const { pos, view, sectorOf, hubs } = radialLayout(ag.nodes as GNode[], pairs);
-      setGraph({ nodes: ag.nodes as GNode[], edges: ag.edges, pos, view, sectorOf, hubs });
+      const { pos, size, blocks, view, sectorOf, hubs } = clusterGridLayout(ag.nodes as GNode[], pairs);
+      setGraph({ nodes: ag.nodes as GNode[], edges: ag.edges, pos, size, blocks, view, sectorOf, hubs });
     } catch (err) {
       if (gen === genRef.current) setLoadError(err instanceof Error ? err.message : '加载失败');
     } finally {
@@ -1079,8 +1210,8 @@ export function KnowledgeSection() {
       const pairs = edges.map(
         (e) => [nodes[e.s].id, nodes[e.t].id] as [string, string],
       );
-      const { pos, view, sectorOf, hubs } = radialLayout(nodes, pairs, scope);
-      setMergedGraph({ nodes, edges, pos, view, sectorOf, hubs });
+      const { pos, size, blocks, view, sectorOf, hubs } = clusterGridLayout(nodes, pairs, scope);
+      setMergedGraph({ nodes, edges, pos, size, blocks, view, sectorOf, hubs });
     } catch {
       if (gen === mergedGenRef.current) setMergedGraph(null);
     } finally {
@@ -1541,6 +1672,8 @@ export function KnowledgeSection() {
                           nodes={currentGraph.nodes}
                           edges={currentGraph.edges}
                           pos={currentGraph.pos}
+                          size={currentGraph.size}
+                          blocks={currentGraph.blocks}
                           view={currentGraph.view}
                           sectorOf={currentGraph.sectorOf}
                           hubs={currentGraph.hubs}

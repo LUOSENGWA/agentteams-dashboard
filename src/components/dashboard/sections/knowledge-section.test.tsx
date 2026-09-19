@@ -26,9 +26,8 @@ import {
   KnowledgeSection,
   KnowledgeGraph,
   assembleGraph,
-  radialLayout,
-  sectorGapAngle,
-  sectorHalfAngle,
+  clusterGridLayout,
+  KB2D,
   focusView,
   clampZoomView,
   type GNode,
@@ -289,7 +288,9 @@ describe('KnowledgeSection（v3：3D / 预览与图谱分离 / 团队聚合 / �
     // v4 每 Worker 4 边（MEMORY.md 兜底 hub→memory/a、memory/b 两条结构边
     // + a.md 的 [[b]]/[[MEMORY]] 两条 wikilink 边）→ 共 8 边
     const svg = await switchTo2D();
-    expect(svg.querySelectorAll('circle').length).toBe(6);
+    // v4：节点=chip（rect，无虚线框属性）；块框 rect 带 stroke-dasharray
+    const chips = Array.from(svg.querySelectorAll('rect')).filter((r) => !r.getAttribute('stroke-dasharray'));
+    expect(chips.length).toBe(6);
     expect(svg.querySelectorAll('line').length).toBe(8);
     // 图例=两个 Worker（按 Agent 着色）——option 文案带后缀/计数，图例为精确名
     expect(screen.getAllByText('w1').length).toBeGreaterThanOrEqual(1);
@@ -319,8 +320,8 @@ describe('KnowledgeSection（v3：3D / 预览与图谱分离 / 团队聚合 / �
   });
 });
 
-// ── radialLayout（2D v2 分层径向布局——确定性几何单测）─────────────────────
-describe('radialLayout（2D v2 分层径向布局）', () => {
+// ── clusterGridLayout（2D v4 簇块网格布局——确定性几何单测）────────────────
+describe('clusterGridLayout（2D v4 簇块网格布局）', () => {
   const node = (id: string, extra: Partial<GNode> = {}): GNode => ({
     id,
     path: id,
@@ -331,41 +332,46 @@ describe('radialLayout（2D v2 分层径向布局）', () => {
   });
   const pairsOf = (nodes: GNode[], edges: Array<[string, string]>) =>
     edges.filter(([a, b]) => nodes.some((n) => n.id === a) && nodes.some((n) => n.id === b));
+  const chipBox = (r: { pos: Map<string, { x: number; y: number }>; size: Map<string, { w: number; h: number }> }, id: string) => {
+    const p = r.pos.get(id)!;
+    const s = r.size.get(id)!;
+    return { x0: p.x - s.w / 2, x1: p.x + s.w / 2, y0: p.y - s.h / 2, y1: p.y + s.h / 2 };
+  };
+  const noOverlap = (r: { pos: Map<string, { x: number; y: number }>; size: Map<string, { w: number; h: number }> }, ids: string[]) => {
+    for (let i = 0; i < ids.length; i += 1) {
+      for (let j = i + 1; j < ids.length; j += 1) {
+        const a = chipBox(r, ids[i]);
+        const b = chipBox(r, ids[j]);
+        const sep = a.x1 <= b.x0 + 1e-6 || b.x1 <= a.x0 + 1e-6 || a.y1 <= b.y0 + 1e-6 || b.y1 <= a.y0 + 1e-6;
+        expect(sep, `${ids[i]} × ${ids[j]} 重叠`).toBe(true);
+      }
+    }
+  };
 
   it('① 空图 → 默认视野，不炸', () => {
-    const { view } = radialLayout([], []);
+    const { view, blocks } = clusterGridLayout([], []);
     expect(view.width).toBeGreaterThan(0);
     expect(view.height).toBeGreaterThan(0);
+    expect(blocks).toHaveLength(0);
   });
 
-  it('② 单根 + 三文件 → 根在圆心，文件在 depth-1 环等角分布', () => {
+  it('② 单根 + 三文件 → hub 在上行，文件在下行，chip 互不重叠', () => {
     const nodes = [node('virtual:wiki', { virtual: true }), node('a.md'), node('b.md'), node('c.md')];
     const pairs: Array<[string, string]> = [
       ['virtual:wiki', 'a.md'],
       ['virtual:wiki', 'b.md'],
       ['virtual:wiki', 'c.md'],
     ];
-    const { pos } = radialLayout(nodes, pairsOf(nodes, pairs));
-    const hub = pos.get('virtual:wiki')!;
-    expect(hub.x).toBeCloseTo(0, 5);
-    expect(hub.y).toBeCloseTo(0, 5); // 单扇区 hub 置圆心
+    const r = clusterGridLayout(nodes, pairsOf(nodes, pairs));
+    // 单簇 hub 在列顶（y 最小），文件行在其下
+    const hub = r.pos.get('virtual:wiki')!;
     for (const f of ['a.md', 'b.md', 'c.md']) {
-      const p = pos.get(f)!;
-      const r = Math.hypot(p.x, p.y);
-      expect(r).toBeCloseTo(96, 0); // depth 1 环半径 R0=96
-      expect(Number.isFinite(p.x)).toBe(true);
-      expect(Number.isFinite(p.y)).toBe(true);
+      expect(r.pos.get(f)!.y).toBeGreaterThan(hub.y);
+      expect(Number.isFinite(r.pos.get(f)!.x)).toBe(true);
     }
-    // 等角：v3 起 R=1 单扇区=整圆（sectorHalfAngle(1)=π）→ 三节点整圆均布，
-    // 三段弧相等（旧版 0.92 系数留下的 29° 空楔已废除——单簇独占画布）。
-    const ang = (id: string) => Math.atan2(pos.get(id)!.y, pos.get(id)!.x);
-    const gaps = [ang('a.md'), ang('b.md'), ang('c.md')].sort((a, b) => a - b);
-    const d = (a: number, b: number) => Math.abs(a - b);
-    const step = 2 * Math.PI / 3;
-    const segs = [d(gaps[1], gaps[0]), d(gaps[2], gaps[1]), 2 * Math.PI - d(gaps[2], gaps[0])].sort((a, b) => a - b);
-    expect(segs[0]).toBeCloseTo(step, 1);
-    expect(segs[1]).toBeCloseTo(step, 1);
-    expect(segs[2]).toBeCloseTo(step, 1);
+    noOverlap(r, ['virtual:wiki', 'a.md', 'b.md', 'c.md']);
+    // chip 尺寸齐备
+    for (const n of nodes) expect(r.size.get(n.id)).toBeDefined();
   });
 
   it('③ 确定性：同输入两次 → 逐点相同', () => {
@@ -377,67 +383,71 @@ describe('radialLayout（2D v2 分层径向布局）', () => {
     const pairs: Array<[string, string]> = [
       ['virtual:wiki', 'a.md'], ['virtual:wiki', 'b.md'], ['virtual:wiki', 'c.md'],
       ['virtual:personal', 'd.md'], ['virtual:personal', 'e.md'], ['virtual:personal', 'f.md'],
-      ['a.md', 'd.md'], // 跨扇区 wikilink
+      ['a.md', 'd.md'], // 跨簇 wikilink（跨簇边走 hub 线层）
     ];
     const p = pairsOf(nodes, pairs);
-    const r1 = radialLayout(nodes, p);
-    const r2 = radialLayout(nodes, p);
+    const r1 = clusterGridLayout(nodes, p);
+    const r2 = clusterGridLayout(nodes, p);
     expect([...r1.pos.entries()]).toEqual([...r2.pos.entries()]);
-    // 双扇区 hub 分居 ±90°
-    expect(r1.pos.get('virtual:wiki')!.x).toBeCloseTo(0, 5);
-    expect(r1.pos.get('virtual:wiki')!.y).toBeCloseTo(-46, 0);
-    expect(r1.pos.get('virtual:personal')!.y).toBeCloseTo(46, 0);
+    // v4 语义：a↔d 链接把两个 virtual 根连进同一分量 → 单簇单 hub（取首个 virtual）
+    expect(r1.hubs).toEqual(['virtual:wiki']);
+    // 断开链接 → 两个分量 → 两个 hub
+    const p2 = pairs.filter(([a, b]) => !((a === 'a.md' && b === 'd.md') || (a === 'd.md' && b === 'a.md')));
+    expect(clusterGridLayout(nodes, p2).hubs).toEqual(['virtual:wiki', 'virtual:personal']);
   });
 
-  it('④ 孤立节点（无边）→ 挂末扇区 depth 1，位置有限', () => {
+  it('④ 孤立节点（无边）→ 自成单节点簇，位置有限', () => {
     const nodes = [node('virtual:wiki', { virtual: true }), node('a.md'), node('loner.md')];
-    const { pos } = radialLayout(nodes, pairsOf(nodes, [['virtual:wiki', 'a.md']]));
-    const l = pos.get('loner.md')!;
+    const r = clusterGridLayout(nodes, pairsOf(nodes, [['virtual:wiki', 'a.md']]));
+    const l = r.pos.get('loner.md')!;
     expect(Number.isFinite(l.x)).toBe(true);
-    expect(Math.hypot(l.x, l.y)).toBeGreaterThan(0);
+    // v4 语义：孤立=独立连通分量=独立簇（hub=自身），不再挂末簇
+    expect(r.sectorOf.get('loner.md')).toBe('loner.md');
+    expect(r.hubs).toEqual(['virtual:wiki', 'loner.md']);
   });
 
-  it('⑤ 聚合模式（agentOrder）→ 每 Worker 一个扇区，hub 优先取 virtual 根', () => {
+  it('⑤ 聚合模式（agentOrder）→ 每 Worker 一个块，hub 优先 virtual 根，块不重叠', () => {
     const nodes = [
       node('w1::virtual:wiki', { virtual: true, agent: 'w1' }),
       node('w1::memory/a.md', { agent: 'w1' }),
+      node('w1::memory/b.md', { agent: 'w1' }),
       node('w2::MEMORY.md', { agent: 'w2' }),
-      node('w2::memory/b.md', { agent: 'w2' }),
+      node('w2::memory/c.md', { agent: 'w2' }),
     ];
     const pairs: Array<[string, string]> = [
       ['w1::virtual:wiki', 'w1::memory/a.md'],
-      ['w2::MEMORY.md', 'w2::memory/b.md'],
+      ['w1::virtual:wiki', 'w1::memory/b.md'],
+      ['w2::MEMORY.md', 'w2::memory/c.md'],
     ];
-    const { pos } = radialLayout(nodes, pairsOf(nodes, pairs), ['w1', 'w2']);
-    // w2 无 virtual 根 → 度数最高文件 MEMORY.md 作 hub
-    const w1hub = pos.get('w1::virtual:wiki')!;
-    const w2hub = pos.get('w2::MEMORY.md')!;
-    expect(Math.hypot(w1hub.x, w1hub.y)).toBeCloseTo(46, 0);
-    expect(Math.hypot(w2hub.x, w2hub.y)).toBeCloseTo(46, 0);
-    expect(w1hub.y).toBeLessThan(0); // w1 在上半扇区
-    expect(w2hub.y).toBeGreaterThan(0); // w2 在下半扇区
-    // 全节点位置互不重合
-    const pts = [...pos.values()].map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`);
-    expect(new Set(pts).size).toBe(pos.size);
+    const r = clusterGridLayout(nodes, pairsOf(nodes, pairs), ['w1', 'w2']);
+    expect(r.hubs).toEqual(['w1::virtual:wiki', 'w2::MEMORY.md']); // w2 无 virtual 根→最高度数文件
+    // 每簇成员位置互异（chip 网格天然成立——含 chip 尺寸判重叠）
+    noOverlap(r, nodes.map((n) => n.id));
+    // 两块包围盒不交（簇分离）
+    const [b1, b2] = r.blocks;
+    const sep =
+      b1.minX + b1.w <= b2.minX + 1e-6 || b2.minX + b2.w <= b1.minX + 1e-6 ||
+      b1.minY + b1.h <= b2.minY + 1e-6 || b2.minY + b2.h <= b1.minY + 1e-6;
+    expect(sep, '两块包围盒重叠').toBe(true);
   });
 
   it('⑥ 视野自适应：viewBox 包住全部节点（含留白）', () => {
     const nodes = [node('virtual:wiki', { virtual: true }), ...['a.md', 'b.md'].map((id) => node(id))];
-    const { pos, view } = radialLayout(nodes, pairsOf(nodes, [['virtual:wiki', 'a.md'], ['virtual:wiki', 'b.md']]));
+    const r = clusterGridLayout(nodes, pairsOf(nodes, [['virtual:wiki', 'a.md'], ['virtual:wiki', 'b.md']]));
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    pos.forEach((p) => {
+    r.pos.forEach((p) => {
       minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
       minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
     });
-    expect(view.minX).toBeLessThanOrEqual(minX);
-    expect(view.minY).toBeLessThanOrEqual(minY);
-    expect(view.minX + view.width).toBeGreaterThanOrEqual(maxX);
-    expect(view.minY + view.height).toBeGreaterThanOrEqual(maxY);
+    expect(r.view.minX).toBeLessThanOrEqual(minX);
+    expect(r.view.minY).toBeLessThanOrEqual(minY);
+    expect(r.view.minX + r.view.width).toBeGreaterThanOrEqual(maxX);
+    expect(r.view.minY + r.view.height).toBeGreaterThanOrEqual(maxY);
   });
 });
 
-// ── 第 11 轮：2D 缩放 / 聚焦 / 簇分离（v3）─────────────────────────────────
-describe('radialLayout v3（簇分离：扇区 GAP + sectorOf/hubs）', () => {
+// ── 2D v4：簇块分离 / chip 尺寸 / sectorOf 契约 ─────────────────────────────
+describe('clusterGridLayout v4（簇块分离 + chip 尺寸）', () => {
   const node = (id: string, extra: Partial<GNode> = {}): GNode => ({
     id,
     path: id,
@@ -447,7 +457,7 @@ describe('radialLayout v3（簇分离：扇区 GAP + sectorOf/hubs）', () => {
     ...extra,
   });
 
-  it('⑦ R=3 扇区间隙：任何节点不落入相邻扇区中心间的空楔', () => {
+  it('⑦ R=3 三簇 → 三块，块内 chip 互不重叠，块间包围盒不交', () => {
     const nodes = [
       node('r1', { virtual: true, deg: 3 }),
       node('r2', { virtual: true, deg: 3 }),
@@ -459,41 +469,39 @@ describe('radialLayout v3（簇分离：扇区 GAP + sectorOf/hubs）', () => {
       ['r2', 'b1'], ['r2', 'b2'], ['r2', 'b3'],
       ['r3', 'c1'], ['r3', 'c2'], ['r3', 'c3'],
     ];
-    const { pos, sectorOf, hubs } = radialLayout(nodes, pairs);
-    expect(hubs).toEqual(['r1', 'r2', 'r3']);
-    const half = sectorHalfAngle(3);
-    hubs.forEach((hub, si) => {
-      const center = -Math.PI / 2 + (si * 2 * Math.PI) / 3;
-      nodes.forEach((nd) => {
-        if (sectorOf.get(nd.id) !== hub) return;
-        const p = pos.get(nd.id)!;
-        if (Math.hypot(p.x, p.y) < 5) return; // hub 本身在中心小半径处
-        let delta = Math.abs(Math.atan2(p.y, p.x) - center) % (2 * Math.PI);
-        if (delta > Math.PI) delta = 2 * Math.PI - delta; // 归一到 [0, π]
-        expect(delta).toBeLessThanOrEqual(half + 1e-9);
-      });
-    });
-  });
-
-  it('⑧ R=8 旧公式重叠修复：2*half+GAP 整圆恒等且 half 严格小于旧值', () => {
-    for (const R of [2, 3, 5, 8, 12]) {
-      const half = sectorHalfAngle(R);
-      const gap = sectorGapAngle(R);
-      expect(2 * half + gap).toBeCloseTo((2 * Math.PI) / R, 10); // 整圆恒等
-      expect(half).toBeLessThan((Math.PI / R) * 0.92);           // 弧带收窄
+    const r = clusterGridLayout(nodes, pairs);
+    expect(r.hubs).toEqual(['r1', 'r2', 'r3']);
+    expect(r.blocks).toHaveLength(3);
+    for (const b of r.blocks) {
+      for (const nd of nodes) {
+        if (r.sectorOf.get(nd.id) !== b.hubId) continue;
+        const p = r.pos.get(nd.id)!;
+        expect(p.x).toBeGreaterThanOrEqual(b.minX - 1e-6);
+        expect(p.x).toBeLessThanOrEqual(b.minX + b.w + 1e-6);
+        expect(p.y).toBeGreaterThanOrEqual(b.minY - 1e-6);
+        expect(p.y).toBeLessThanOrEqual(b.minY + b.h + 1e-6);
+      }
     }
-    expect(sectorGapAngle(6)).toBe(0.38);
-    expect(sectorGapAngle(7)).toBe(0.24);
-    expect(sectorHalfAngle(1)).toBe(Math.PI); // 单扇区=整圆
   });
 
-  it('⑨ sectorOf 全覆盖（每节点恰属一个扇区）', () => {
+  it('⑧ chip 尺寸随标签宽度：长标签更宽且有上限', () => {
+    const long = 'a-very-long-file-name-0123456789.md';
+    const nodes = [node('hub', { virtual: true }), node(long), node('b.md')];
+    const r = clusterGridLayout(nodes, [['hub', long], ['hub', 'b.md']]);
+    const sl = r.size.get(long)!;
+    const sb = r.size.get('b.md')!;
+    expect(sl.w).toBeGreaterThan(sb.w);
+    expect(sl.w).toBeLessThanOrEqual(KB2D.MAX_W + 1e-6);
+    expect(sb.w).toBeGreaterThanOrEqual(KB2D.MIN_W);
+  });
+
+  it('⑨ sectorOf 全覆盖（每节点恰属一个簇）', () => {
     const nodes = [node('r1', { virtual: true }), node('a.md'), node('loner.md')];
-    const { sectorOf, hubs } = radialLayout(nodes, [['r1', 'a.md']]);
-    expect(hubs).toEqual(['r1']);
+    const { sectorOf, hubs } = clusterGridLayout(nodes, [['r1', 'a.md']]);
+    expect(hubs).toEqual(['r1', 'loner.md']); // 孤立节点独立成簇
     expect(sectorOf.size).toBe(nodes.length);
     nodes.forEach((nd) => expect(sectorOf.get(nd.id)).toBeDefined());
-    expect(sectorOf.get('loner.md')).toBe('r1'); // 孤立节点挂末扇区
+    expect(sectorOf.get('loner.md')).toBe('loner.md');
   });
 });
 
@@ -541,8 +549,8 @@ describe('KnowledgeGraph v3（缩放/聚焦交互）', () => {
       ['virtual:wiki', 'b.md'],
       ['virtual:notes', 'c.md'],
     ];
-    const { pos, view, sectorOf, hubs } = radialLayout(nodes, pairs);
-    return { nodes, pos, view, sectorOf, hubs };
+    const { pos, size, blocks, view, sectorOf, hubs } = clusterGridLayout(nodes, pairs);
+    return { nodes, pos, size, blocks, view, sectorOf, hubs };
   }
   const svgOf = (container: HTMLElement) =>
     container.querySelector('svg') as unknown as {
@@ -559,7 +567,7 @@ describe('KnowledgeGraph v3（缩放/聚焦交互）', () => {
   it('⑩ wheel 缩放：宽度按 1/1.18 收缩；连缩多次钳制在 0.25×（fit*4）', () => {
     const g = smallGraph();
     const { container } = render(
-      <KnowledgeGraph nodes={g.nodes} edges={[]} pos={g.pos} view={g.view} sectorOf={g.sectorOf} hubs={g.hubs} onSelect={() => {}} />,
+      <KnowledgeGraph nodes={g.nodes} edges={[]} pos={g.pos} size={g.size} blocks={g.blocks} view={g.view} sectorOf={g.sectorOf} hubs={g.hubs} onSelect={() => {}} />,
     );
     const svg = svgOf(container);
     const w0 = g.view.width;
@@ -580,20 +588,20 @@ describe('KnowledgeGraph v3（缩放/聚焦交互）', () => {
   it('⑪ 点簇根=聚焦：chip 出现 + 非簇节点淡出 0.1（恰好 2 个）', () => {
     const g = smallGraph();
     const { container } = render(
-      <KnowledgeGraph nodes={g.nodes} edges={[]} pos={g.pos} view={g.view} sectorOf={g.sectorOf} hubs={g.hubs} onSelect={() => {}} />,
+      <KnowledgeGraph nodes={g.nodes} edges={[]} pos={g.pos} size={g.size} blocks={g.blocks} view={g.view} sectorOf={g.sectorOf} hubs={g.hubs} onSelect={() => {}} />,
     );
     const svg = svgOf(container);
     fireEvent.click(labelParent(svg, 'virtual:wiki'));
     const chip = screen.getByRole('button', { name: /退出/ });
     expect(chip.textContent).toContain('virtual:wiki');
-    const dimmed = [...svg.querySelectorAll('circle')].filter((c) => c.getAttribute('fill-opacity') === '0.1');
+    const dimmed = [...svg.querySelectorAll('rect')].filter((c) => c.getAttribute('fill-opacity') === '0.06');
     expect(dimmed.length).toBe(2); // virtual:notes + c.md
   });
 
   it('⑫ Esc 退出聚焦：chip 消失', () => {
     const g = smallGraph();
     const { container } = render(
-      <KnowledgeGraph nodes={g.nodes} edges={[]} pos={g.pos} view={g.view} sectorOf={g.sectorOf} hubs={g.hubs} onSelect={() => {}} />,
+      <KnowledgeGraph nodes={g.nodes} edges={[]} pos={g.pos} size={g.size} blocks={g.blocks} view={g.view} sectorOf={g.sectorOf} hubs={g.hubs} onSelect={() => {}} />,
     );
     const svg = svgOf(container);
     fireEvent.click(labelParent(svg, 'virtual:wiki'));
@@ -605,7 +613,7 @@ describe('KnowledgeGraph v3（缩放/聚焦交互）', () => {
   it('⑬ 文件节点双击=邻域聚焦（chip 带节点名）', () => {
     const g = smallGraph();
     const { container } = render(
-      <KnowledgeGraph nodes={g.nodes} edges={[]} pos={g.pos} view={g.view} sectorOf={g.sectorOf} hubs={g.hubs} onSelect={() => {}} />,
+      <KnowledgeGraph nodes={g.nodes} edges={[]} pos={g.pos} size={g.size} blocks={g.blocks} view={g.view} sectorOf={g.sectorOf} hubs={g.hubs} onSelect={() => {}} />,
     );
     const svg = svgOf(container);
     fireEvent.doubleClick(labelParent(svg, 'a.md'));
