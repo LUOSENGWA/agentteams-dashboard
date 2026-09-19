@@ -2,12 +2,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 
+// 可变 holder：⑥ 号用例模拟轮询重取后列表顺序漂移（Controller 顺序不稳定）
+const workersHolder = vi.hoisted(() => ({
+  list: [
+    { name: 'w1', team: 't1', role: 'team_leader' },
+    { name: 'w2', team: 't2', role: 'worker' },
+  ],
+}));
 vi.mock('@/hooks/use-agentteams-workers', () => ({
   useWorkers: () => ({
-    data: [
-      { name: 'w1', team: 't1', role: 'team_leader' },
-      { name: 'w2', team: 't2', role: 'worker' },
-    ],
+    data: workersHolder.list,
     isLoading: false,
     error: null,
   }),
@@ -82,6 +86,10 @@ function mockFetch(statuses?: { top?: number; memory?: number; digest?: number; 
 describe('KnowledgeSection（v2：docker-proxy 数据面 + 四分类 + 团队分组）', () => {
   beforeEach(() => {
     vi.useRealTimers();
+    workersHolder.list = [
+      { name: 'w1', team: 't1', role: 'team_leader' },
+      { name: 'w2', team: 't2', role: 'worker' },
+    ];
   });
   afterEach(() => {
     cleanup();
@@ -138,6 +146,25 @@ describe('KnowledgeSection（v2：docker-proxy 数据面 + 四分类 + 团队分
     fireEvent.click(fileBtn);
     expect(await screen.findByText('memory/a.md')).toBeInTheDocument();
     await waitFor(() => expect(screen.getByTestId('md').textContent).toBe('see [[b]] and [[MEMORY]]'));
+  });
+
+  it('⑥ 默认 worker 钉住：轮询重取顺序漂移不重置视图（展开的目录保留）', async () => {
+    mockFetch();
+    render(<KnowledgeSection />);
+    const select = screen.getByRole('combobox', { name: /选择 Worker/ }) as HTMLSelectElement;
+    await waitFor(() => expect(select.value).toBe('w1')); // 首份列表钉住 w1
+    // 展开 memory/
+    fireEvent.click(screen.getByRole('button', { name: '文件' }));
+    fireEvent.click(screen.getByText('memory/'));
+    await screen.findByText('a.md');
+    // 轮询重取：列表顺序漂移（w2 变第一）+ 触发重渲染
+    workersHolder.list = [
+      { name: 'w2', team: 't2', role: 'worker' },
+      { name: 'w1', team: 't1', role: 'team_leader' },
+    ];
+    fireEvent.click(screen.getByRole('button', { name: '图谱' }));
+    await waitFor(() => expect(select.value).toBe('w1')); // 钉住不跟随 workers[0]
+    expect(screen.getByText('a.md')).toBeInTheDocument(); // 展开状态保留
   });
 
   it('⑤ 团队透传：选择器按 team 分组（optgroup）+ 负责人标记', async () => {

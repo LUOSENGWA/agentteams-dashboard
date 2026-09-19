@@ -272,7 +272,19 @@ function KnowledgeGraph({
 export function KnowledgeSection() {
   const { data: workers } = useWorkers();
   const [worker, setWorker] = useState('');
-  const effectiveWorker = worker || workers?.[0]?.name || '';
+  // 默认 worker 漂移修复（9/16 真机 E2E 实锤）：Controller /api/v1/workers
+  // 列表顺序不稳定（k8s list 序），未手动选择时每轮轮询跟 workers[0] 走会
+  // 让整个视图静默重置换人（已展开的目录被清掉）。按任务看板同款「推导
+  // 选中、不同步状态」惯例（tasks-section effectiveProjectId）：对列表做
+  // 确定序（按名）推导默认，跨轮询稳定；用户手动选择后以选择为准。
+  const sortedWorkers = useMemo(
+    () =>
+      [...(workers ?? [])].sort((a, b) =>
+        a.name.localeCompare(b.name, 'en'),
+      ),
+    [workers],
+  );
+  const effectiveWorker = worker || sortedWorkers[0]?.name || '';
 
   const [topEntries, setTopEntries] = useState<TreeEntry[] | null>(null);
   const [loadError, setLoadError] = useState('');
