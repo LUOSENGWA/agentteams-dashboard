@@ -176,7 +176,13 @@ docker run -d -p 13000:3000 \
   `AGENTTEAMS_AUTH_TOKEN` below) or a controller token pasted in the login
   form.
 - Gateway Console features (model management, shared login) additionally
-  need `-e AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS=<console-host>`.
+  need `-e AGENTTEAMS_AI_GATEWAY_ADMIN_ALLOWED_HOSTS=<console-host>`
+  (SSRF guard). **The installer auto-merges the hostname of a
+  custom Console URL typed at the prompt into that allowlist** (union,
+  never replacing operator entries); when configuring a custom Console
+  URL via raw `docker run`, append the hostname yourself or admin
+  login is rejected (the login page then reports a deployment
+  configuration error, not a permission error).
 
 **Shared — multiple users on one instance.** Add:
 
