@@ -22,7 +22,12 @@ vi.mock('@/components/dashboard/sections/chat/markdown-message', () => ({
   MarkdownMessage: ({ content }: { content: string }) => <div data-testid="md">{content}</div>,
 }));
 
-import { KnowledgeSection, assembleGraph } from './knowledge-section';
+import {
+  KnowledgeSection,
+  assembleGraph,
+  radialLayout,
+  type GNode,
+} from './knowledge-section';
 
 const TREE_TOP = {
   directory: 'workspace',
@@ -302,5 +307,122 @@ describe('KnowledgeSection（v3：3D / 预览与图谱分离 / 团队聚合 / �
     await waitFor(() => expect(select.value).toBe('w1')); // 回退首名（推导默认）
     // 失效值不被当有效选择持久化——空选择=清除记忆键（回退=推导而非写入）
     expect(window.localStorage.getItem('agentteams:kb:worker')).toBeNull();
+  });
+});
+
+// ── radialLayout（2D v2 分层径向布局——确定性几何单测）─────────────────────
+describe('radialLayout（2D v2 分层径向布局）', () => {
+  const node = (id: string, extra: Partial<GNode> = {}): GNode => ({
+    id,
+    path: id,
+    label: id,
+    deg: 0,
+    isMemory: false,
+    ...extra,
+  });
+  const pairsOf = (nodes: GNode[], edges: Array<[string, string]>) =>
+    edges.filter(([a, b]) => nodes.some((n) => n.id === a) && nodes.some((n) => n.id === b));
+
+  it('① 空图 → 默认视野，不炸', () => {
+    const { view } = radialLayout([], []);
+    expect(view.width).toBeGreaterThan(0);
+    expect(view.height).toBeGreaterThan(0);
+  });
+
+  it('② 单根 + 三文件 → 根在圆心，文件在 depth-1 环等角分布', () => {
+    const nodes = [node('virtual:wiki', { virtual: true }), node('a.md'), node('b.md'), node('c.md')];
+    const pairs: Array<[string, string]> = [
+      ['virtual:wiki', 'a.md'],
+      ['virtual:wiki', 'b.md'],
+      ['virtual:wiki', 'c.md'],
+    ];
+    const { pos } = radialLayout(nodes, pairsOf(nodes, pairs));
+    const hub = pos.get('virtual:wiki')!;
+    expect(hub.x).toBeCloseTo(0, 5);
+    expect(hub.y).toBeCloseTo(0, 5); // 单扇区 hub 置圆心
+    for (const f of ['a.md', 'b.md', 'c.md']) {
+      const p = pos.get(f)!;
+      const r = Math.hypot(p.x, p.y);
+      expect(r).toBeCloseTo(96, 0); // depth 1 环半径 R0=96
+      expect(Number.isFinite(p.x)).toBe(true);
+      expect(Number.isFinite(p.y)).toBe(true);
+    }
+    // 等角：三节点在 92% 扇区弧内等距（步长 = 0.92×2π/3），扇区边界处
+    // 的第三段 = 剩余弧（比步长大）——两段小间隔相等、大间隔兜底。
+    const ang = (id: string) => Math.atan2(pos.get(id)!.y, pos.get(id)!.x);
+    const gaps = [ang('a.md'), ang('b.md'), ang('c.md')].sort((a, b) => a - b);
+    const d = (a: number, b: number) => Math.abs(a - b);
+    const step = 0.92 * (2 * Math.PI / 3);
+    const segs = [d(gaps[1], gaps[0]), d(gaps[2], gaps[1]), 2 * Math.PI - d(gaps[2], gaps[0])].sort((a, b) => a - b);
+    expect(segs[0]).toBeCloseTo(step, 1);
+    expect(segs[1]).toBeCloseTo(step, 1);
+    expect(segs[2]).toBeCloseTo(2 * Math.PI - 2 * step, 1);
+  });
+
+  it('③ 确定性：同输入两次 → 逐点相同', () => {
+    const nodes = [
+      node('virtual:wiki', { virtual: true }),
+      node('virtual:personal', { virtual: true }),
+      ...['a.md', 'b.md', 'c.md', 'd.md', 'e.md', 'f.md'].map((id) => node(id)),
+    ];
+    const pairs: Array<[string, string]> = [
+      ['virtual:wiki', 'a.md'], ['virtual:wiki', 'b.md'], ['virtual:wiki', 'c.md'],
+      ['virtual:personal', 'd.md'], ['virtual:personal', 'e.md'], ['virtual:personal', 'f.md'],
+      ['a.md', 'd.md'], // 跨扇区 wikilink
+    ];
+    const p = pairsOf(nodes, pairs);
+    const r1 = radialLayout(nodes, p);
+    const r2 = radialLayout(nodes, p);
+    expect([...r1.pos.entries()]).toEqual([...r2.pos.entries()]);
+    // 双扇区 hub 分居 ±90°
+    expect(r1.pos.get('virtual:wiki')!.x).toBeCloseTo(0, 5);
+    expect(r1.pos.get('virtual:wiki')!.y).toBeCloseTo(-46, 0);
+    expect(r1.pos.get('virtual:personal')!.y).toBeCloseTo(46, 0);
+  });
+
+  it('④ 孤立节点（无边）→ 挂末扇区 depth 1，位置有限', () => {
+    const nodes = [node('virtual:wiki', { virtual: true }), node('a.md'), node('loner.md')];
+    const { pos } = radialLayout(nodes, pairsOf(nodes, [['virtual:wiki', 'a.md']]));
+    const l = pos.get('loner.md')!;
+    expect(Number.isFinite(l.x)).toBe(true);
+    expect(Math.hypot(l.x, l.y)).toBeGreaterThan(0);
+  });
+
+  it('⑤ 聚合模式（agentOrder）→ 每 Worker 一个扇区，hub 优先取 virtual 根', () => {
+    const nodes = [
+      node('w1::virtual:wiki', { virtual: true, agent: 'w1' }),
+      node('w1::memory/a.md', { agent: 'w1' }),
+      node('w2::MEMORY.md', { agent: 'w2' }),
+      node('w2::memory/b.md', { agent: 'w2' }),
+    ];
+    const pairs: Array<[string, string]> = [
+      ['w1::virtual:wiki', 'w1::memory/a.md'],
+      ['w2::MEMORY.md', 'w2::memory/b.md'],
+    ];
+    const { pos } = radialLayout(nodes, pairsOf(nodes, pairs), ['w1', 'w2']);
+    // w2 无 virtual 根 → 度数最高文件 MEMORY.md 作 hub
+    const w1hub = pos.get('w1::virtual:wiki')!;
+    const w2hub = pos.get('w2::MEMORY.md')!;
+    expect(Math.hypot(w1hub.x, w1hub.y)).toBeCloseTo(46, 0);
+    expect(Math.hypot(w2hub.x, w2hub.y)).toBeCloseTo(46, 0);
+    expect(w1hub.y).toBeLessThan(0); // w1 在上半扇区
+    expect(w2hub.y).toBeGreaterThan(0); // w2 在下半扇区
+    // 全节点位置互不重合
+    const pts = [...pos.values()].map((p) => `${p.x.toFixed(2)},${p.y.toFixed(2)}`);
+    expect(new Set(pts).size).toBe(pos.size);
+  });
+
+  it('⑥ 视野自适应：viewBox 包住全部节点（含留白）', () => {
+    const nodes = [node('virtual:wiki', { virtual: true }), ...['a.md', 'b.md'].map((id) => node(id))];
+    const { pos, view } = radialLayout(nodes, pairsOf(nodes, [['virtual:wiki', 'a.md'], ['virtual:wiki', 'b.md']]));
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    pos.forEach((p) => {
+      minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
+      minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
+    });
+    expect(view.minX).toBeLessThanOrEqual(minX);
+    expect(view.minY).toBeLessThanOrEqual(minY);
+    expect(view.minX + view.width).toBeGreaterThanOrEqual(maxX);
+    expect(view.minY + view.height).toBeGreaterThanOrEqual(maxY);
   });
 });

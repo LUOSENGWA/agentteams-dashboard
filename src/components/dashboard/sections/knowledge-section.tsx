@@ -64,7 +64,7 @@ interface FileContentResponse {
 
 // v3：节点 id=**文件路径**（干名只做 wikilink 匹配键——同干不同目录
 // 两文件不再被合并成一个节点；插件单 Agent 图 id=path 同款）。
-interface GNode {
+export interface GNode {
   id: string;
   path: string;
   label: string;
@@ -78,7 +78,12 @@ interface GNode {
   resolved?: boolean;
 }
 interface GEdge { s: number; t: number }
-interface GraphData { nodes: GNode[]; edges: GEdge[]; positions: { x: number; y: number }[] }
+interface GraphData {
+  nodes: GNode[];
+  edges: GEdge[];
+  pos: Map<string, { x: number; y: number }>;
+  view: RadialView;
+}
 
 // 聚合节点图例配色（插件 AGENT_PALETTE 同值）。
 const AGENT_PALETTE = [
@@ -335,77 +340,147 @@ async function buildAgentGraph(worker: string, cap: number): Promise<{ nodes: Om
   return assembleGraph(all, contents);
 }
 
-// ── 2D 力导向布局（确定性：初值=圆环按序，迭代纯函数——无 Math.random）──────
-function forceLayout(nodes: GNode[], edges: GEdge[], w = 760, h = 420): { x: number; y: number }[] {
+// ── 2D 分层径向布局（v2，替代 v1 纯力导向；插件 KnowledgeBase 同算法同值）──
+// v1 力导向问题：无类别意识（不同分类节点混叠）、稠密边成毛球、标签互相
+// 压盖。v2 = 扇区 + 深度环：
+//   扇区 = 虚拟分类根（单 Worker 模式）/ Worker（聚合模式，顺序=agentOrder）；
+//   hub  = 扇区中心角小半径处（单扇区时置于圆心）；
+//   深度 = 自 hub 的 BFS 层（无向边），depth d 节点落在环半径 R0+(d-1)*DR（DMAX 封顶）；
+//   环   = 按 label 排序等角分布；单环过密（每节点弧长 <34px）自动外溢同心环；
+//   视野 = 按内容自适应（替代固定 760×420）。
+// 纯函数、无 Math.random——确定性布局可单测复现。
+export interface RadialView { minX: number; minY: number; width: number; height: number }
+export function radialLayout(
+  nodes: GNode[],
+  edgePairs: Array<[string, string]>,
+  agentOrder?: string[],
+): { pos: Map<string, { x: number; y: number }>; view: RadialView } {
   const n = nodes.length;
-  const px = new Float64Array(n);
-  const py = new Float64Array(n);
-  const vx = new Float64Array(n);
-  const vy = new Float64Array(n);
-  const R = Math.min(w, h) * 0.36;
-  for (let i = 0; i < n; i += 1) {
-    const a = (i / Math.max(1, n)) * Math.PI * 2 - Math.PI / 2;
-    px[i] = w / 2 + Math.cos(a) * R;
-    py[i] = h / 2 + Math.sin(a) * R * 0.62;
+  const pos = new Map<string, { x: number; y: number }>();
+  if (n === 0) return { pos, view: { minX: -380, minY: -210, width: 760, height: 420 } };
+  const idxOf = new Map<string, number>(nodes.map((nd, i) => [nd.id, i]));
+  const adj: number[][] = Array.from({ length: n }, () => []);
+  const deg = new Array<number>(n).fill(0);
+  for (const [a, b] of edgePairs) {
+    const i = idxOf.get(a);
+    const j = idxOf.get(b);
+    if (i == null || j == null || i === j) continue;
+    adj[i].push(j); adj[j].push(i); deg[i] += 1; deg[j] += 1;
   }
-  const REST = 92;
-  const REP = 2600;
-  for (let tick = 0; tick < 140; tick += 1) {
-    // 斥力（O(n²)，n≤240 可接受）
-    for (let i = 0; i < n; i += 1) {
-      for (let j = i + 1; j < n; j += 1) {
-        let dx = px[i] - px[j];
-        let dy = py[i] - py[j];
-        let d2 = dx * dx + dy * dy;
-        if (d2 < 0.01) { dx = 0.1; dy = 0.1; d2 = 0.02; }
-        const d = Math.sqrt(d2);
-        const f = Math.min(24, REP / d2);
-        dx /= d; dy /= d;
-        vx[i] += dx * f; vy[i] += dy * f;
-        vx[j] -= dx * f; vy[j] -= dy * f;
+  // 1) 扇区 hub：聚合模式=每 Worker 一个（virtual 根优先，否则度数最高文件）；
+  //    单 Worker=各虚拟分类根；无根时取度数 top3 文件作伪根。
+  const degRank = (x: number, y: number) =>
+    deg[x] - deg[y] || nodes[x].label.localeCompare(nodes[y].label) || x - y;
+  const sectors: { hub: number }[] = [];
+  if (agentOrder && agentOrder.length > 0) {
+    for (const agent of agentOrder) {
+      const members: number[] = [];
+      nodes.forEach((nd, i) => { if (nd.agent === agent) members.push(i); });
+      if (members.length === 0) continue;
+      let hub = -1;
+      for (const i of members) if (nd_virtual(nodes[i])) { hub = i; break; }
+      if (hub < 0) { members.sort(degRank); hub = members[0]; }
+      sectors.push({ hub });
+    }
+  } else {
+    const virtuals: number[] = [];
+    nodes.forEach((nd, i) => { if (nd_virtual(nd)) virtuals.push(i); });
+    if (virtuals.length > 0) virtuals.forEach((hub) => sectors.push({ hub }));
+    else nodes.map((_, i) => i).sort(degRank).slice(0, Math.min(3, n))
+      .forEach((hub) => sectors.push({ hub }));
+  }
+  if (sectors.length === 0) sectors.push({ hub: 0 });
+  // 2) 多源 BFS：每节点归属扇区（首个到达的 hub）+ 深度；孤立节点挂末扇区 depth 1。
+  const depth = new Array<number>(n).fill(-1);
+  const sectorIdx = new Array<number>(n).fill(-1);
+  {
+    const queue: number[] = [];
+    sectors.forEach((s, si) => { depth[s.hub] = 0; sectorIdx[s.hub] = si; queue.push(s.hub); });
+    let head = 0;
+    while (head < queue.length) {
+      const u = queue[head];
+      head += 1;
+      for (const v of adj[u]) {
+        if (depth[v] === -1) { depth[v] = depth[u] + 1; sectorIdx[v] = sectorIdx[u]; queue.push(v); }
       }
     }
-    // 弹簧
-    for (const e of edges) {
-      const dx = px[e.t] - px[e.s];
-      const dy = py[e.t] - py[e.s];
-      const d = Math.max(1, Math.hypot(dx, dy));
-      const f = (d - REST) * 0.02;
-      vx[e.s] += (dx / d) * f; vy[e.s] += (dy / d) * f;
-      vx[e.t] -= (dx / d) * f; vy[e.t] -= (dy / d) * f;
-    }
-    // 向心 + 阻尼 + 限步
     for (let i = 0; i < n; i += 1) {
-      vx[i] += (w / 2 - px[i]) * 0.004;
-      vy[i] += (h / 2 - py[i]) * 0.004;
-      vx[i] *= 0.82; vy[i] *= 0.82;
-      const sp = Math.hypot(vx[i], vy[i]);
-      if (sp > 7) { vx[i] = (vx[i] / sp) * 7; vy[i] = (vy[i] / sp) * 7; }
-      px[i] = Math.max(24, Math.min(w - 24, px[i] + vx[i]));
-      py[i] = Math.max(20, Math.min(h - 16, py[i] + vy[i]));
+      if (depth[i] === -1) { depth[i] = 1; sectorIdx[i] = sectors.length - 1; }
     }
   }
-  return Array.from({ length: n }, (_, i) => ({ x: px[i], y: py[i] }));
+  // 3) 几何：扇区中心角 + 深度环（label 序等角分布 + 过密外溢同心环）。
+  const R0 = 96;       // depth 1 环半径
+  const DR = 58;       // 每层深度环间距
+  const DMAX = 5;      // 深度显示封顶（更深归外环）
+  const RING_GAP = 46; // 过密外溢环的额外间距（标签行高留白）
+  const ARC_PER_NODE = 40; // 单环每节点最小弧长（px，≈10px 字体短标签）
+  const R = sectors.length;
+  sectors.forEach((s, si) => {
+    const theta = -Math.PI / 2 + (si * 2 * Math.PI) / R;
+    const half = (Math.PI / R) * 0.92;
+    const hubR = R === 1 ? 0 : 46;
+    pos.set(nodes[s.hub].id, { x: Math.cos(theta) * hubR, y: Math.sin(theta) * hubR });
+    const byDepth = new Map<number, number[]>();
+    for (let i = 0; i < n; i += 1) {
+      if (sectorIdx[i] !== si || i === s.hub) continue;
+      const d = Math.min(DMAX, Math.max(1, depth[i]));
+      const arr = byDepth.get(d);
+      if (arr) arr.push(i); else byDepth.set(d, [i]);
+    }
+    byDepth.forEach((arr, d) => {
+      arr.sort((x, y) => nodes[x].label.localeCompare(nodes[y].label) || x - y);
+      const baseR = R0 + (d - 1) * DR;
+      const rings: number[][] = [];
+      for (const i of arr) {
+        const cur = rings[rings.length - 1];
+        const r = baseR + (rings.length - 1) * RING_GAP;
+        // 容量按扇区弧长（2*half*r）而非整圆——扇区制布局下整圆公式
+        // 会系统性低估密度（大扇区环挤爆的根因）。
+        const cap = Math.max(4, Math.floor((2 * half * r) / ARC_PER_NODE));
+        if (cur && cur.length < cap) cur.push(i); else rings.push([i]);
+      }
+      rings.forEach((ring, ri) => {
+        const r = baseR + ri * RING_GAP;
+        ring.forEach((i, k) => {
+          const a = theta - half + ((k + 0.5) * 2 * half) / ring.length;
+          pos.set(nodes[i].id, { x: Math.cos(a) * r, y: Math.sin(a) * r });
+        });
+      });
+    });
+  });
+  // 4) 视野自适应（含标签留白）。
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  pos.forEach((p) => {
+    minX = Math.min(minX, p.x); minY = Math.min(minY, p.y);
+    maxX = Math.max(maxX, p.x); maxY = Math.max(maxY, p.y);
+  });
+  if (!Number.isFinite(minX)) { minX = -380; minY = -210; maxX = 380; maxY = 210; }
+  const pad = 64;
+  return { pos, view: { minX: minX - pad, minY: minY - pad, width: maxX - minX + pad * 2, height: maxY - minY + pad * 2 } };
+}
+/** GNode 的 virtual 判定（聚合模式 id 带 worker 前缀，virtual 标志仍在原字段）。 */
+function nd_virtual(nd: GNode): boolean {
+  return Boolean(nd.virtual) || nd.id.startsWith('virtual:');
 }
 
 // ── 2D 图谱子组件 ──────────────────────────────────────────────────────────
 function KnowledgeGraph({
   nodes,
   edges,
-  positions,
+  pos,
+  view,
   onSelect,
   agentPalette,
 }: {
   nodes: GNode[];
   edges: GEdge[];
-  positions: { x: number; y: number }[];
+  pos: Map<string, { x: number; y: number }>;
+  view: RadialView;
   onSelect: (_path: string, _agent?: string) => void;
   /** 聚合模式：按 Worker 着色（插件 agentLegend 同款）。 */
   agentPalette?: { name: string; color: string }[];
 }) {
   const [hover, setHover] = useState<number | null>(null);
-  const W = 760;
-  const H = 420;
   const adjacent = useMemo(() => {
     const set = new Set<number>();
     if (hover != null) {
@@ -437,23 +512,36 @@ function KnowledgeGraph({
     return nodes[i].isMemory ? '#b45309' : '#4338ca';
   };
   return (
-    <svg viewBox={`0 0 ${W} ${H}`} className="h-full w-full" role="img" aria-label="知识库 wikilink 图谱">
-      {edges.map((e, i) => (
-        <line
-          key={i}
-          x1={positions[e.s].x}
-          y1={positions[e.s].y}
-          x2={positions[e.t].x}
-          y2={positions[e.t].y}
-          stroke={hover != null && adjacent.has(i) ? '#f59e0b' : '#94a3b8'}
-          strokeOpacity={hover == null ? 0.3 : adjacent.has(i) ? 0.85 : 0.08}
-          strokeWidth={hover != null && adjacent.has(i) ? 1.6 : 1}
-        />
-      ))}
-      {nodes.map((node, i) => (
+    <svg
+      viewBox={`${view.minX} ${view.minY} ${view.width} ${view.height}`}
+      className="h-full w-full"
+      role="img"
+      aria-label="知识库 wikilink 图谱"
+    >
+      {edges.map((e, i) => {
+        const a = pos.get(nodes[e.s].id);
+        const b = pos.get(nodes[e.t].id);
+        if (!a || !b) return null;
+        return (
+          <line
+            key={i}
+            x1={a.x}
+            y1={a.y}
+            x2={b.x}
+            y2={b.y}
+            stroke={hover != null && adjacent.has(i) ? '#f59e0b' : '#94a3b8'}
+            strokeOpacity={hover == null ? 0.3 : adjacent.has(i) ? 0.85 : 0.08}
+            strokeWidth={hover != null && adjacent.has(i) ? 1.6 : 1}
+          />
+        );
+      })}
+      {nodes.map((node, i) => {
+        const p = pos.get(node.id);
+        if (!p) return null;
+        return (
         <g
           key={node.id}
-          transform={`translate(${positions[i].x}, ${positions[i].y})`}
+          transform={`translate(${p.x}, ${p.y})`}
           className="cursor-pointer"
           onMouseEnter={() => setHover(i)}
           onMouseLeave={() => setHover(null)}
@@ -473,12 +561,17 @@ function KnowledgeGraph({
               fontSize="10"
               fill="currentColor"
               opacity={hover == null || adjacent.has(i) ? 0.85 : 0.3}
+              style={{ paintOrder: 'stroke' }}
+              stroke="var(--card)"
+              strokeWidth="3"
+              strokeLinejoin="round"
             >
               {node.label.length > 14 ? `${node.label.slice(0, 14)}…` : node.label}
             </text>
           )}
         </g>
-      ))}
+        );
+      })}
     </svg>
   );
 }
@@ -579,8 +672,11 @@ export function KnowledgeSection() {
     try {
       const ag = await buildAgentGraph(w, MAX_GRAPH_FILES);
       if (gen !== genRef.current) return;
-      const positions = forceLayout(ag.nodes as GNode[], ag.edges);
-      setGraph({ nodes: ag.nodes as GNode[], edges: ag.edges, positions });
+      const pairs = ag.edges.map(
+        (e) => [ag.nodes[e.s].id, ag.nodes[e.t].id] as [string, string],
+      );
+      const { pos, view } = radialLayout(ag.nodes as GNode[], pairs);
+      setGraph({ nodes: ag.nodes as GNode[], edges: ag.edges, pos, view });
     } catch (err) {
       if (gen === genRef.current) setLoadError(err instanceof Error ? err.message : '加载失败');
     } finally {
@@ -618,8 +714,11 @@ export function KnowledgeSection() {
         for (const e of ag.edges) edges.push({ s: e.s + offset, t: e.t + offset });
       }
       if (gen !== mergedGenRef.current) return;
-      const positions = forceLayout(nodes, edges);
-      setMergedGraph({ nodes, edges, positions });
+      const pairs = edges.map(
+        (e) => [nodes[e.s].id, nodes[e.t].id] as [string, string],
+      );
+      const { pos, view } = radialLayout(nodes, pairs, scope);
+      setMergedGraph({ nodes, edges, pos, view });
     } catch {
       if (gen === mergedGenRef.current) setMergedGraph(null);
     } finally {
@@ -1079,7 +1178,8 @@ export function KnowledgeSection() {
                         <KnowledgeGraph
                           nodes={currentGraph.nodes}
                           edges={currentGraph.edges}
-                          positions={currentGraph.positions}
+                          pos={currentGraph.pos}
+                          view={currentGraph.view}
                           onSelect={(p, agent) => {
                             // 分类根/未解析灰点不可点开（与 3D 守卫同款）。
                             if (p.startsWith('virtual:')) return;
