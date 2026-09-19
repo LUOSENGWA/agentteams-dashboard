@@ -285,33 +285,6 @@ export function SettingsDialog() {
               </div>
             )}
 
-            {/* Test Result */}
-            {testResult && (
-              <div className="rounded-lg border p-3 space-y-1">
-                <div className="flex items-center gap-2">
-                  {testResult.success ? (
-                    <Badge variant="default" className="gap-1">
-                      <Wifi className="w-3 h-3" />
-                      测试成功
-                    </Badge>
-                  ) : (
-                    <Badge variant="destructive" className="gap-1">
-                      <WifiOff className="w-3 h-3" />
-                      测试失败
-                    </Badge>
-                  )}
-                  {testResult.latency !== null && (
-                    <Badge variant="outline" className="text-xs">{testResult.latency}ms</Badge>
-                  )}
-                </div>
-                {testResult.error && (
-                  <p className="text-xs text-destructive">{testResult.error}</p>
-                )}
-                <p className="text-[10px] text-muted-foreground">
-                  测试地址: {tempUrl} · {new Date(testResult.timestamp).toLocaleTimeString('zh-CN')}
-                </p>
-              </div>
-            )}
 
             {/* Connection History */}
             {connectionHistory.length > 0 && (
@@ -385,6 +358,34 @@ export function SettingsDialog() {
             <PluginsTab />
           </TabsContent>
         </Tabs>
+
+      {/* Test Result */}
+      {testResult && (
+        <div className="rounded-lg border p-3 space-y-1">
+          <div className="flex items-center gap-2">
+            {testResult.success ? (
+              <Badge variant="default" className="gap-1">
+                <Wifi className="w-3 h-3" />
+                测试成功
+              </Badge>
+            ) : (
+              <Badge variant="destructive" className="gap-1">
+                <WifiOff className="w-3 h-3" />
+                测试失败
+              </Badge>
+            )}
+            {testResult.latency !== null && (
+              <Badge variant="outline" className="text-xs">{testResult.latency}ms</Badge>
+            )}
+          </div>
+          {testResult.error && (
+            <p className="text-xs text-destructive">{testResult.error}</p>
+          )}
+          <p className="text-[10px] text-muted-foreground">
+            测试地址: {tempUrl} · {new Date(testResult.timestamp).toLocaleTimeString('zh-CN')}
+          </p>
+        </div>
+      )}
 
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={handleTest} disabled={isTesting}>

@@ -52,6 +52,13 @@ export interface DashboardSession {
   /** Human CR accessibleTeams (L2 scoping; informational — Controller enforces). */
   teams: string[];
   credential: ControllerCredential;
+  /**
+   * 12.16: Higress Console session bound server-side after the admin-account
+   * verification (Matrix track, L1). NEVER forwarded to the browser — the
+   * gateway/data-plane proxies reuse it so an operator's own login can
+   * manage the model gateway without switching to the admin account.
+   */
+  consoleCookie?: string;
   createdAt: number;
 }
 
@@ -115,6 +122,8 @@ export function mapCrLevelToDashLevel(crLevel: number): 1 | 2 | 3 {
 }
 
 export interface CreateSessionInput {
+  /** 12.16: Console session captured at login (admin verification). */
+  consoleCookie?: string;
   user: string;
   crLevel: number;
   teams?: string[];
@@ -132,6 +141,7 @@ export function createSession(input: CreateSessionInput): { sessionId: string; c
     crLevel: input.crLevel,
     teams: input.teams ?? [],
     credential: input.credential,
+    ...(input.consoleCookie ? { consoleCookie: input.consoleCookie } : {}),
     createdAt: Date.now(),
   };
   store.sessions.set(sid, session);

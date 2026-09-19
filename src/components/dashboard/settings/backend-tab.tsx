@@ -133,7 +133,10 @@ export function BackendTab() {
           payload[name] = { ...(internal ? { internal } : {}), ...(external ? { external } : {}) };
         }
       }
-      if (Object.keys(payload).length === 0) return;
+      if (Object.keys(payload).length === 0) {
+        setSaveError('请先在内部或外部地址栏填写地址，再点「测试」。');
+        return;
+      }
       setTesting(Object.fromEntries(Object.keys(payload).map((n) => [n, true])));
       try {
         const res = await fetch(apiUrl('/api/agentteams/setup/backends/test/'), {
@@ -141,6 +144,10 @@ export function BackendTab() {
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ backends: payload }),
         });
+        if (!res.ok) {
+          setSaveError(`测试失败（HTTP ${res.status}）`);
+          return;
+        }
         const data = (await res.json().catch(() => null)) as {
           results?: Record<string, TestRow[]>;
         } | null;
@@ -148,7 +155,11 @@ export function BackendTab() {
           setRows((prev) => ({ ...prev, ...data.results }));
           setSaved(true);
           setSaveError(null);
+        } else {
+          setSaveError('测试无结果返回');
         }
+      } catch {
+        setSaveError('测试请求失败（网络错误）');
       } finally {
         setTesting((prev) => {
           const next = { ...prev };
@@ -161,7 +172,10 @@ export function BackendTab() {
   );
 
   const handleTestBackend = (name: string) => {
-    if (!fields[name]) return;
+    if (!fields[name]) {
+      setSaveError('该后端没有待测草稿地址——先在内部/外部地址栏填写后再点「测试」。');
+      return;
+    }
     void runTest({ [name]: fields[name] });
   };
 

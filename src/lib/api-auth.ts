@@ -21,6 +21,13 @@ export interface SessionUser {
   level: number;
 }
 
+/** 12.16: does this cookie header carry a Higress Console session cookie?
+ *  (Same name filter as extractSessionCookie — used by the higress proxy
+ *  helper to decide browser-cookie vs server-bound-session.) */
+export function hasHigressSessionCookie(cookie: string | null | undefined): boolean {
+  return Boolean(cookie && extractSessionCookie(cookie));
+}
+
 function extractSessionCookie(cookie: string): string {
   // Extract only Higress-relevant cookies to keep the cache key stable
   // and avoid pollution from unrelated cookies (GA, ads, etc.).
@@ -93,9 +100,10 @@ export interface SessionValidation {
  * getHigressConsoleURL) — the same URL as the Console login track — to
  * prevent SSRF via cookie forwarding.
  */
-export async function validateHigressSession(request: NextRequest): Promise<SessionValidation> {
+export async function validateHigressCookieString(
+  cookie: string | null | undefined,
+): Promise<SessionValidation> {
   const empty: SessionValidation = { valid: false, user: null };
-  const cookie = request.headers.get('cookie');
   if (!cookie) {
     return empty;
   }
@@ -137,6 +145,16 @@ export async function validateHigressSession(request: NextRequest): Promise<Sess
   } catch {
     return empty;
   }
+}
+
+/**
+ * Browser-cookie entry point: validates the `_hi_sess` cookie the browser
+ * presents (gateway pages). Server-bound sessions (L1 + admin verification)
+ * are validated separately via {@link validateHigressCookieString} — both
+ * share the same 30s cache.
+ */
+export async function validateHigressSession(request: NextRequest): Promise<SessionValidation> {
+  return validateHigressCookieString(request.headers.get('cookie'));
 }
 
 

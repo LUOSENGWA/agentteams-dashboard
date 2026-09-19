@@ -29,6 +29,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import {
   callHigressConsole,
+  collectSetCookieHeader,
   forwardCookies,
   getHigressConsoleURL,
   HigressConsoleConfigurationError,
@@ -339,15 +340,21 @@ const MATRIX_CR_LEVEL_TO_DASH_LEVEL: Record<number, 1 | 2 | 3> = { 1: 3, 2: 2, 3
  * the Matrix track — replaces pasting the raw Controller token: the token
  * never leaves the server (it is the AGENTTEAMS_AUTH_TOKEN env value).
  */
-async function verifyAdminConsoleCredentials(username: string, password: string): Promise<boolean> {
+async function verifyAdminConsoleCredentials(
+  username: string,
+  password: string,
+): Promise<{ response: Response } | null> {
   try {
     const { response } = await callHigressConsole('/session/login', {
       method: 'POST',
       body: { username, password },
     });
-    return response.ok;
+    // 12.16: return the response so the caller can bind the verified Console
+    // session server-side (collectSetCookieHeader) — it is still NOT
+    // forwarded to the browser.
+    return response.ok ? { response } : null;
   } catch {
-    return false;
+    return null;
   }
 }
 
@@ -461,13 +468,17 @@ async function attemptMatrixLogin(
   // (the Controller's Matrix auth rejects level-1 tokens). Gate it on EITHER
   // the admin account's Console password OR a pasted Controller admin token.
   let credential: { kind: 'sa' } | { kind: 'matrix'; token: string } | { kind: 'controller-token'; token: string };
+  // 12.16: Console session captured from the admin verification and bound to
+  // the dashboard session server-side (never sent to the browser).
+  let consoleCookie: string | undefined;
   if (dashLevel === 3) {
     if (adminUsername && adminPassword) {
-      const adminOk = await verifyAdminConsoleCredentials(adminUsername, adminPassword);
-      if (!adminOk) {
+      const adminRes = await verifyAdminConsoleCredentials(adminUsername, adminPassword);
+      if (!adminRes) {
         return NextResponse.json({ success: false, error: '管理员账号验证失败（账号或密码不正确）' }, { status: 401 });
       }
       credential = { kind: 'sa' };
+      consoleCookie = collectSetCookieHeader(adminRes.response.headers);
     } else if (controllerToken) {
       const tokenOk = await verifyControllerToken(request, controllerToken);
       if (!tokenOk) {
@@ -495,6 +506,9 @@ async function attemptMatrixLogin(
       // Level 3 (full admin) is not team-restricted; L2/L3 users are scoped.
       teams: dashLevel === 3 ? [] : (human.accessibleTeams ?? []),
       credential,
+      // 12.16: server-bound Console session (admin verification) — lets the
+      // operator's own login manage the model gateway (see higress/access).
+      consoleCookie,
     }));
   } catch (err) {
     return NextResponse.json(

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, afterEach } from 'vitest';
 import { NextRequest } from 'next/server';
 import { GET, POST } from './route';
+import { createSession, SESSION_COOKIE_NAME, __resetSessionStoreForTests } from '@/lib/dashboard-session';
 import { callHigressConsole } from '../proxy-helper';
 import { requireHigressConsoleAccess } from '../access';
 
@@ -38,6 +39,31 @@ describe('AI provider collection route', () => {
     expect(mockCallHigressConsole).toHaveBeenCalledWith('/v1/ai/providers', {
       method: 'GET',
       cookie: 'higress_session=session-value',
+    });
+  });
+
+  it('falls back to the server-bound Console session when the browser cookie has none', async () => {
+    vi.stubEnv('DASHBOARD_SESSION_SECRET', 'a'.repeat(64));
+    __resetSessionStoreForTests();
+    const { cookieValue } = createSession({
+      user: 'luo',
+      crLevel: 1,
+      credential: { kind: 'sa' },
+      consoleCookie: '_hi_sess=bound-1',
+    });
+    mockCallHigressConsole.mockResolvedValue({
+      response: new Response(null, { status: 200 }),
+      body: { providers: [] },
+    });
+
+    const response = await GET(new NextRequest('http://dashboard.test/api/higress/ai-providers', {
+      headers: { cookie: `${SESSION_COOKIE_NAME}=${cookieValue}` },
+    }));
+
+    expect(response.status).toBe(200);
+    expect(mockCallHigressConsole).toHaveBeenCalledWith('/v1/ai/providers', {
+      method: 'GET',
+      cookie: '_hi_sess=bound-1',
     });
   });
 
