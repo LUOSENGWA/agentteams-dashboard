@@ -127,6 +127,36 @@ describe('B7 KnowledgeSection（#1208 消费）', () => {
     ).toBeInTheDocument();
   });
 
+  it('⑤b 200 + HTML 响应体 → 可读报错而非 SyntaxError', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response('<!doctype html><html><body>gateway page</body></html>', {
+          status: 200,
+          headers: { 'Content-Type': 'text/html' },
+        }),
+      ),
+    );
+    render(<KnowledgeSection />);
+    expect(
+      await screen.findByText(/tree memory → 服务返回了非预期的页面而非 JSON/),
+    ).toBeInTheDocument();
+  });
+
+  it('⑤c 401 → 提示重新登录', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () =>
+        new Response(JSON.stringify({ error: 'Unauthorized' }), {
+          status: 401,
+          headers: { 'Content-Type': 'application/json' },
+        }),
+      ),
+    );
+    render(<KnowledgeSection />);
+    expect(await screen.findByText(/登录已过期，请刷新页面重新登录/)).toBeInTheDocument();
+  });
+
   it('⑥ worker 下拉仅列 qwenpaw 运行时（FUNC-10 过滤）', async () => {
     vi.mocked(useWorkers).mockReturnValue({
       data: [

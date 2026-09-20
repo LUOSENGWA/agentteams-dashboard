@@ -68,6 +68,20 @@ async function errorMessage(res: Response): Promise<string> {
   return `HTTP ${res.status}`;
 }
 
+/**
+ * 成功路径同样容错：网关冷启动/登录失效时可能以 200 回 HTML 页面，
+ * 直接 res.json() 会抛「Unexpected token '<'」这类不可读错误。
+ */
+async function jsonBody<T>(res: Response, what: string): Promise<T> {
+  try {
+    return (await res.json()) as T;
+  } catch {
+    throw new Error(
+      `${what} → 服务返回了非预期的页面而非 JSON（可能登录已过期或网关异常），请刷新页面重新登录`,
+    );
+  }
+}
+
 // ── 数据获取 ───────────────────────────────────────────────────────────────
 async function fetchTree(worker: string, dir: string): Promise<TreeEntry[] | null> {
   let cursor: string | null = null;
@@ -77,8 +91,9 @@ async function fetchTree(worker: string, dir: string): Promise<TreeEntry[] | nul
     if (cursor) qs.set('cursor', cursor);
     const res = await fetch(`${base(worker)}/tree?${qs.toString()}`, { cache: 'no-store' });
     if (res.status === 404) return null; // #1208 未合并（版本门/未部署）
+    if (res.status === 401) throw new Error('登录已过期，请刷新页面重新登录');
     if (!res.ok) throw new Error(`tree ${dir} → ${await errorMessage(res)}`);
-    const body = (await res.json()) as TreeResponse;
+    const body = await jsonBody<TreeResponse>(res, `tree ${dir}`);
     out.push(...(body.entries ?? []));
     if (!body.has_more || !body.next_cursor) break;
     cursor = body.next_cursor;
@@ -93,8 +108,9 @@ async function fetchFullContent(worker: string, path: string, cap = MAX_CHUNKS):
     const qs = new URLSearchParams({ path, offset: String(offset), limit: String(CHUNK) });
     const res = await fetch(`${base(worker)}/file-content?${qs.toString()}`, { cache: 'no-store' });
     if (res.status === 404) return null;
+    if (res.status === 401) throw new Error('登录已过期，请刷新页面重新登录');
     if (!res.ok) throw new Error(`file-content ${path} → ${await errorMessage(res)}`);
-    const body = (await res.json()) as FileContentResponse;
+    const body = await jsonBody<FileContentResponse>(res, `file-content ${path}`);
     out += body.content ?? '';
     if (body.eof) return out;
     offset = body.next_offset;
