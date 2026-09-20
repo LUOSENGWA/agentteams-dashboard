@@ -77,7 +77,7 @@ cd my-plugin && npm install && npm run dev
 
 Dashboard 已集成到 [AgentTeams](https://github.com/agentscope-ai/AgentTeams) 安装脚本中（通过补丁方式）。应用补丁后，安装向导会自动询问是否安装 Dashboard，容器会随 Controller/Manager 一起启动。
 
-- **当前 Dashboard 发布标签**：`v1.2.3.1`
+- **当前 Dashboard 发布标签**：`v1.2.4.9`（应用版本以 `package.json` 的 `version` 为准：`1.2.4.9`）
 - **安装器默认版本**：`v1.2.2`；设置 `AGENTTEAMS_DASHBOARD_VERSION` 可覆盖
 - **默认端口**：`13000`，绑定 `127.0.0.1`（设置 `AGENTTEAMS_LOCAL_ONLY=0` 可暴露到 `0.0.0.0`）
 - **可用版本**：https://github.com/agentteams-group/agentteams-dashboard/tags

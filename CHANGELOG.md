@@ -2,7 +2,7 @@
 
 本文件记录 AgentTeams Dashboard 的版本发布历史。
 
-## v1.3.0 (2026-09-20)
+## v1.2.4.9 (2026-09-20)
 
 ### New Features
 

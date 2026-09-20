@@ -1,6 +1,6 @@
 {
   "name": "agentteams-dashboard",
-  "version": "1.2.3",
+  "version": "1.2.4.9",
   "private": true,
   "scripts": {
     "dev": "next dev -p 3000 2>&1 | tee dev.log",
