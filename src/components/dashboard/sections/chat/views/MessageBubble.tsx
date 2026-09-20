@@ -21,6 +21,7 @@ import { recordToolCalls } from '@/lib/tool-call-counter';
 import { Check, CheckCheck, Loader2 } from 'lucide-react';
 import { RuntimeBadge } from '@/components/dashboard/phase-badge';
 import type { WorkerSessionState } from '@/lib/worker-session-state';
+import { WorkerSessionCornerDot } from '@/components/worker-session-dot';
 
 interface MessageBubbleProps {
   message: DisplayMessage;
@@ -101,42 +102,9 @@ function AvatarWithInitials({ sender, label, isMe }: { sender: string; label: st
   );
 }
 
-/**
- * A17 task status dot, rendered at the bottom-right corner of a worker's
- * avatar in the group chat (NOT on the worker-management page — 罗总
- * 9/18: the indicator belongs on the chat-room avatars).
- *
- *   running = blue breathing (task-level heartbeat, unbounded)
- *   done    = green steady (finished within 10 min, then decays to idle)
- *   idle    = dim gray
- */
-function WorkerStatusDot({ state }: { state: WorkerSessionState }) {
-  if (state === 'running') {
-    return (
-      <span
-        className="worker-status-breathe absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-sky-500 ring-2 ring-background"
-        title="运行中"
-        aria-label="运行中"
-      />
-    );
-  }
-  if (state === 'done') {
-    return (
-      <span
-        className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-emerald-500 ring-2 ring-background"
-        title="已完成（10 分钟内）"
-        aria-label="已完成"
-      />
-    );
-  }
-  return (
-    <span
-      className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-zinc-400/70 ring-2 ring-background"
-      title="空闲"
-      aria-label="空闲"
-    />
-  );
-}
+// A17 task status dot (9/18 convention), now shared: the visual lives in
+// `WorkerSessionCornerDot` so message avatars and the member list use the
+// exact same dot (one source of truth — 9/19 member-list addition).
 
 function ActionIcon({ path, size = 12, label }: { path: string; size?: number; label: string }) {
   return (
@@ -323,7 +291,7 @@ export function MessageBubble({
         {showAvatar && (
           <div className="relative w-7 h-7">
             <AvatarWithInitials sender={message.sender} label={senderLabel} isMe={message.isMe} />
-            {senderStatus && !message.isMe && <WorkerStatusDot state={senderStatus} />}
+            {senderStatus && !message.isMe && <WorkerSessionCornerDot state={senderStatus} />}
           </div>
         )}
       </div>

@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import '@testing-library/jest-dom/vitest';
 import { forwardRef, useImperativeHandle } from 'react';
 import type { ForwardedRef } from 'react';
@@ -16,7 +16,20 @@ const mocks = vi.hoisted(() => {
     scrollToIndex: vi.fn(),
     props: null as Record<string, unknown> | null,
   };
-  return { sendReceiptMutate, setReadMarkerMutate, sendMutate, virtuoso };
+  // Per-test overrides (member list / session dots).
+  const roomMembersChunk: unknown[] = [];
+  let agentStatusMap: Record<string, unknown> = {};
+  return {
+    sendReceiptMutate,
+    setReadMarkerMutate,
+    sendMutate,
+    virtuoso,
+    roomMembersChunk,
+    getAgentStatusMap: () => agentStatusMap,
+    setAgentStatusMap: (v: Record<string, unknown>) => {
+      agentStatusMap = v;
+    },
+  };
 });
 
 vi.mock('react-virtuoso', () => ({
@@ -69,7 +82,7 @@ vi.mock('@/hooks/use-matrix', async (importOriginal) => {
       isLoading: false,
       fetchNextPage: vi.fn(),
     }),
-    useMatrixRoomMembers: () => ({ data: { chunk: [] }, isSuccess: true }),
+    useMatrixRoomMembers: () => ({ data: { chunk: mocks.roomMembersChunk }, isSuccess: true }),
     useMatrixRoomState: () => ({ data: null }),
     useMatrixReadMarker: () => ({ data: { event_id: '$old' }, isSuccess: true, isError: false }),
     useMatrixReadReceipts: () => ({}),
@@ -87,7 +100,7 @@ vi.mock('@/hooks/use-matrix', async (importOriginal) => {
 vi.mock('@/hooks/use-worker-session-state', () => ({
   // These hooks hit react-query (worker list) / matrix stores which the
   // render harness below does not wrap in providers — mock all exports.
-  useWorkerAgentStatusMap: () => ({}),
+  useWorkerAgentStatusMap: () => mocks.getAgentStatusMap(),
   useSessionTick: () => 0,
   useChatRoomSessionState: () => ({ state: 'idle', runningOnly: false }),
 }));
@@ -113,6 +126,8 @@ describe('ChatRoom read-position dual-write', () => {
   afterEach(() => {
     cleanup();
     vi.clearAllMocks();
+    mocks.roomMembersChunk.length = 0;
+    mocks.setAgentStatusMap({});
   });
 
   it('writes both m.read and m.fully_read when the user reaches the bottom', () => {
@@ -180,5 +195,34 @@ describe('ChatRoom read-position dual-write', () => {
     renderChatRoom({ roomPhase: 'Running', roomRuntime: 'qwenpaw' });
     expect(screen.getByText('Running')).toBeInTheDocument();
     expect(screen.getByText('QwenPaw')).toBeInTheDocument();
+  });
+
+  it('shows the session dot on worker avatars (and only workers) in the member list', () => {
+    useMatrixStore.setState({ userId: '@me:test', isLoggedIn: true, homeserver: 'https://hs.test', accessToken: 'tok' });
+    mocks.setAgentStatusMap({ '@w1:test': { agentStatus: 'running' } });
+    mocks.roomMembersChunk.push(
+      {
+        type: 'm.room.member',
+        state_key: '@w1:test',
+        content: { membership: 'join', displayname: 'Worker One' },
+      },
+      {
+        type: 'm.room.member',
+        state_key: '@h1:test',
+        content: { membership: 'join', displayname: 'Human One' },
+      }
+    );
+
+    renderChatRoom();
+    fireEvent.click(screen.getByTitle('显示成员'));
+
+    const rows = screen.getAllByTitle('点击复制用户ID');
+    const workerRow = rows.find((r) => r.textContent?.includes('Worker One'));
+    const humanRow = rows.find((r) => r.textContent?.includes('Human One'));
+    expect(workerRow).toBeTruthy();
+    // Worker row: heartbeat says running → blue dot with the 运行中 label.
+    expect(within(workerRow as HTMLElement).getByLabelText('运行中')).toBeInTheDocument();
+    // Human row: no worker mapping → no dot at all.
+    expect(within(humanRow as HTMLElement).queryByLabelText(/运行中|已完成|空闲/)).toBeNull();
   });
 });
