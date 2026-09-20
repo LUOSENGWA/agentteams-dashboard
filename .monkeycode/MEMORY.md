@@ -104,6 +104,18 @@ Entries discovered by the Agent while performing [specific task description] sho
 
 [Project Knowledge Summary]
 - Date: 2026-09-20
+- Context: 批量检查并合并 fork PR（#129/#127/#128），解冲突后 force push fork 分支完成合并
+- Category: Workflow & Collaboration | Troubleshooting & Debugging
+- Instructions:
+  - gh CLI 无登录态：用 `git credential fill`（credential.helper=/app/agent/bin/agent）取 token 设 GH_TOKEN，token 值不得出现在回复/日志
+  - GitHub merge API 遇 502/504 后会进入 "Merge already in progress" 锁：等 30-60s 重试 REST PUT /pulls/{n}/merge 即成功，不要反复立即重试
+  - fork PR 冲突解法：PR 上 maintainer_can_modify=true 时，本地基于最新 main 重建解冲突提交，`git push --force-with-lease=refs/heads/<branch>:<旧tip-sha> fork-url merge-x:<branch>`，等 CI 绿再合
+  - 解冲突禁止直接 `git checkout pr-xx -- 共享文件`：PR 基点落后时会把 main 上后来的修复（如 a11y-axe 的 role="img"、主题 token）一起回退，CI 挂 aria-prohibited-attr；共享组件用 main 版本 + 手工叠加 PR 改动
+  - 合并顺序按文件重叠排：无重叠先合，同文件 PR 逐个叠加 rebase（本次 #129 独立 → #127 → #128 都动 ChatRoom/MessageBubble）
+  - 分支门验证顺序沿用：tsc --noEmit → eslint（仅改动文件）→ vitest run（目标文件），全绿才推
+
+[Project Knowledge Summary]
+- Date: 2026-09-20
 - Context: 知识库 workspace-files 502/HTML 报错联合排查，用户在 Controller 侧实测后修正 Agent 最初的网关路由假设
 - Category: Troubleshooting & Debugging | Operations & Deployment
 - Instructions:
