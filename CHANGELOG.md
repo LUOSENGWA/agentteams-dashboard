@@ -1,109 +1,61 @@
-# Changelog
+# 更新日志
 
-## Unreleased
+本文件记录 AgentTeams Dashboard 的版本发布历史。
 
-### New Features
+## v1.3.0（2026-09-20）
 
-- **项目时间线面板（Project Timeline Panel）**：在项目详情面板底部新增「干预记录」折叠区，调用 Controller `GET /api/v1/projects/{id}/history` 与 `…/history/{ts}` 端点，按时间倒序列出每次人工干预（暂停 / 恢复 / 重规划等）前的 workflow 快照元数据；点击单条记录可查看状态、标题、操作人、操作时间、暂停原因等审计字段
-  - 用 AbortController 取消未完成的请求，避免面板关闭/组件卸载后状态错位
-- **项目 API 降级横幅（DegradedBanner）**：在项目页头部展示 Controller 端点 404（API 未部署）/ 500（Controller 故障）的差异化提示，并附带 Controller 返回的原始错误信息，便于运维快速定位
-- **运行时块协议 v1 契约（`org.agentteams.run`）**：新增 `src/lib/a2ui/protocol.ts` 定义带版本号的 discriminated union（text/thinking/tool_call/confirmation/error），并把 `parseAgentRunBlocks` 拆为 v1 规范化路径与 v0 透传路径。v1 路径为 tool_call 块补齐 `tool_call_id` / `status` / `started_at` / `finished_at` 等字段，confirmation 块要求 `confirmation_id`。未知版本一律降级到现有文本启发式而不丢弃消息
-- **结构化 tool_call 去重**：`recordToolCalls` 新增可选 `structuredKeys` 参数，当 runtime 上传带 `tool_call_id` 的结构化块时以 id 为权威去重键；同一事件多次修订或跨设备复用同一 id 都不会重复计入 Worker 卡片活物条。v0/纯事件块路径行为不变
-- **服务端 RBAC + JSONL 审计**：
-  - `src/lib/audit-log.ts` 新增 append-only JSONL 审计日志（10 MB 自动 rotate，保留 30 份归档，路径可通过 `AGENTTEAMS_AUDIT_LOG_PATH` 覆盖）
-  - `validateHigressSession` 现返回 `{ valid, user }`，middleware 在通过验证时把 `x-agentteams-user` / `x-agentteams-user-level` 注入下游，proxy-helper 透传给 Controller
-  - `src/lib/server-auth.ts` 提供 `enforceServerSideRbac`，workers/teams/managers/humans 的写操作路由（POST/PUT/DELETE/wake/sleep/ensure-ready）调用 rbac-engine 做服务端细粒度校验；403 时自动写一条 warning 审计
-  - `src/app/api/agentteams/audit/route.ts` 新增：POST 写入（服务端镜像客户端审计事件），GET 列表（admin-only，按时间/entity 过滤）
-  - `auditMutation` 客户端 helper 自动向服务端镜像审计事件，失败仅 warn 不阻塞 mutation
-- **ChatRoom 拆分（Phase 1）**：抽出三个独立模块
-  - `usePersistedDraft(roomId)` — 每房间的输入草稿持久化 hook（含 setValueLocal 不写 storage 的 setInput-only 接口，保留 edit session 回填行为）
-  - `useFileUpload(input)` — file → Matrix mxc + m.image/m.file 发送状态机
-  - `useFileDropZone({ onFiles })` + `<DragDropOverlay>` — drag-and-drop 文件上传层
-  - ChatRoom.tsx 由 1040 行降至 966 行；行为不变
-- **RBAC 扩展到所有写路由**：新增 `enforceLevelOnlyRbac`（基于权限等级，无资源范围检查）处理 storage / skills / projects / gateway / debug-log / wen-tian / mcps / worker 文件操作 等全局资源；worker/team 资源继续走 `enforceServerSideRbac`。403 时按 entity_type 写 audit 记录
-- **rbac-engine 扩展**：`checkPermissionByLevel(level, action)` —— 用于全局资源路由的纯等级决策
-- **审计 viewer**：新增"审计"侧边栏 section（admin-only），通过 `GET /api/agentteams/audit` 渲染服务端 JSONL 事件表格，支持 entity_type 过滤与 15s 轮询；非 admin 看到友好提示而非 403 报错
-- **新 hook `useAuditEvents`**：TanStack Query 包装 `/api/agentteams/audit`，封装 403 错误体不抛出
+### 新功能
 
-### Improvements
-- 新增测试：parser v1 路径 11 例、tool-call-counter 结构化 id 去重 7 例、audit-log 6 例、server-auth 5 + 5 例（enforceLevelOnlyRbac）、audit API route 5 例、worker route RBAC 3 例、usePersistedDraft 7 例、useFileUpload 5 例、useFileDropZone 4 例、DragDropOverlay 3 例。全量 1256 个用例通过
+- **知识库面板**：新增集群 Worker 记忆只读视图，浏览 MEMORY.md 与 memory、digest 目录，支持分页加载、wikilink 关系图谱与全文检索式跳转；数据面来自 QwenPaw 运行时 workspace-files 端点，Worker 下拉仅列 QwenPaw 实例并在无可用实例时给出说明性空态
+- **任务看板（项目页）**：接入 Controller projects API，支持 DAG/loop 计划的列表、详情、节点任务查看，以及暂停/恢复/重规划/取消节点等干预操作与项目时间线；未连接 Controller 时展示降级说明
+- **技能中心**：重构技能管理为集中化技能仓库，支持自定义技能上传、版本管理与 Nacos 注册中心同步分发，并将技能选择下沉到 Worker 创建流程
+- **Higress AI 网关配置**：提供模型厂商、模型名称适配与 AI 路由策略的统一配置界面，支持多服务商路由、模型别名绑定与凭据仅提交 Higress 的安全代理链路
+- **聊天体验升级**：虚拟化消息时间线、线程面板、消息编辑与已读回执；会话列表按最新消息排序并区分未读状态；流式输出经 `m.replace` 中间态渲染；运行时消息渲染思考、工具调用、工作流、A2UI 与人机确认（HITL）卡片，支持中英双语确认关键词识别
+- **Worker 卡片 v2 与文件面板**：聊天内 Worker 卡片改版，文件面板明确反映对象存储同步状态，聊天区域与工作目录区域宽度可调
+- **导航分组化**：将 13 项扁平导航重构为分组折叠结构，可见入口压缩至 5 个，保持全部功能可达
+- **资源删除锁**：Worker 与团队删除执行期间在对应资源上呈现锁定状态，避免并发修改
 
-### Maintenance
-- **修复 AGENTTEAMS_AUTH_DISABLED 本地模式下审计不可用**：middleware 的 AUTH_DISABLED 分支此前裸放行、不注入身份头，导致审计视图永久 403（"服务端未收到身份头"）、mutation 的审计镜像被静默丢弃。现在该分支注入合成本地身份（默认 `local-admin` / L3，可用 `AGENTTEAMS_LOCAL_USER` / `AGENTTEAMS_LOCAL_USER_LEVEL` 覆盖），服务端 RBAC 与审计读写归因在本地模式下保持工作；`withUserHeaders` 的 set 语义确保客户端伪造的同名头会被覆盖
-- **废弃上游补丁流程**：删除 `install/patches/`（0001/0002/0004）与依赖补丁的 `install/submit-pr.sh`。Dashboard 安装器集成已通过 [AgentTeams PR #1075](https://github.com/agentscope-ai/AgentTeams/pull/1075) 合入上游（后续 #1081/#1118/#1162/#1195），补丁内容已全部存在于上游且不再能 clean-apply，导致 Install Test 工作流自 2026-07-26 起持续失败。`install-test.yml` 移除 "Validate patches apply cleanly to upstream" 步骤；后续上游变更一律通过 PR 提交。外部 Higress 适配的参考实现保留在本仓库 `install/agentteams-install.sh` / `install/agentteams-dashboard.sh`，待通过 PR 合入上游
+### 安全
 
-### Contributors
-- @monkeycode-ai（平台 AI 协作者）
+- 服务端 RBAC 落地：middleware 作为权威权限门，服务端 API 增加第二道级别校门（`enforceLevelOnlyRbac` / `enforceServerSideRbac`），L1~L3 权限矩阵生效
+- 新增审计日志视图与安全策略页面
+- Nacos 凭据等敏感信息在 API 响应中掩码
+- 存储视图与 teams files 接口增加访问门控与敏感对象过滤
+- `setup`、`status` 等端点移出免认证公共路径
+- Debug 日志组件白名单收敛至固定容器名，需 manage 权限
+- 插件系统会话化隔离，`sourceIp` 仅在显式信任头存在时采信
+- 聊天 Markdown 渲染接入 rehype-sanitize 白名单管线，过滤 AI 输出中的原始 HTML
 
-## v1.2.3.1 (2026-08-18)
+### 修复
 
-### New Features
+- HITL 确认关键词大小写不敏感精确匹配，避免误触发
+- Nacos SSE 断线改为指数退避重连（5s 起步、60s 封顶），清理竞态句柄
+- 全局会话心跳合并为模块级单一 interval，随订阅数自动启停
+- Worker 自动重连、深链接先读缓存后拉取、SSE 中止传播、同步忙碌态竞态、`setRoomMeta` 增量补丁等健壮性问题
+- 知识库 502/404 时透传 Controller 错误详情而非笼统报错
 
-- **任务看板主数据源切换为 Controller API（D5/D8）**：看板数据优先从 Controller API 拉取，MinIO 作为回退源，提升数据一致性与可用性
-- **Chat 空状态插图**：Bot 渐变插图 + 消息角标，替代原单一图标
-- **流式打字机效果**：流式输出逐字符展示 + 光标动画；纯文本走轻量渲染路径，块级内容走完整 Markdown 渲染
-- **工具卡片结构化升级**：
-  - 状态点 + 状态徽标变色（成功绿 / 失败红 / 进行中紫），折叠态直接展示错误首行摘要
-  - IN/OUT 输入输出区块徽标
-  - streaming / thinking 卡片统一圆角与悬停阴影
-  - workflow 步骤字形三态：完成勾 / 失败叉 / 进行中转圈 / 待执行虚线环
+### 体验与可访问性
 
-### Bug Fixes
+- 亮色/暗色/高对比三主题全部正文组合对比度 ≥ 4.5:1（自动化测试守护）
+- 状态徽章收敛为共享双模式配色模块；拓扑画布连线跟随主题 token
+- 全局字号收敛对齐设计 token；区块加载态统一 Skeleton
+- 图标按钮补齐 aria-label，分隔条支持方向键步进，窄屏聊天自动折叠房间列表，工件树小屏纵排
+- axe 自动扫描接入，修复悬挂 aria-controls 等真实问题
 
-- 修复流式追加时打字机头部重置（每追加一个字符就从头部重新打字）
-- 修复 workflow 待执行步骤误显示转圈动画
-- 修复 CI 失败：清理未使用的 `StreamingCursor`，并将 TypingEffect 改为 render-phase 状态调整，规避 eslint `react-hooks/set-state-in-effect` 报错
+### 文档
 
-### Contributors
+- 项目 Wiki 全量同步：服务端 API（RBAC 第二道门）、Dashboard 模块（sanitize 管线、知识库口径）
+- 代码审查报告收档：33 项问题全部修复或记录取舍（`docs/code-review-issues.md`）
 
-- @nillikechatchat（yuanhenglizhen2050@163.com）
-- @LUOSENGWA（101017075+LUOSENGWA）
-- @monkeycode-ai（平台 AI 协作者）
+### 质量
 
-### Version Updates
+- 测试规模：193 个测试文件 / 1812 个用例全绿；lint 0 问题；`npm run build` 通过
+- 新增主题对比度性质测试、可访问性 axe 扫描、一致性回归测试与知识库/聊天多组组件测试
 
-- Dashboard 发布标签从 `v1.2.3` 更新至 `v1.2.3.1`
+## v1.2.3
 
-## v1.2.4 (2026-08-14)
+- 版本统一与发布元数据整理
 
-### New Features
+## v1.2.2
 
-- **问天插件：AI 深度诊断与日志分析合并为「AI 日志分析诊断」**：
-  - 填写症状描述 → 点击「AI 日志分析诊断」，一次完成日志实时采集（容器日志 / Agent 会话 / Matrix 消息）与 AI 分析，SSE 进度条 + 流式报告输出；移除原独立的「AI 诊断」按钮与「开始日志分析」入口
-  - 诊断 Prompt 重写并贴合 AgentTeams：角色为平台资深 SRE，内置 Controller/Worker（OpenClaw/Hermes/CoPaw）/团队/Human/Matrix/MinIO/Higress AI 网关模块知识与常见故障域清单；输出结构带严重程度徽章、诊断概要表、事件时间线表、按置信度排序的根因分析、可执行修复命令（bash/yaml 代码块）
-  - **日志真实进入 Prompt**：容器日志尾部（单容器 16KB / 总量 96KB 上限）、docker inspect facts（state/exitCode/OOMKilled/重启次数）、Agent 会话摘录（12 个文件 / 32KB 上限）随症状描述与 Dashboard 环境快照一起交给 LLM；此前日志只做统计未进入分析
-  - 诊断模型可选：默认模型（服务器 `AGENTTEAMS_DEFAULT_MODEL`）、「模型管理」已配置的服务商模型（经 Higress AI 路由解析）、内置别名与自定义别名；API Key 仍仅保存在服务端
-  - 报告渲染美化：react-markdown 自定义渲染器（章节分隔线、表格样式、代码块复制按钮、流式光标），报告头部显示所用模型与时间，支持一键复制全文
-
-### Improvements
-
-- **日志收集迁入问天诊断页**：原设置对话框「日志收集」页签整体迁移为「AI 日志分析诊断」卡片的「日志收集配置」功能区（时间范围 / 容器过滤 / 房间过滤 / PII 脱敏 / Matrix 状态提示），参数直接供 AI 诊断复用；设置对话框由 5 个页签精简为 4 个
-- 修复服务端解析 LLM SSE 流未缓冲导致的 token 丢失风险（`data:` JSON 跨网络分块时可能被丢弃）
-- 清理问天插件死代码（`collectAndAnalyzeLogs`、`InfraLine`、`SEVERITY_LABELS` 等）
-
-## v1.2.3 (2026-08-13)
-
-### New Features
-
-- **问天诊断插件 (WenTian)**: 新增运行时诊断助手插件，提供：
-  - 集群健康概览：Worker/Team/Human 分布、基础设施状态（MinIO/Matrix/Higress）、版本一致性检查
-  - AI 深度诊断：输入症状描述，调用 AgentTeams SRE 专家 Prompt 模板，输出结构化 Markdown 报告（问题摘要、日志时间线表格、根因分析、临时/根本修复方案、预防措施、需补充信息）
-  - 日志分析：SSE 实时进度条展示采集进度（扫描容器 → 拉取日志 → 会话导出 → Matrix 消息 → AI 分析），结果始终可见
-  - 诊断报告可一键复制到剪贴板
-
-### Improvements
-
-- **AI 诊断结果 Markdown 渲染**：诊断结果和日志分析结果均支持 GFM Markdown 渲染（表格、代码块、列表等）
-- **问天诊断 Prompt 优化**：替换为完整的 AgentTeams SRE 专家故障排查模板，覆盖 7 步分析流程（提炼症状 → 日志扫描 → 时间线重建 → 关联上下文 → 假设验证 → 给出方案 → 缺失信息），12 种常见根因类型
-- **SSE 解析修复**：修复 `collectSSE` 函数无法正确解析 `event:` 字段导致所有事件被识别为 `data` 的 bug，进度条现在能实时更新（0%→95%→完成）
-- **诊断页面精简**：移除已删除路由导致的 404（`/api/agentteams/troubleshoot`），移除基础设施详情大 Card 和健康检查独立 Card，聚焦核心诊断能力
-
-### Bug Fixes
-
-- 修复问天 AI 诊断 404 错误（troubleshoot 路由已删除，改为复用 `wen-tian/logs` SSE 端点）
-- 修复日志分析进度条永远停在 0% 的问题（SSE event 字段未正确解析）
-- 修复日志分析完成后结果不显示的问题（running 与结果显示互斥逻辑错误）
-
-### Version Updates
-
-- 默认镜像版本从 `v1.2.2` 更新至 `v1.2.3`
+- 安装脚本默认镜像标签；容器安装、更新与健康检查链路稳定化
