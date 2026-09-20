@@ -4,6 +4,10 @@
  * comparators (>, >=, <, <=, =), ^ and ~ ranges, AND (space)
  * and OR (||) combinations. No prerelease/build metadata handling
  * beyond stripping, which is enough for Dashboard version gating.
+ *
+ * A trailing fourth numeric segment (release hotfix tag, e.g. the `.9`
+ * in `1.2.4.9`) is accepted and ignored: plugin API compatibility is
+ * governed by the major.minor.patch base, hotfixes never change it.
  */
 
 export interface SemVer {
@@ -15,7 +19,7 @@ export interface SemVer {
 export function parseSemVer(input: string): SemVer | null {
   const cleaned = input.trim().replace(/^v/i, '').split('-', 1)[0].split('+', 1)[0];
   const parts = cleaned.split('.');
-  if (parts.length === 0 || parts.length > 3) return null;
+  if (parts.length === 0 || parts.length > 4) return null;
   const nums: number[] = [];
   for (const part of parts) {
     if (!/^\d+$/.test(part)) return null;

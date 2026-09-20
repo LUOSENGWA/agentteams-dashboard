@@ -19,7 +19,14 @@ describe('parseSemVer', () => {
     expect(parseSemVer('abc')).toBeNull();
     expect(parseSemVer('1.x.3')).toBeNull();
     expect(parseSemVer('')).toBeNull();
-    expect(parseSemVer('1.2.3.4')).toBeNull();
+    expect(parseSemVer('1.2.3.4.5')).toBeNull();
+  });
+  it('accepts a trailing hotfix segment and compares on the three-segment base', () => {
+    expect(parseSemVer('1.2.4.9')).toEqual({ major: 1, minor: 2, patch: 4 });
+    expect(satisfies('1.2.4.9', '>=1.2.4')).toBe(true);
+    expect(satisfies('1.2.4.9', '<1.2.5')).toBe(true);
+    expect(satisfies('1.2.4.9', '>=1.2.5')).toBe(false);
+    expect(satisfies('v1.2.4.9', '1.2.x')).toBe(true);
   });
 });
 

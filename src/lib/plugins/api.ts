@@ -1,5 +1,6 @@
 'use client';
 
+import packageJson from '../../../package.json';
 import { toast } from 'sonner';
 import { apiUrl } from '@/lib/api-base';
 import { agentteamsApi } from '@/lib/agentteams-api';
@@ -31,7 +32,7 @@ import type {
  * own deactivate() misbehaves.
  */
 
-export const DASHBOARD_VERSION = '0.2.0';
+export const DASHBOARD_VERSION = packageJson.version;
 
 export interface CreatePluginApiOptions {
   manifest: PluginManifest;

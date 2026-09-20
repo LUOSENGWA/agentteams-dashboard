@@ -1,5 +1,6 @@
 // @vitest-environment node
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import packageJson from '../../../package.json';
 import { createPluginApi, DASHBOARD_VERSION } from './api';
 import { useExtensionStore } from './extension-store';
 import { pluginEventBus } from './event-bus';
@@ -46,6 +47,10 @@ describe('createPluginApi', () => {
     expect(api.pluginId).toBe('test-plugin');
     expect(api.dashboardVersion).toBe(DASHBOARD_VERSION);
     expect(api.pluginApiVersion).toBe(1);
+  });
+
+  it('tracks the real app version from package.json', () => {
+    expect(DASHBOARD_VERSION).toBe(packageJson.version);
   });
 
   it('registerMenuItem adds a sidebar contribution and unregister removes it', () => {
