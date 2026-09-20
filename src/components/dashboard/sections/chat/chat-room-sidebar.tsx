@@ -171,8 +171,22 @@ export function ChatRoomSidebar({
         role="separator"
         aria-orientation="vertical"
         aria-label="调整会话列表宽度"
+        aria-valuemin={SIDEBAR_MIN_W}
+        aria-valuemax={SIDEBAR_MAX_W}
+        aria-valuenow={Math.round(width)}
+        tabIndex={0}
         onPointerDown={startResize}
-        className={`absolute top-0 right-[-2px] w-1 h-full cursor-col-resize z-10 transition-colors ${isResizing ? 'bg-primary/60' : 'bg-transparent hover:bg-primary/40'}`}
+        onKeyDown={(event) => {
+          if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+          event.preventDefault();
+          const step = event.shiftKey ? 32 : 8;
+          // Sidebar sits on the left: ArrowRight widens it, ArrowLeft narrows.
+          const delta = event.key === 'ArrowRight' ? step : -step;
+          const next = Math.min(SIDEBAR_MAX_W, Math.max(SIDEBAR_MIN_W, Math.round(width) + delta));
+          publishSidebarWidth(next);
+          persistSidebarWidth(next);
+        }}
+        className={`absolute top-0 right-[-2px] w-1 h-full cursor-col-resize z-10 transition-colors focus:bg-primary/60 focus:outline-none ${isResizing ? 'bg-primary/60' : 'bg-transparent hover:bg-primary/40'}`}
       />
       <div className="px-3 pt-3 pb-2 border-b border-border shrink-0">
         <div className="flex items-center justify-between mb-2">

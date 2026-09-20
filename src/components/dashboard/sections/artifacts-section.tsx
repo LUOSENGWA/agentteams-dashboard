@@ -493,9 +493,9 @@ export function ArtifactsSection() {
         </div>
       )}
 
-      <div className="flex items-stretch overflow-hidden rounded-lg border bg-background/40" style={{ minHeight: 420 }}>
-        {/* 左栏：产物树（全部 / 类型分类 / 项目→任务） */}
-        <div className="w-[280px] shrink-0 overflow-y-auto border-r bg-muted/20 p-2" style={{ maxHeight: 'calc(100vh - 320px)', minHeight: 420 }}>
+      <div className="flex flex-col lg:flex-row items-stretch overflow-hidden rounded-lg border bg-background/40" style={{ minHeight: 420 }}>
+        {/* 左栏：产物树（全部 / 类型分类 / 项目→任务）；小屏改横排整宽，详情在下 */}
+        <div className="w-full lg:w-[280px] shrink-0 overflow-y-auto border-b lg:border-b-0 lg:border-r bg-muted/20 p-2 lg:max-h-[calc(100vh-320px)]" style={{ minHeight: 420 }}>
           <TreeRow
             label="全部产物"
             icon={FolderOpen}

@@ -81,12 +81,12 @@
   - [x] 8.6 为对比度计算编写属性测试（主题 token 满足 WCAG AA）
     - 对 light/dark/high-contrast 三组核心 token 计算 WCAG 对比度，正文级组合 ≥ 4.5:1
 
-- [ ] 9. 可访问性修复（A11Y-01~04）
-  - [ ] 9.1 图标按钮补齐可访问名称（A11Y-01）：header/notification-popover/markdown-message/theme-tab/worker-files-panel/models-section 共 7 处，复制按钮补 `group-focus-within`
-  - [ ] 9.2 分隔条键盘操作（A11Y-02）：`ChatRoom.tsx` 补 `onKeyDown` 方向键步进，`chat-room-sidebar.tsx` 补 `tabIndex`
-  - [ ] 9.3 Chat 布局响应式（A11Y-03）：小屏默认折叠成员/文件侧栏，抽屉化非消息面板
-  - [ ] 9.4 Artifacts 响应式（A11Y-04）：小屏改上下布局，替换内联 `calc(100vh-320px)`
-  - [ ] 9.5 axe-core 可访问性检查（devDependencies 已含 axe-core）
+- [x] 9. 可访问性修复（A11Y-01~04）
+  - [x] 9.1 图标按钮补齐可访问名称（A11Y-01）：header/notification-popover/markdown-message/theme-tab/worker-files-panel/models-section 共 7 处，复制按钮补 `group-focus-within`
+  - [x] 9.2 分隔条键盘操作（A11Y-02）：`ChatRoom.tsx` 补 `onKeyDown` 方向键步进，`chat-room-sidebar.tsx` 补 `tabIndex`
+  - [x] 9.3 Chat 布局响应式（A11Y-03）：小屏默认折叠成员/文件侧栏，抽屉化非消息面板
+  - [x] 9.4 Artifacts 响应式（A11Y-04）：小屏改上下布局，替换内联 `calc(100vh-320px)`
+  - [x] 9.5 axe-core 可访问性检查（devDependencies 已含 axe-core）
     - 对 workers/chat/settings 关键 section 断言无 critical violation
 
 - [x] 10. 组件与架构一致性（UI-06/07、ARCH-01/02）

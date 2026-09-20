@@ -300,6 +300,7 @@ export function ThemeTab() {
               ref={fileInputRef}
               type="file"
               accept="application/json,.json"
+              aria-label="导入主题配置文件"
               className="hidden"
               onChange={(e) => {
                 const file = e.target.files?.[0];
@@ -338,8 +339,9 @@ export function ThemeTab() {
               className="h-8 w-8 text-destructive"
               onClick={() => handleDelete(t.id)}
               disabled={locked}
+              aria-label={`删除主题 ${t.name}`}
             >
-              <Trash2 className="w-3.5 h-3.5" />
+              <Trash2 className="w-3.5 h-3.5" aria-hidden="true" />
             </Button>
           </div>
         ))}

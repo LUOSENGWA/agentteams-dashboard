@@ -50,10 +50,11 @@ function CodeBlock({ language, children }: { language?: string; children: string
         <Button
           variant="ghost"
           size="icon"
-          className="h-6 w-6 opacity-0 group-hover:opacity-100 transition-opacity"
+          className="h-6 w-6 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 transition-opacity"
           onClick={handleCopy}
+          aria-label={copied ? '已复制' : '复制代码'}
         >
-          {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+          {copied ? <Check className="w-3.5 h-3.5" aria-hidden="true" /> : <Copy className="w-3.5 h-3.5" aria-hidden="true" />}
         </Button>
       </div>
       <pre className="p-3 overflow-x-auto m-0">

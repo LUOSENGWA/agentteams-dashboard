@@ -985,14 +985,23 @@ export function ChatRoom({
             aria-valuemax={600}
             aria-valuenow={Math.round(workerPaneWidth)}
             tabIndex={0}
-            className="w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/60 focus:bg-primary/60 focus:outline-none"
+            className="w-1 shrink-0 cursor-col-resize bg-border hover:bg-primary/60 focus:bg-primary/60 focus:outline-none max-md:hidden"
             onPointerDown={(event) => {
               event.preventDefault();
               setIsResizingWorkerPane(true);
             }}
+            onKeyDown={(event) => {
+              if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return;
+              event.preventDefault();
+              const step = event.shiftKey ? 32 : 8;
+              // Pane is on the right: ArrowLeft drags the edge left (wider).
+              const delta = event.key === 'ArrowLeft' ? step : -step;
+              setWorkerPaneWidth((w) => Math.min(600, Math.max(256, w + delta)));
+            }}
           />
           <div
-            className="shrink-0 border-l border-border bg-card overflow-hidden flex flex-col"
+            className="shrink-0 border-l border-border bg-card overflow-hidden flex flex-col
+              max-md:fixed max-md:inset-y-0 max-md:right-0 max-md:z-30 max-md:shadow-xl max-md:max-w-[85vw]"
             style={{ width: workerPaneWidth }}
           >
             <div className="px-3 py-2.5 border-b border-border shrink-0 flex items-center justify-between">

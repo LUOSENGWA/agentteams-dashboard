@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useMemo, useCallback, useEffect } from 'react';
+import { useState, useMemo, useCallback, useEffect, useSyncExternalStore } from 'react';
 import { useWorkers } from '@/hooks/use-agentteams-workers';
 import { useTeams } from '@/hooks/use-agentteams-teams';
 import { useManagers } from '@/hooks/use-agentteams-managers';
@@ -30,6 +30,20 @@ import { useHitlInboxStore } from '@/lib/hitl-inbox';
 import { ChatProvider } from './ChatStore';
 import { RuntimeMapProvider, type RuntimeMap } from './runtime-map-context';
 
+const NARROW_MQ = '(max-width: 767px)';
+
+function subscribeNarrowViewport(onChange: () => void): () => void {
+  if (typeof window === 'undefined' || !window.matchMedia) return () => {};
+  const mq = window.matchMedia(NARROW_MQ);
+  mq.addEventListener('change', onChange);
+  return () => mq.removeEventListener('change', onChange);
+}
+
+function getNarrowViewport(): boolean {
+  if (typeof window === 'undefined' || !window.matchMedia) return false;
+  return window.matchMedia(NARROW_MQ).matches;
+}
+
 export function ChatSection() {
   const { data: workers, isLoading: workersLoading } = useWorkers();
   const { data: teams, isLoading: teamsLoading } = useTeams();
@@ -42,6 +56,12 @@ export function ChatSection() {
   const [showLoginDialog, setShowLoginDialog] = useState(false);
   const [showRightPanel, setShowRightPanel] = useState(false);
   const [isRoomListCollapsed, setIsRoomListCollapsed] = useState(false);
+
+  // A11Y-03: on narrow viewports (< md) the resizable room list (≥176px)
+  // would squeeze the message area to near-zero — force it collapsed there
+  // (the expand rail stays hidden while narrow). useSyncExternalStore keeps
+  // SSR/hydration consistent without a setState-in-effect cascade.
+  const narrowViewport = useSyncExternalStore(subscribeNarrowViewport, getNarrowViewport, () => false);
 
   // Publish the open room to the global sync loop (via the room-meta store)
   // so it merges live timeline events into that room's message cache. Written
@@ -170,19 +190,20 @@ export function ChatSection() {
         {/* Main content: 2 or 3 column flex */}
         <div className="flex-1 flex min-h-0">
           {/* Left: Room list */}
-          {isRoomListCollapsed ? (
+          {(isRoomListCollapsed || narrowViewport) && (
             <div className="w-10 shrink-0 border-r border-border bg-muted/20 pt-2">
               <Button
                 variant="ghost"
                 size="sm"
-                className="mx-auto h-7 w-7 p-0"
+                className="mx-auto h-7 w-7 p-0 max-md:hidden"
                 onClick={() => setIsRoomListCollapsed(false)}
                 title="显示会话列表"
               >
                 <PanelLeftOpen className="w-3.5 h-3.5" />
               </Button>
             </div>
-          ) : (
+          )}
+          {!isRoomListCollapsed && !narrowViewport && (
             <ChatRoomSidebar
               rooms={rooms}
               selectedRoomId={selectedRoomId}
@@ -192,6 +213,7 @@ export function ChatSection() {
               isLoading={isLoading}
               onCollapse={() => setIsRoomListCollapsed(true)}
             />
+
           )}
 
           {/* Center: Chat panel */}
@@ -209,9 +231,10 @@ export function ChatSection() {
             )}
           </div>
 
-          {/* Right: Members + Topology (toggleable) */}
+          {/* Right: Members + Topology (toggleable); overlays on mobile */}
           {showRightPanel && (
-            <div className="w-48 shrink-0 flex flex-col border-l border-border overflow-hidden">
+            <div className="w-48 shrink-0 flex flex-col border-l border-border overflow-hidden
+              max-md:fixed max-md:inset-y-0 max-md:right-0 max-md:z-30 max-md:shadow-xl max-md:bg-card">
               <div className="flex-1 overflow-y-auto p-2 space-y-3 custom-scrollbar">
                 <RoomTopology rooms={rooms} selectedRoomId={selectedRoomId} members={roomMembers} />
                 <HumanPanel />

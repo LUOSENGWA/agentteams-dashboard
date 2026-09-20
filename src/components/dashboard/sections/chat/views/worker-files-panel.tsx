@@ -211,8 +211,9 @@ export function FilesBrowserPanel({ kind, ownerName }: FilesBrowserPanelProps) {
             className="h-7 w-7"
             onClick={handleRefresh}
             disabled={isLoading}
+            aria-label="刷新文件列表"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+            <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} aria-hidden="true" />
           </Button>
         </div>
       </div>

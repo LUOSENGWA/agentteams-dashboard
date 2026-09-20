@@ -27,6 +27,7 @@ export function WorkerSessionDot({
   const s = STATE_STYLE[state];
   return (
     <span
+      role="img"
       aria-label={s.label}
       title={s.label}
       className={`inline-block h-2 w-2 shrink-0 rounded-full ${s.pulse ? 'wt-session-pulse' : ''} ${className}`}

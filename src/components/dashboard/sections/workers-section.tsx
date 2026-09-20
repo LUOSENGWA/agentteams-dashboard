@@ -11,7 +11,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select';
-import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { useWorkers } from '@/hooks/use-agentteams-workers';
 import {
   useCreateWorker,
@@ -700,7 +699,7 @@ export function WorkersSection() {
             <div className="flex items-center gap-2">
               <ArrowUpDown className="w-4 h-4 text-muted-foreground" aria-hidden="true" />
               <Select value={sortKey} onValueChange={(v) => setSortKey(v as SortKey)}>
-                <SelectTrigger className="w-[140px] h-8 text-xs">
+                <SelectTrigger aria-label="排序方式" className="w-[140px] h-8 text-xs">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -712,22 +711,37 @@ export function WorkersSection() {
                 </SelectContent>
               </Select>
             </div>
-            <Tabs value={viewMode} onValueChange={handleViewModeChange}>
-              <TabsList className="h-8">
-                <TabsTrigger value="card" className="px-2 py-1 text-xs gap-1">
-                  <LayoutGrid className="w-3.5 h-3.5" aria-hidden="true" />
-                  卡片
-                </TabsTrigger>
-                <TabsTrigger value="table" className="px-2 py-1 text-xs gap-1">
-                  <List className="w-3.5 h-3.5" aria-hidden="true" />
-                  表格
-                </TabsTrigger>
-                <TabsTrigger value="compact" className="px-2 py-1 text-xs gap-1">
-                  <Rows3 className="w-3.5 h-3.5" aria-hidden="true" />
-                  紧凑
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
+            {/* View-mode switch: plain buttons + aria-pressed. (The old
+                Radix Tabs emitted role="tab" with dangling aria-controls —
+                no TabsContent exists for a view toggle; axe critical.) */}
+            <div
+              className="bg-muted text-muted-foreground inline-flex h-8 w-fit items-center justify-center rounded-lg p-[3px] gap-0.5"
+              role="group"
+              aria-label="视图模式"
+            >
+              {(
+                [
+                  { value: 'card', label: '卡片', Icon: LayoutGrid },
+                  { value: 'table', label: '表格', Icon: List },
+                  { value: 'compact', label: '紧凑', Icon: Rows3 },
+                ] as const
+              ).map(({ value, label, Icon }) => (
+                <button
+                  key={value}
+                  type="button"
+                  aria-pressed={viewMode === value}
+                  onClick={() => handleViewModeChange(value)}
+                  className={`inline-flex h-[calc(100%-2px)] items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium whitespace-nowrap transition-colors ${
+                    viewMode === value
+                      ? 'bg-background text-foreground shadow-sm'
+                      : 'text-muted-foreground hover:text-foreground'
+                  }`}
+                >
+                  <Icon className="w-3.5 h-3.5" aria-hidden="true" />
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
         </div>
       )}

@@ -162,8 +162,9 @@ export function DashboardHeader({
         size="icon"
         className="md:hidden"
         onClick={onOpenMobileMenu}
+        aria-label="打开导航菜单"
       >
-        <Menu className="w-5 h-5" />
+        <Menu className="w-5 h-5" aria-hidden="true" />
       </Button>
 
       <div className="relative flex-1 max-w-md">
@@ -336,8 +337,8 @@ export function DashboardHeader({
           <TooltipContent>切换主题（当前：{themeLabel}）</TooltipContent>
         </Tooltip>
 
-        <Button variant="ghost" size="icon" onClick={onOpenSettings} className="h-9 w-9">
-          <Settings className="w-4 h-4" />
+        <Button variant="ghost" size="icon" onClick={onOpenSettings} className="h-9 w-9" aria-label="打开设置">
+          <Settings className="w-4 h-4" aria-hidden="true" />
         </Button>
       </div>
     </header>
