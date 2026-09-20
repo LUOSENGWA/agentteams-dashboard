@@ -162,6 +162,8 @@ interface MessageListProps {
    * have entries; humans / unknown senders render no dot.
    */
   senderStatusMap?: Record<string, WorkerSessionState>;
+  /** Opens a worker's read-only QwenPaw sessions (worker avatar click, C). */
+  onOpenWorkerChats?: (_workerName: string) => void;
 }
 
 export const MessageList = forwardRef<ScrollPanelHandle, MessageListProps>(function MessageList(
@@ -191,6 +193,7 @@ export const MessageList = forwardRef<ScrollPanelHandle, MessageListProps>(funct
     readReceipts,
     currentUserId,
     senderStatusMap,
+    onOpenWorkerChats,
   },
   ref
 ) {
@@ -217,9 +220,10 @@ export const MessageList = forwardRef<ScrollPanelHandle, MessageListProps>(funct
         readReceipts={readReceipts}
         currentUserId={currentUserId}
         senderStatus={senderStatusMap?.[gm.message.sender] ?? null}
+        onOpenWorkerChats={onOpenWorkerChats}
       />
     );
-  }, [onReply, onCopy, onOpenThread, onEdit, onDelete, onResend, onCancel, onSendConfirmation, onOpenWorkerFiles, memberMap, readReceipts, currentUserId, senderStatusMap]);
+  }, [onReply, onCopy, onOpenThread, onEdit, onDelete, onResend, onCancel, onSendConfirmation, onOpenWorkerFiles, onOpenWorkerChats, memberMap, readReceipts, currentUserId, senderStatusMap]);
 
   // Top-edge pagination status: older messages are prepended at the top, so
   // the spinner/button lives at the top instead of the footer (where it would

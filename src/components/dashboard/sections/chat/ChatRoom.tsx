@@ -28,6 +28,8 @@ import type { MatrixEvent } from '@/lib/matrix-api';
 import { MatrixRequestError, getRateLimitRetryDelay } from '@/lib/matrix-api';
 import { useMatrixReadReceipts, useRoomMetaStore } from '@/hooks/use-matrix';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { WorkerChatsPanel } from '@/components/dashboard/sections/workers/worker-chats-panel';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Users, PanelRightClose, ArrowDown, FolderTree, UserCheck } from 'lucide-react';
@@ -110,6 +112,9 @@ export function ChatRoom({
   // Worker rooms default to the owning worker so the files panel opens on
   // "the current worker's" directory instead of an empty picker.
   const [selectedWorker, setSelectedWorker] = useState<string | null>(defaultWorkerName ?? null);
+  // C (#1295): worker avatar click → read-only QwenPaw sessions dialog.
+  const [chatsWorkerName, setChatsWorkerName] = useState<string | null>(null);
+  const handleOpenWorkerChats = useCallback((name: string) => setChatsWorkerName(name), []);
   const [workerPaneWidth, setWorkerPaneWidth] = useState(320);
   const [isResizingWorkerPane, setIsResizingWorkerPane] = useState(false);
   const noticeCounterRef = useRef(0);
@@ -895,8 +900,27 @@ export function ChatRoom({
             readReceipts={readReceipts}
             currentUserId={currentUserId}
             senderStatusMap={senderStatusMap}
+            onOpenWorkerChats={handleOpenWorkerChats}
             className="flex-1 min-h-0"
           />
+          {/* C (#1295): worker 会话只读面板——头像点击开（「补头」入口；
+              内容 = 会话列表 → agent 上下文详情；404 版本门占位） */}
+          <Dialog
+            open={chatsWorkerName !== null}
+            onOpenChange={(o) => {
+              if (!o) setChatsWorkerName(null);
+            }}
+          >
+            <DialogContent className="max-w-3xl w-[min(92vw,760px)]">
+              <DialogHeader>
+                <DialogTitle>Worker 会话 — {chatsWorkerName}</DialogTitle>
+                <DialogDescription>
+                  只读：该 Worker 的 QwenPaw 会话（Agent 上下文，可能含压缩历史与未发送的工具输出）。
+                </DialogDescription>
+              </DialogHeader>
+              {chatsWorkerName && <WorkerChatsPanel workerName={chatsWorkerName} />}
+            </DialogContent>
+          </Dialog>
           {/* Floating "new messages" badge, element-web style jump-to-latest */}
           {newMessagesCount > 0 && (
             <div className="relative shrink-0">
