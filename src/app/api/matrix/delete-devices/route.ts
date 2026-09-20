@@ -7,9 +7,10 @@
 // token (Authorization header, the same convention as the other
 // /api/matrix/* proxy routes).
 //
-// allowPrivateNetwork: true — a stateless deployment's homeserver is a
-// LAN address the browser is already on (same bounded rationale as
-// /api/matrix/static-login).
+// allowPrivateNetwork note (review): the operator MUST configure
+// MATRIX_HOMESERVER_ALLOWLIST for stateless deployments — validation runs in
+// requireAllowlist mode so device-revoke requests only ever reach an
+// operator-approved host; unset list → the request is rejected outright.
 import { NextRequest, NextResponse } from 'next/server';
 import {
   HomeserverValidationError,
@@ -46,9 +47,23 @@ export async function POST(request: NextRequest) {
     );
   }
 
+  // Stateless hard requirement (review): same as static-login — an explicit
+  // operator allowlist is mandatory; the access token must only reach an
+  // approved host.
+  if (!process.env.MATRIX_HOMESERVER_ALLOWLIST?.trim()) {
+    return NextResponse.json(
+      {
+        error:
+          '设备吊销被拒绝：服务端未配置 MATRIX_HOMESERVER_ALLOWLIST（无状态部署必须显式列出允许的 homeserver 主机）',
+        reason: 'allowlist-not-configured',
+      },
+      { status: 403 },
+    );
+  }
+
   let parsed: URL;
   try {
-    parsed = validateHomeserverUrl(homeserver, { allowPrivateNetwork: true });
+    parsed = validateHomeserverUrl(homeserver, { requireAllowlist: true });
   } catch (err) {
     if (err instanceof HomeserverValidationError) {
       return NextResponse.json({ error: err.message, reason: err.reason }, { status: 403 });

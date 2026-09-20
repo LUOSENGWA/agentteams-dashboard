@@ -1,15 +1,17 @@
 // POST /api/matrix/static-login - F7 stateless-mode Matrix login.
 //
-// Same m.login.password proxy as /api/matrix/login, with two deliberate
+// Same m.login.password proxy as /api/matrix/login, with deliberate
 // differences:
 //
-// 1. allowPrivateNetwork: true. A stateless deployment's homeserver is a
-//    LAN address the browser is already on (that is the point of the
-//    stateless shape — no server session because the user is on-site).
-//    A browser on that LAN is network-equivalent to the dashboard server,
-//    so proxying a login to a private address adds no new reachability
-//    (plugin config.json parity — the plugin's backend does exactly this
-//    with operator-configured addresses).
+// 1. MATRIX_HOMESERVER_ALLOWLIST is a hard deployment requirement (review):
+//    unset → login is rejected outright (403, reason
+//    'allowlist-not-configured'). With the list configured, validation runs
+//    in requireAllowlist mode — the homeserver must be an operator-approved
+//    host, so a stateless deployment's LAN homeserver works precisely
+//    because the operator listed it (a browser on that LAN is
+//    network-equivalent to the dashboard server; plugin config.json
+//    parity — the plugin's backend does the same with operator-configured
+//    addresses).
 //
 // 2. An optional device_name (defaults to 'dashboard') so the Matrix
 //    session is attributable in the user's device list; the returned
@@ -39,9 +41,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Stateless hard requirement (review): without an explicit allowlist the
+    // proxy would forward credentials to any address — refuse instead.
+    if (!process.env.MATRIX_HOMESERVER_ALLOWLIST?.trim()) {
+      return NextResponse.json(
+        {
+          error:
+            '登录被拒绝：服务端未配置 MATRIX_HOMESERVER_ALLOWLIST（无状态部署必须显式列出允许的 homeserver 主机）',
+          reason: 'allowlist-not-configured',
+        },
+        { status: 403 },
+      );
+    }
+
     let parsed: URL;
     try {
-      parsed = validateHomeserverUrl(homeserver, { allowPrivateNetwork: true });
+      parsed = validateHomeserverUrl(homeserver, { requireAllowlist: true });
     } catch (err) {
       if (err instanceof HomeserverValidationError) {
         return NextResponse.json(

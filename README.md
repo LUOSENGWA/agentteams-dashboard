@@ -219,7 +219,8 @@ docker build -t agentteams-dashboard:local .
 | `AGENTTEAMS_CONTROLLER_URL` | AgentTeams Controller endpoint (server-side proxy) | `http://agentteams-controller:8090` |
 | `NEXT_PUBLIC_AGENTTEAMS_CONTROLLER_URL` | Browser-facing Controller URL (optional) | — |
 | `NEXT_PUBLIC_MATRIX_API_URL` | Matrix Homeserver endpoint | — |
-| `MATRIX_HOMESERVER_ALLOWLIST` | Comma-separated homeserver hostnames allowed through the Matrix proxy (exclusive once set). **Required for private-network / LAN deployments** — homeserver URLs on private ranges (e.g. `192.168.*`) are rejected by the SSRF guard by default and would break login and all Matrix traffic | — |
+| `MATRIX_HOMESERVER_ALLOWLIST` | Comma-separated homeserver hostnames allowed through the Matrix proxy (exclusive once set). **Required for private-network / LAN deployments** — homeserver URLs on private ranges (e.g. `192.168.*`) are rejected by the SSRF guard by default and would break login and all Matrix traffic. **Mandatory in stateless mode** (`DASHBOARD_STATELESS=1`): static login and device revoke are rejected outright (403 `allowlist-not-configured`) when it is unset, and only operator-listed hosts ever receive credentials | — |
+| `DASHBOARD_STATELESS` | `1` = stateless deployment mode: no server-side user sessions — the browser holds its own Matrix/Controller bearer token (localStorage) and presents it per request. See "Stateless deployment mode" below for the security model | unset (stateful) |
 | `AGENTTEAMS_AUTH_TOKEN` | Controller auth token — enables the L1 admin-password login path and (with `DASHBOARD_SHARED_MODE=1`) is the only admin credential source | — |
 | `AGENTTEAMS_AUTH_TOKEN_FILE` | Token file path (supports rotation) | — |
 | `DASHBOARD_SESSION_SECRET` | HMAC secret for session cookies — **required** for login | — |
@@ -230,6 +231,33 @@ docker build -t agentteams-dashboard:local .
 | `DASHBOARD_ALLOWED_HOSTS` | Strict allowlist for the setup "test connection" probe (it is token/session-gated; the metadata sentinel 169.254.169.254 is denied in all modes) | unset (allow for session/token holders) |
 | `DATABASE_URL` | SQLite database path | `file:./db/dashboard.db` |
 | `NEXT_PUBLIC_BASE_PATH` | URL base path (embedded deployment) | `/dashboard` |
+
+### Stateless deployment mode (`DASHBOARD_STATELESS=1`)
+
+For on-site/LAN deployments where no server-side user state is wanted. The
+browser holds its own credential — a Matrix access token (or an optional
+Controller admin token for the L1 view) kept in `localStorage` — and presents
+it as a bearer token on every request; the server resolves the identity from
+that token and the Controller applies its native per-token RBAC. Login goes
+through `POST /api/matrix/static-login` (m.login.password proxied to the
+operator-approved homeserver).
+
+Security model — read before enabling:
+
+- **XSS = account takeover.** The access token lives in `localStorage`, so any
+  script injection into the dashboard origin can exfiltrate it. This is the
+  same trust model as the AgentTeams workbench plugin (browser-held
+  credentials); only deploy stateless mode on networks and images you control,
+  and keep the dashboard image updated.
+- **`MATRIX_HOMESERVER_ALLOWLIST` is mandatory.** With it unset, static login
+  and device revoke return 403 (`allowlist-not-configured`) — login is
+  impossible until the operator pins the approved homeserver hosts. The list is
+  exclusive: credentials are only ever forwarded to hosts on it.
+- The public `GET /api/agentteams/mode` endpoint reports `authMode` and the
+  server-side homeserver candidate list (deploy constants, no secrets).
+- Session/audit semantics of the stateful mode (server session cookie, server
+  audit of proxied mutations) still apply to the L1 admin-password path;
+  stateless L2 traffic is authorized by the Controller itself.
 
 ## 🏗 Architecture
 
