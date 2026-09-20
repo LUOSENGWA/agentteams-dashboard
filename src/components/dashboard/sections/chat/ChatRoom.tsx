@@ -46,7 +46,7 @@ import {
   deriveWorkerSessionState,
   type WorkerSessionState,
 } from '@/lib/worker-session-state';
-import { WorkerSessionDot } from '@/components/worker-session-dot';
+import { WorkerSessionDot, WorkerSessionCornerDot } from '@/components/worker-session-dot';
 import { FilesBrowserPanel } from './views/worker-files-panel';
 import { useRuntimeMap } from './runtime-map-context';
 import type { TeamResponse } from '@/lib/agentteams-api';
@@ -957,11 +957,18 @@ export function ChatRoom({
                   }}
                   title="点击复制用户ID"
                 >
-                  <Avatar className="w-6 h-6 shrink-0">
-                    <AvatarFallback className={`text-[10px] ${color}`}>
-                      {member.displayName.slice(0, 2).toUpperCase()}
-                    </AvatarFallback>
-                  </Avatar>
+                  <span className="relative inline-flex shrink-0">
+                    <Avatar className="w-6 h-6 shrink-0">
+                      <AvatarFallback className={`text-[10px] ${color}`}>
+                        {member.displayName.slice(0, 2).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    {/* A17（9/19）：成员列表头像角落状态灯（与消息头像同款
+                        WorkerSessionCornerDot；人类成员无映射不显）。 */}
+                    {senderStatusMap[member.userId] && (
+                      <WorkerSessionCornerDot state={senderStatusMap[member.userId]} ringClassName="ring-card" />
+                    )}
+                  </span>
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-medium truncate">{member.displayName}</p>
                     <p className="text-[11px] text-muted-foreground font-mono truncate">
