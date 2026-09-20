@@ -98,4 +98,4 @@
     - audit/security 表格断言使用 shadcn Table 结构
     - 各 section 加载态断言渲染 skeleton 而非裸文本
 
-- [ ] 11. 检查点 - 确保所有测试通过，如有疑问请询问用户（运行 `npm run lint && npm run typecheck && npm test && npm run build`，确认 lint 0 warning）
+- [x] 11. 检查点 - 确保所有测试通过，如有疑问请询问用户（运行 `npm run lint && npm run typecheck && npm test && npm run build`，确认 lint 0 warning）

@@ -2,7 +2,11 @@
 
 ## 边界与认证
 
-`src/app/api/` 是浏览器与外部服务之间的服务端边界。`src/middleware.ts` 保护 `/dashboard/*` 和大多数 `/api/agentteams/*` 请求；setup 状态和 ensure 路由服务于启动流程。Controller 代理优先使用 `AGENTTEAMS_AUTH_TOKEN`，否则逐请求读取 `AGENTTEAMS_AUTH_TOKEN_FILE` 以支持令牌轮转。
+`src/app/api/` 是浏览器与外部服务之间的服务端边界。`src/middleware.ts` 保护 `/dashboard/*` 和大多数 `/api/agentteams/*` 请求（`/api/agentteams/setup/status/` 已移出公开路径，仅认证后由首页按需调用）；setup 状态和 ensure 路由服务于启动流程。Controller 代理优先使用 `AGENTTEAMS_AUTH_TOKEN`，否则逐请求读取 `AGENTTEAMS_AUTH_TOKEN_FILE` 以支持令牌轮转。
+
+### 服务端 RBAC（ defense-in-depth 第二道门）
+
+middleware 是权威身份门（`x-agentteams-level` 等 identity 头），但 identity 头可被伪造的部署场景下，路由层再用 `src/lib/server-auth.ts` 的 `enforceServerSideRbac` / `enforceLevelOnlyRbac` 做第二道校验，权限判定复用 `src/lib/rbac-engine.ts`（L1=view，L2=+wake/sleep/ensure-ready，L3=全部+`manage`）。已接入的路由：存储读路径（`view` 门 + 敏感文件过滤）、teams 文件下载（双门）、`logs/[component]`（`manage` 门 + 组件白名单，未知组件 404）、Nacos 配置写、plugins 读写（GET 已登录、POST/DELETE L3，弃用旧 Higress 会话校验）。`sourceIp` 仅在 `AGENTTEAMS_TRUST_PROXY=true` 时采信 `x-forwarded-for`。
 
 ## 路由分组
 
@@ -23,7 +27,7 @@
 | `/api/matrix/*` | Matrix Client-Server API | 登录、同步、房间、消息、媒体和输入状态 |
 | `/api/higress/*` | Higress Console | Provider 和 AI Route 管理 |
 
-`proxy-helper.ts` 是 Controller 路由公共出口：它验证可选 `controllerUrl`、应用 10 秒超时、透传授权与上游响应，并给浏览器响应设置禁止缓存头。Matrix 路由校验 homeserver 允许列表；Higress 路由校验 Console 主机、转发会话 Cookie，并从 Provider 响应移除 Token 值。
+`proxy-helper.ts` 是 Controller 路由公共出口：它验证可选 `controllerUrl`、应用 10 秒超时、透传授权与上游响应，并给浏览器响应设置禁止缓存头。Matrix `login`/`media` 代理以 `requireAllowlist: true` 强制 homeserver 允许列表（`MATRIX_HOMESERVER_ALLOWLIST`，未配置时仅放行同源）。Matrix 路由校验 homeserver 允许列表；Higress 路由校验 Console 主机、转发会话 Cookie，并从 Provider 响应移除 Token 值。存储读路径（bucket 列表、对象列表、下载、预签名）要求请求者具备 `view` 权限并对 `download`/`presign` 过滤敏感文件（`src/lib/sensitive-files.ts`）。
 
 ## 外部模式
 
