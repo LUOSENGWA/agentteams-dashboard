@@ -4,6 +4,7 @@ import { GeistMono } from "geist/font/mono";
 import "./globals.css";
 import { buildThemeInitScript } from "@/lib/theme/init-script";
 import { THEME_STORAGE_KEY } from "@/lib/theme/types";
+import { ClientAuthInstaller } from "@/components/client-auth-installer";
 
 const geistSans = GeistSans;
 const geistMono = GeistMono;
@@ -33,6 +34,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} antialiased`}
       >
+        <ClientAuthInstaller />
         {children}
       </body>
     </html>

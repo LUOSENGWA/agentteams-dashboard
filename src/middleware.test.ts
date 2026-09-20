@@ -1,5 +1,6 @@
 // @vitest-environment node
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { createServer, type Server } from 'node:http';
 import { NextRequest } from 'next/server';
 import { middleware } from './middleware';
 import {
@@ -7,6 +8,7 @@ import {
   __resetSessionStoreForTests,
   createSession,
 } from '@/lib/dashboard-session';
+import { __resetStaticIdentityCacheForTests } from '@/lib/static-identity';
 
 const SECRET = 'f'.repeat(64);
 
@@ -99,5 +101,110 @@ describe('middleware auth gate (M19 dashboard session)', () => {
     const res = await middleware(dataRequest('/dashboard/workers'));
     expect(res.status).toBe(307);
     expect(res.headers.get('location')).toBe('http://dashboard.test/workers');
+  });
+});
+
+// ── F7 stateless mode (DASHBOARD_STATELESS=1) ──────────────────────────────
+describe('middleware auth gate (F7 stateless mode)', () => {
+  let controller: Server;
+  let controllerUrl: string;
+
+  beforeAll(async () => {
+    controller = createServer((req, res) => {
+      if (req.url?.startsWith('/api/v1/humans')) {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ humans: [] }));
+        return;
+      }
+      res.writeHead(404, { 'content-type': 'application/json' });
+      res.end('{}');
+    });
+    await new Promise<void>((resolve) => controller.listen(0, '127.0.0.1', resolve));
+    const address = controller.address();
+    if (!address || typeof address === 'string') throw new Error('no address');
+    controllerUrl = `http://127.0.0.1:${address.port}`;
+  });
+
+  afterAll(async () => {
+    await new Promise<void>((resolve) => controller.close(() => resolve()));
+  });
+
+  beforeEach(() => {
+    process.env.DASHBOARD_STATELESS = '1';
+    process.env.AGENTTEAMS_API_URL = controllerUrl;
+    process.env.DASHBOARD_SESSION_SECRET = SECRET;
+    __resetStaticIdentityCacheForTests();
+  });
+
+  afterEach(() => {
+    delete process.env.DASHBOARD_STATELESS;
+    delete process.env.AGENTTEAMS_API_URL;
+    __resetStaticIdentityCacheForTests();
+  });
+
+  function staticRequest(path: string, token?: string, extra: Record<string, string> = {}) {
+    const headers = new Headers(extra);
+    if (token) headers.set('authorization', `Bearer ${token}`);
+    return new NextRequest(`http://dashboard.test${path}`, { headers });
+  }
+
+  it('401 on a data route without a bearer token', async () => {
+    const res = await middleware(staticRequest('/api/agentteams/teams'));
+    expect(res.status).toBe(401);
+    await expect(res.json()).resolves.toEqual({ error: 'Unauthorized' });
+  });
+
+  it('lets a valid admin-grade token through and marks the auth mode', async () => {
+    const res = await middleware(staticRequest('/api/agentteams/teams', 'sa-token'));
+    expect(res.status).toBe(200);
+    expect(res.headers.get('x-agentteams-auth-mode')).toBe('stateless');
+  });
+
+  it('503 when the controller is unreachable (identity unresolvable — not a 401)', async () => {
+    process.env.AGENTTEAMS_API_URL = 'http://127.0.0.1:1';
+    const res = await middleware(staticRequest('/api/agentteams/teams', 'any-token'));
+    expect(res.status).toBe(503);
+  });
+
+  it('401 with a re-login message when the token is invalid (definitive)', async () => {
+    const controller2 = createServer((req, res) => {
+      res.writeHead(401, { 'content-type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Unknown user ID' }));
+    });
+    await new Promise<void>((resolve) => controller2.listen(0, '127.0.0.1', resolve));
+    const address = controller2.address();
+    if (!address || typeof address === 'string') throw new Error('no address');
+    try {
+      process.env.AGENTTEAMS_API_URL = `http://127.0.0.1:${address.port}`;
+      const res = await middleware(staticRequest('/api/agentteams/teams', 'expired-token'));
+      expect(res.status).toBe(401);
+      const body = await res.json();
+      expect(body.error).toContain('重新登录');
+    } finally {
+      await new Promise<void>((resolve) => controller2.close(() => resolve()));
+    }
+  });
+
+  it('keeps the public /mode probe reachable without a bearer (F7 login flow)', async () => {
+    const res = await middleware(staticRequest('/api/agentteams/mode'));
+    expect(res.status).toBe(200);
+  });
+
+  it('degrades server-credential routes with 501 before asking for credentials', async () => {
+    const res = await middleware(staticRequest('/api/agentteams/storage/buckets'));
+    expect(res.status).toBe(501);
+    const body = await res.json();
+    expect(body.code).toBe('STATIC_MODE_UNAVAILABLE');
+  });
+
+  it('ignores client-claimed identity headers on the session path (forged cookie is not a session)', async () => {
+    // In stateless mode a session cookie is not a credential — even a valid
+    // stateful cookie alone (no bearer) must not open the gate.
+    const res = await middleware(
+      staticRequest('/api/agentteams/teams', undefined, {
+        cookie: `${SESSION_COOKIE_NAME}=${l2Cookie()}`,
+      }),
+    );
+    expect(res.status).toBe(401);
   });
 });

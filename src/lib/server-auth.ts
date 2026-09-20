@@ -13,6 +13,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { checkPermission, checkPermissionByLevel, type Permission } from '@/lib/rbac-engine';
 import type { HumanResponse } from '@/lib/agentteams-api';
 import { appendAuditEvent } from '@/lib/audit-log';
+import { isStatelessAuthMode } from './static-mode';
 
 export const SERVER_USER_HEADER = 'x-agentteams-user';
 export const SERVER_USER_LEVEL_HEADER = 'x-agentteams-user-level';
@@ -113,6 +114,12 @@ export async function enforceServerSideRbac(
   resourceType: 'worker' | 'team',
   resourceName: string,
 ): Promise<NextResponse | null> {
+  // F7 stateless mode: the browser bearer token IS the credential and the
+  // Controller applies native per-token RBAC to every proxied data call
+  // (fact #2/#3 — the true permission boundary). The dashboard's own
+  // pre-write check would only duplicate it from a mirrored level, so it
+  // defers to the Controller here (a denied write still 403s upstream).
+  if (isStatelessAuthMode()) return null;
   const identity = readServerIdentity(request);
   if (!identity) return null;
   const result = evaluateServerSideRbac({ identity, action, resourceType, resourceName });
@@ -136,6 +143,9 @@ export async function enforceLevelOnlyRbac(
   resourceType: string,
   resourceName: string,
 ): Promise<NextResponse | null> {
+  // F7 stateless mode: defer to the Controller's native per-token RBAC
+  // (same rationale as enforceServerSideRbac above).
+  if (isStatelessAuthMode()) return null;
   const identity = readServerIdentity(request);
   if (!identity) return null;
   if (checkPermissionByLevel(identity.level, action)) return null;

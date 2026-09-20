@@ -38,6 +38,15 @@ function getBlockedSuffixes(): string[] {
   ];
 }
 
+/** Cloud-metadata link-local range (169.254.0.0/16 — the SSRF sentinel). */
+function isMetadataIpv4(hostname: string): boolean {
+  const parts = hostname.split('.');
+  if (parts.length !== 4 || !parts.every((p) => /^\d+$/.test(p))) {
+    return false;
+  }
+  return Number(parts[0]) === 169 && Number(parts[1]) === 254;
+}
+
 function isPrivateIpv4(hostname: string): boolean {
   const parts = hostname.split('.');
   if (parts.length !== 4 || !parts.every((p) => /^\d+$/.test(p))) {
@@ -48,7 +57,7 @@ function isPrivateIpv4(hostname: string): boolean {
   if (a === 127) return true;
   if (a === 172 && b >= 16 && b <= 31) return true;
   if (a === 192 && b === 168) return true;
-  if (a === 169 && b === 254) return true;
+  if (isMetadataIpv4(hostname)) return true;
   if (a === 0) return true;
   if (a >= 224) return true;
   return false;
@@ -103,6 +112,13 @@ export function validateHomeserverUrl(
   const hostname = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, '');
 
   if (options.allowPrivateNetwork) {
+    // SSRF sentinel: the cloud-metadata range is NEVER allowed, even with
+    // allowPrivateNetwork — a LAN deployment needs 10/172.16/192.168, and
+    // no legitimate homeserver lives on the link-local range. An explicit
+    // "allow private" can never re-allow the instance metadata endpoint.
+    if (isMetadataIpv4(hostname)) {
+      throw new HomeserverValidationError('cloud metadata endpoints are not allowed');
+    }
     return parsed;
   }
 
