@@ -148,3 +148,39 @@ describe('enforceLevelOnlyRbac', () => {
     expect(content).toContain('"severity":"warning"');
   });
 });
+// ── F7 stateless mode: the dashboard pre-write RBAC defers to the
+// Controller's native per-token RBAC (the true boundary, always in the
+// loop in stateless mode) — both enforce* functions must no-op. ─────────
+describe('F7 stateless mode: RBAC pre-checks defer to the Controller', () => {
+  let tmpDir: string;
+  beforeEach(async () => {
+    tmpDir = await fs.mkdtemp(path.join(os.tmpdir(), 'rbac-static-'));
+    setAuditLogPathForTests(path.join(tmpDir, 'audit.log.jsonl'));
+    vi.stubEnv('DASHBOARD_STATELESS', '1');
+  });
+
+  afterEach(async () => {
+    vi.unstubAllEnvs();
+    delete process.env.AGENTTEAMS_AUDIT_LOG_PATH;
+    await fs.rm(tmpDir, { recursive: true, force: true });
+  });
+
+  it('enforceServerSideRbac allows any action in stateless mode (Controller decides)', async () => {
+    // level-1 observer attempting a delete: stateful = 403 here, stateless =
+    // pass through to the Controller (which will 403 the proxied call).
+    const res = await enforceServerSideRbac(makeRequest('observer', 1), 'delete', 'worker', 'w1');
+    expect(res).toBeNull();
+  });
+
+  it('enforceLevelOnlyRbac allows any action in stateless mode (Controller decides)', async () => {
+    const res = await enforceLevelOnlyRbac(makeRequest('observer', 1), 'delete', 'storage.bucket', 'foo');
+    expect(res).toBeNull();
+  });
+
+  it('stateful mode keeps denying (default unchanged)', async () => {
+    vi.unstubAllEnvs();
+    const res = await enforceServerSideRbac(makeRequest('observer', 1), 'delete', 'worker', 'w1');
+    expect(res).not.toBeNull();
+    expect(res?.status).toBe(403);
+  });
+});
