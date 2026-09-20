@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getControllerUrl, proxyToAgentTeams } from '../../../../proxy-helper';
 import { isValidNameSegment } from '@/lib/skill-package';
+import { enforceServerSideRbac } from '@/lib/server-auth';
 
 // B7 知识库（#1208 workspace-files 消费，只读）。契约=方案与设计/AgentTeams/PR/
 // 1208-worker-workspace-files/worker-workspace-files-方案.md（终稿 D1-D8）：
@@ -27,6 +28,11 @@ export async function GET(
   if (!SUB_WHITELIST.has(sub)) {
     return NextResponse.json({ error: `不支持的子路径：${sub}` }, { status: 400 });
   }
+  // Defense-in-depth second gate, matching workers/[name]/files (GET=view):
+  // all levels hold `view`, so this records an audit trail and stays future-
+  // proof if the level matrix tightens; the middleware remains the authority.
+  const denied = await enforceServerSideRbac(request, 'view', 'worker', name);
+  if (denied) return denied;
   // 查询串原样透传（path/cursor/offset/limit 白名单由 Controller D7 强制——
   // 未知参数 400；dashboard 不重复校验，保持 L1 纯透传语义）
   const qs = request.nextUrl.search;
