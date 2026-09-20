@@ -8,7 +8,6 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover';
-import { ScrollArea } from '@/components/ui/scroll-area';
 import { useNotificationStore } from '@/lib/notification-store';
 import { formatDistanceToNow } from 'date-fns';
 import { zhCN } from 'date-fns/locale';
@@ -58,7 +57,9 @@ export function NotificationPopover() {
             </Button>
           </div>
         </div>
-        <ScrollArea className="max-h-96">
+        {/* Native overflow scroll: Radix ScrollArea's focusable viewport
+            paints a ring that gets clipped into stray edge stripes. */}
+        <div className="max-h-96 overflow-y-auto custom-scrollbar">
           {notifications.length === 0 ? (
             <div className="p-6 text-center text-sm text-muted-foreground">
               暂无通知
@@ -72,7 +73,7 @@ export function NotificationPopover() {
                   <div
                     key={n.id}
                     className={`p-3 text-sm cursor-pointer hover:bg-accent transition-colors ${
-                      !n.read ? 'bg-primary/5' : ''
+                      !n.read ? 'border-l-2 border-l-primary bg-primary/[0.04]' : ''
                     }`}
                     onClick={() => markAsRead(n.id)}
                   >
@@ -110,7 +111,7 @@ export function NotificationPopover() {
               })}
             </div>
           )}
-        </ScrollArea>
+        </div>
       </PopoverContent>
     </Popover>
   );
