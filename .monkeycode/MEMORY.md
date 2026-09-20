@@ -101,3 +101,14 @@ Entries discovered by the Agent while performing [specific task description] sho
   - 守卫写法：渲染可选字段时禁止用 `value || value` 这种"value 可能是 undefined"的回退（会渲染字符串"undefined"），用 `value ? <Badge>...</Badge> : null` 替代
   - 本次 commit 风格：1 个 feat commit + 1 个 fix commit 紧跟其后，fix 不 amend 进 feat 保持历史清晰
   - `git push` 由用户口头确认后执行，未授权不主动 push
+
+[Project Knowledge Summary]
+- Date: 2026-09-20
+- Context: 知识库 workspace-files 502/HTML 报错联合排查，用户在 Controller 侧实测后修正 Agent 最初的网关路由假设
+- Category: Troubleshooting & Debugging | Operations & Deployment
+- Instructions:
+  - embedded 模式下 Controller 直连 worker 容器 `http://agentteams-worker-<name>:<console port>`（实测 8088），全程无 Higress 参与；排查 worker 级 API 时别往网关路由方向查
+  - QwenPaw worker 的 workspace API 带 `/api` 前缀（`/api/workspace/tree` 200 JSON）；裸 `/workspace/*` 会命中 worker SPA 兜底返回 200 text/html——路径少 `/api` 是 Controller `worker_workspace_files.go` 的确定性 bug（`worker_checkpoints.go` 同病），对齐 `worker_runtime_config.go` 的 `/api/` 写法即修
+  - Controller 200 分支无条件覆盖 Content-Type 为 application/json（worker 返回的 CT 是诚实的 text/html）→ 上游 header 不可信，dashboard 只能嗅 body（proxy-helper 已落地 HTML 嗅探改写 502）
+  - worker 级 API 报 502 "worker workspace API unreachable" = 容器 DNS/连接失败：容器不存在、镜像拉取失败（如 qwenpaw-worker:latest pull 失败）、或凭据缺失（如 Message: refresh credentials: credentials not found for <name>）——用 ContainerState/Message 区分
+  - 不存在的 worker 名走同一 502 路径；存在但容器坏的 502 与 SPA 兜底的 200 HTML 是两类故障，先分清再查
