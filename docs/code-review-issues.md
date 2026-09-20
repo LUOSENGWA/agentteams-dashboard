@@ -4,6 +4,24 @@
 审查范围：全项目（安全性、功能正确性、性能、样式与主题、可访问性、组件一致性、文档）
 基线状态：`npm run typecheck` 通过；`npm test` 1698 个用例全部通过；`npm run lint` 2 个 warning；`npm run build` 成功。
 
+## 修复状态（2026-09-20 收档）
+
+全部问题已按 `.monkeycode/specs/code-review-fixes/tasklist.md` 实施，收档时 lint 0 问题、tsc 干净、193 文件 / 1812 测试通过、`npm run build` 成功。
+
+| 批次 | 问题 | 状态 |
+|---|---|---|
+| 任务 1~3 | SEC-01 ~ SEC-10 | 已修复（`b779e07`） |
+| 任务 1~5 | FUNC-01 ~ FUNC-06 | 已修复（`b779e07`） |
+| 任务 7 | FUNC-07 ~ FUNC-09 | 已修复（`daceb58`） |
+| 任务 7 | FUNC-10（知识库 QwenPaw 口径） | 已修复（`daceb58`，用户确认口径） |
+| 任务 8 | UI-01 ~ UI-05 | 已修复（`d630e0c`） |
+| 任务 10 | UI-06、UI-07、ARCH-01、ARCH-02 | 已修复（`b779e07`） |
+| 任务 9 | A11Y-01 ~ A11Y-04 | 已修复（`9835fe9`，axe 扫描额外修复 workers 视图切换悬挂 aria-controls 等 3 处真问题） |
+
+有意保留的取舍（2 处）：
+- ARCH-01 部分：artifacts/projects/knowledge 的局部错误横幅保留。`ApiErrorState` 是「未连接 Controller」整页语义，与这些区块的降级/局部错误语义不符；section 级裸文本加载态已统一为 Skeleton。
+- SEC-05 部分：`auth/login`（Dashboard 主登录）保持 `allowPrivateNetwork` 现状。该路由无凭据转发，嵌入式部署依赖内网 controller，强制允许列表会破坏内网形态。
+
 严重性定义：
 - 高：安全漏洞或用户可感知的功能错误，建议尽快修复
 - 中：特定场景下出错、体验或一致性问题
