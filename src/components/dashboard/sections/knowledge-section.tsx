@@ -420,7 +420,7 @@ export function KnowledgeSection() {
     <div className="space-y-4 p-4">
       <SectionHeader
         title="知识库"
-        description="集群 Worker 记忆只读视图（#1208 workspace-files）：MEMORY.md / memory/** / digest/** + wikilink 图谱"
+        description="浏览 Worker 的记忆文档：MEMORY.md 与 memory、digest 目录，支持 wikilink 关系图谱"
         actions={
           <div className="flex items-center gap-2">
             <select
@@ -434,7 +434,7 @@ export function KnowledgeSection() {
               ))}
             </select>
             {effectiveWorker && (
-              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title="知识库数据面来自该 Worker 的 workspace-files 端点（QwenPaw 专属）">
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title="知识库数据来自该 Worker 的记忆目录，当前仅支持 QwenPaw 运行时">
                 QwenPaw
               </span>
             )}
