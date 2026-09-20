@@ -468,3 +468,55 @@ Type /approve to approve, or send any message to deny.`,
     expect(screen.queryByLabelText('已读')).toBeNull();
   });
 });
+
+describe('MessageBubble — worker avatar → sessions (C / #1295)', () => {
+  const base = {
+    id: '$worker-msg',
+    sender: '@worker1:example.com',
+    senderShort: 'worker1',
+    content: 'hi',
+    timestamp: 0,
+    type: 'm.text' as const,
+    isMe: false,
+  };
+
+  it('worker 发送者头像可点 → onOpenWorkerChats(workerName)', () => {
+    const onOpenWorkerChats = vi.fn();
+    renderWithProvider(
+      <MessageBubble
+        message={{ ...base, workerName: 'worker-1' }}
+        showSender
+        isContinuation={false}
+        onOpenWorkerChats={onOpenWorkerChats}
+      />
+    );
+    const btn = screen.getByLabelText('查看 worker-1 的会话');
+    expect(btn).not.toHaveAttribute('disabled');
+    fireEvent.click(btn);
+    expect(onOpenWorkerChats).toHaveBeenCalledTimes(1);
+    expect(onOpenWorkerChats).toHaveBeenCalledWith('worker-1');
+  });
+
+  it('人类发送者（无 workerName）头像不可点、不回调', () => {
+    const onOpenWorkerChats = vi.fn();
+    renderWithProvider(
+      <MessageBubble
+        message={base}
+        showSender
+        isContinuation={false}
+        onOpenWorkerChats={onOpenWorkerChats}
+      />
+    );
+    const anyBtn = screen.queryByRole('button', { name: /的会话/ });
+    if (anyBtn) expect(anyBtn).toBeDisabled();
+    expect(onOpenWorkerChats).not.toHaveBeenCalled();
+  });
+
+  it('未接 onOpenWorkerChats（无回调方）时头像也不可点', () => {
+    renderWithProvider(
+      <MessageBubble message={{ ...base, workerName: 'worker-1' }} showSender isContinuation={false} />
+    );
+    const btn = screen.queryByLabelText('查看 worker-1 的会话');
+    expect(btn).toBeNull();
+  });
+});
