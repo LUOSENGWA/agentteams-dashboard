@@ -20,6 +20,14 @@ import {
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { SectionHeader } from '@/components/dashboard/section-header';
 import { useHumans } from '@/hooks/use-agentteams-humans';
 import { useWorkers } from '@/hooks/use-agentteams-workers';
@@ -95,30 +103,24 @@ function AccessMatrix({ humans, teams, workers }: {
 
   return (
     <div className="overflow-x-auto custom-scrollbar">
-      <table className="w-full text-sm">
-        <thead>
-          <tr className="border-b border-border">
-            <th className="text-left p-3 font-medium text-muted-foreground sticky left-0 bg-card min-w-[120px]">用户</th>
-            <th className="text-left p-3 font-medium text-muted-foreground">权限等级</th>
-            <th className="text-left p-3 font-medium text-muted-foreground">可访问团队</th>
-            <th className="text-left p-3 font-medium text-muted-foreground">可访问 Workers</th>
-            <th className="text-left p-3 font-medium text-muted-foreground">矩阵 ID</th>
-            <th className="text-left p-3 font-medium text-muted-foreground">房间数</th>
-          </tr>
-        </thead>
-        <tbody>
-          {matrixData.map((row, i) => {
+      <Table>
+        <TableHeader>
+          <TableRow className="hover:bg-transparent">
+            <TableHead className="sticky left-0 bg-card min-w-[120px]">用户</TableHead>
+            <TableHead>权限等级</TableHead>
+            <TableHead>可访问团队</TableHead>
+            <TableHead>可访问 Workers</TableHead>
+            <TableHead>矩阵 ID</TableHead>
+            <TableHead>房间数</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {matrixData.map((row) => {
             const permInfo = getPermissionInfo(row.permLevel);
             const PermIcon = permInfo.icon;
             return (
-              <motion.tr
-                key={row.human.name}
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                transition={{ delay: i * 0.05 }}
-                className="border-b border-border/50 hover:bg-accent/30"
-              >
-                <td className="p-3 sticky left-0 bg-card">
+              <TableRow key={row.human.name}>
+                <TableCell className="sticky left-0 bg-card">
                   <div className="flex items-center gap-2">
                     <PermIcon className={`w-4 h-4 ${row.permLevel === 3 ? 'text-red-500' : row.permLevel === 2 ? 'text-amber-500' : 'text-cyan-500'}`} />
                     <div>
@@ -126,13 +128,13 @@ function AccessMatrix({ humans, teams, workers }: {
                       <p className="text-[10px] text-muted-foreground font-mono">{row.human.name}</p>
                     </div>
                   </div>
-                </td>
-                <td className="p-3">
+                </TableCell>
+                <TableCell>
                   <Badge className={`text-[10px] ${permInfo.color}`} variant="secondary">
                     Level {row.permLevel} · {permInfo.label}
                   </Badge>
-                </td>
-                <td className="p-3">
+                </TableCell>
+                <TableCell>
                   {row.canAccessAll ? (
                     <Badge variant="outline" className="text-[10px] text-emerald-600">全部 ({teams.length})</Badge>
                   ) : row.accessibleTeamNames.length > 0 ? (
@@ -147,8 +149,8 @@ function AccessMatrix({ humans, teams, workers }: {
                   ) : (
                     <span className="text-xs text-muted-foreground">无</span>
                   )}
-                </td>
-                <td className="p-3">
+                </TableCell>
+                <TableCell>
                   {row.canAccessAll ? (
                     <Badge variant="outline" className="text-[10px] text-emerald-600">全部 ({workers.length})</Badge>
                   ) : row.accessibleWorkers.length > 0 ? (
@@ -166,20 +168,20 @@ function AccessMatrix({ humans, teams, workers }: {
                   ) : (
                     <span className="text-xs text-muted-foreground">无</span>
                   )}
-                </td>
-                <td className="p-3">
+                </TableCell>
+                <TableCell>
                   <span className="font-mono text-xs" title={row.human.matrixUserID}>
                     {row.human.matrixUserID ? row.human.matrixUserID.substring(0, 20) + (row.human.matrixUserID.length > 20 ? '...' : '') : '-'}
                   </span>
-                </td>
-                <td className="p-3">
+                </TableCell>
+                <TableCell>
                   <Badge variant="outline" className="text-[10px]">{row.human.rooms?.length || 0}</Badge>
-                </td>
-              </motion.tr>
+                </TableCell>
+              </TableRow>
             );
           })}
-        </tbody>
-      </table>
+        </TableBody>
+      </Table>
     </div>
   );
 }
@@ -500,7 +502,7 @@ export function SecuritySection() {
                       <XCircle className="w-3 h-3 text-red-500" />
                     )}
                     <span>{h.displayName || h.name}</span>
-                    {h.phase === 'Active' && <Badge className="text-[9px] bg-green-500/10 text-green-600" variant="secondary">活跃</Badge>}
+                    {h.phase === 'Active' && <Badge className="text-[11px] bg-green-500/10 text-green-600" variant="secondary">活跃</Badge>}
                   </div>
                 ))}
               </div>

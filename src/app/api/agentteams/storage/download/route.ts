@@ -1,8 +1,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { Readable } from 'node:stream';
 import { createMinioClient } from '@/lib/minio-client';
+import { enforceLevelOnlyRbac } from '@/lib/server-auth';
+import { isSensitiveObjectKey } from '@/lib/sensitive-files';
 
 export async function GET(request: NextRequest) {
+  const denied = await enforceLevelOnlyRbac(request, 'view', 'storage', 'download');
+  if (denied) return denied;
   const bucket = request.nextUrl.searchParams.get('bucket') || '';
   const key = request.nextUrl.searchParams.get('key') || '';
 
@@ -11,8 +15,13 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const client = createMinioClient();
     const objectName = decodeURIComponent(key);
+    // 敏感文件（worker 凭据类）与 worker 路由同语义：统一 404。
+    if (isSensitiveObjectKey(objectName)) {
+      return NextResponse.json({ error: '文件不存在' }, { status: 404 });
+    }
+
+    const client = createMinioClient();
     const bucketName = decodeURIComponent(bucket);
     const stat = await client.statObject(bucketName, objectName);
 

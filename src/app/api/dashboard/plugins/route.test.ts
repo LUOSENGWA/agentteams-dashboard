@@ -15,31 +15,56 @@ const packageMock = vi.hoisted(() => ({
 
 vi.mock('@/lib/plugins/server-package', () => packageMock);
 
-const authMock = vi.hoisted(() => ({ validateHigressSession: vi.fn() }));
+// SEC-08: the gate is the Dashboard session (not the Higress Console cookie).
+const sessionMock = vi.hoisted(() => ({ getSessionFromRequest: vi.fn() }));
 
-vi.mock('@/lib/api-auth', () => authMock);
+vi.mock('@/lib/dashboard-session', () => sessionMock);
 
 import { NextRequest } from 'next/server';
 import { GET, POST } from './route';
 import { PluginManifestError } from '@/lib/plugins/manifest';
+import type { DashboardSession } from '@/lib/dashboard-session';
+
+function makeSession(level: 1 | 2 | 3): DashboardSession {
+  return {
+    user: 'admin',
+    level,
+    credential: { kind: 'sa' },
+    createdAt: Date.now(),
+  } as DashboardSession;
+}
+
+function getRequest() {
+  return new NextRequest('http://x/api/dashboard/plugins');
+}
 
 function postRequest(init?: ConstructorParameters<typeof NextRequest>[1]) {
   return new NextRequest('http://x/api/dashboard/plugins', { method: 'POST', ...init });
 }
 
-describe('GET /api/dashboard/plugins', () => {
+describe('GET /api/dashboard/plugins (SEC-08 gate)', () => {
   afterEach(() => {
     vi.clearAllMocks();
+    sessionMock.getSessionFromRequest.mockReset();
   });
 
-  it('returns an empty list when public/plugins is missing', async () => {
+  it('rejects an anonymous list request with 401', async () => {
+    sessionMock.getSessionFromRequest.mockReturnValue(null);
+    const res = await GET(getRequest());
+    expect(res.status).toBe(401);
+    expect(fsMock.readdir).not.toHaveBeenCalled();
+  });
+
+  it('returns an empty list for a logged-in session when public/plugins is missing', async () => {
+    sessionMock.getSessionFromRequest.mockReturnValue(makeSession(2));
     fsMock.readdir.mockRejectedValue(new Error('ENOENT'));
-    const res = await GET();
+    const res = await GET(getRequest());
     expect(res.status).toBe(200);
     expect(await res.json()).toEqual({ plugins: [] });
   });
 
   it('discovers directories that contain a plugin.json', async () => {
+    sessionMock.getSessionFromRequest.mockReturnValue(makeSession(1));
     fsMock.readdir.mockResolvedValue([
       { name: 'alpha', isDirectory: () => true },
       { name: 'not-a-dir', isDirectory: () => false },
@@ -51,7 +76,7 @@ describe('GET /api/dashboard/plugins', () => {
       throw new Error('ENOENT');
     });
 
-    const res = await GET();
+    const res = await GET(getRequest());
     const body = await res.json();
     expect(body.plugins).toHaveLength(1);
     expect(body.plugins[0].id).toBe('alpha');
@@ -59,26 +84,36 @@ describe('GET /api/dashboard/plugins', () => {
   });
 });
 
-describe('POST /api/dashboard/plugins', () => {
+describe('POST /api/dashboard/plugins (SEC-08 gate)', () => {
   afterEach(() => {
     vi.clearAllMocks();
+    sessionMock.getSessionFromRequest.mockReset();
   });
 
   it('rejects unauthenticated uploads with 401', async () => {
-    authMock.validateHigressSession.mockResolvedValue({ valid: false, user: null });
+    sessionMock.getSessionFromRequest.mockReturnValue(null);
     const res = await POST(postRequest());
     expect(res.status).toBe(401);
     expect(packageMock.installPluginPackage).not.toHaveBeenCalled();
   });
 
+  it('rejects non-admin (L2) uploads with 403', async () => {
+    sessionMock.getSessionFromRequest.mockReturnValue(makeSession(2));
+    const form = new FormData();
+    form.append('file', new File(['zip-bytes'], 'alpha.zip', { type: 'application/zip' }));
+    const res = await POST(postRequest({ body: form }));
+    expect(res.status).toBe(403);
+    expect(packageMock.installPluginPackage).not.toHaveBeenCalled();
+  });
+
   it('rejects non-multipart requests', async () => {
-    authMock.validateHigressSession.mockResolvedValue({ valid: true, user: { name: 'admin', level: 3 } });
+    sessionMock.getSessionFromRequest.mockReturnValue(makeSession(3));
     const res = await POST(postRequest());
     expect(res.status).toBe(415);
   });
 
   it('installs a valid zip package and returns the manifest URL', async () => {
-    authMock.validateHigressSession.mockResolvedValue({ valid: true, user: { name: 'admin', level: 3 } });
+    sessionMock.getSessionFromRequest.mockReturnValue(makeSession(3));
     packageMock.installPluginPackage.mockResolvedValue({
       id: 'alpha',
       manifestUrl: '/plugins/alpha/plugin.json',
@@ -92,7 +127,7 @@ describe('POST /api/dashboard/plugins', () => {
   });
 
   it('maps manifest validation errors to a 400 with a readable message', async () => {
-    authMock.validateHigressSession.mockResolvedValue({ valid: true, user: { name: 'admin', level: 3 } });
+    sessionMock.getSessionFromRequest.mockReturnValue(makeSession(3));
     packageMock.installPluginPackage.mockRejectedValue(new PluginManifestError('未找到 plugin.json'));
     const form = new FormData();
     form.append('file', new File(['zip-bytes'], 'bad.zip', { type: 'application/zip' }));
@@ -102,7 +137,7 @@ describe('POST /api/dashboard/plugins', () => {
   });
 
   it('rejects an empty file', async () => {
-    authMock.validateHigressSession.mockResolvedValue({ valid: true, user: { name: 'admin', level: 3 } });
+    sessionMock.getSessionFromRequest.mockReturnValue(makeSession(3));
     const form = new FormData();
     form.append('file', new File([], 'empty.zip', { type: 'application/zip' }));
     const res = await POST(postRequest({ body: form }));

@@ -58,7 +58,7 @@ export function RoomTopology({
             <div className="flex items-center gap-2 mb-2">
               <Hash className="w-3 h-3 text-emerald-500" />
               <span className="font-medium text-xs truncate">{topology.currentRoom.name}</span>
-              <Badge variant="outline" className="text-[8px] ml-auto">
+              <Badge variant="outline" className="text-[10px] ml-auto">
                 {topology.currentRoom.type}
               </Badge>
             </div>
@@ -122,7 +122,7 @@ export function RoomTopology({
             <div className="flex items-center gap-2 mb-2">
               <Users className="w-3 h-3 text-emerald-500" />
               <span className="font-medium text-xs">{team.parentTeam}</span>
-              <Badge variant="outline" className="text-[8px] ml-auto">
+              <Badge variant="outline" className="text-[10px] ml-auto">
                 {teamWorkers.length + teamManagers.length}
               </Badge>
             </div>

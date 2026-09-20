@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getNacosConfig, setNacosConfig } from '@/lib/skill-center-config';
+import {
+  getNacosConfig,
+  setNacosConfig,
+  maskNacosConfig,
+  isNacosPasswordMask,
+} from '@/lib/skill-center-config';
 import type { NacosConfig } from '@/lib/skill-center-config';
 import { enforceLevelOnlyRbac } from '@/lib/server-auth';
 
@@ -7,10 +12,13 @@ function isValidNacosUrl(url: string): boolean {
   return /^nacos:\/\/[a-zA-Z0-9._-]+(:[0-9]+)?\/[a-zA-Z0-9._-]+$/.test(url);
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const denied = await enforceLevelOnlyRbac(request, 'view', 'skill.nacos.config', 'config');
+  if (denied) return denied;
   try {
     const config = await getNacosConfig();
-    return NextResponse.json({ config });
+    // 密码不出服务端：响应中只回掩码占位符。
+    return NextResponse.json({ config: maskNacosConfig(config) });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: message }, { status: 500 });
@@ -37,6 +45,13 @@ export async function PUT(request: NextRequest) {
   }
 
   try {
+    // 客户端传回掩码占位符表示"保留已存密码"，从存储回填真实值。
+    let effectivePassword = password || undefined;
+    if (isNacosPasswordMask(effectivePassword)) {
+      const saved = await getNacosConfig();
+      effectivePassword = saved?.password;
+    }
+
     const newConfig: NacosConfig = {
       registryUrl,
       namespace: namespace || 'public',
@@ -45,7 +60,7 @@ export async function PUT(request: NextRequest) {
       apiPrefix: apiPrefix || '/nacos',
       mode: mode || 'services',
       username: username || undefined,
-      password: password || undefined,
+      password: effectivePassword,
       lastSyncAt: undefined,
       lastSyncStatus: undefined,
       lastSyncError: undefined,
@@ -53,7 +68,8 @@ export async function PUT(request: NextRequest) {
 
     await setNacosConfig(newConfig);
 
-    return NextResponse.json({ success: true, config: newConfig });
+    // 密码不出服务端：响应中只回掩码占位符。
+    return NextResponse.json({ success: true, config: maskNacosConfig(newConfig) });
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: message }, { status: 500 });

@@ -87,7 +87,7 @@ function NavButton({
         </Badge>
       )}
       {collapsed && count > 0 && (
-        <span className="absolute top-1 right-1 h-4 min-w-[16px] px-1 rounded-full bg-primary text-primary-foreground text-[9px] flex items-center justify-center">
+        <span className="absolute top-1 right-1 h-4 min-w-[16px] px-1 rounded-full bg-primary text-primary-foreground text-[11px] flex items-center justify-center">
           {count > 99 ? '99+' : count}
         </span>
       )}

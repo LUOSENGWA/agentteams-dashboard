@@ -151,7 +151,12 @@ export const useRoomMetaStore = create<RoomMetaStore>()((set) => ({
         prev.lastMessageTs === next.lastMessageTs &&
         prev.lastMessagePreview === next.lastMessagePreview &&
         prev.unreadCount === next.unreadCount &&
-        prev.unreadHighlightCount === next.unreadHighlightCount
+        prev.unreadHighlightCount === next.unreadHighlightCount &&
+        // FUNC-02: a batch that only carries m.room.name (or a member-count
+        // change) produces a patch with all four counters identical — it must
+        // still be applied, otherwise room renames never reach the sidebar.
+        prev.roomName === next.roomName &&
+        prev.memberCount === next.memberCount
       ) {
         return state;
       }

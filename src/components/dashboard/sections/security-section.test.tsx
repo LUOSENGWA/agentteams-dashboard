@@ -99,4 +99,19 @@ describe('SecuritySection 权限卡片与 permStats 归属一致（review #94 bl
     expect(l2.queryByText('x-worker')).not.toBeInTheDocument();
     expect(l2.queryByText('y-unset')).not.toBeInTheDocument();
   });
+
+  it('AccessMatrix 使用共享 shadcn Table 原语（UI-06 一致性回归）', () => {
+    const { container } = (() => {
+      renderSection([makeHuman('alice', 1), makeHuman('bob', 2), makeHuman('carol', 3)]);
+      return { container: document.body };
+    })();
+    expect(container.querySelector('[data-slot="table"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-slot="table-header"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-slot="table-body"]')).toBeInTheDocument();
+    // 三档权限行都渲染在共享表格里（badge 文本形如 "Level 2 · 指定团队"）
+    const table = container.querySelector('[data-slot="table"]') as HTMLElement;
+    expect(within(table).getByText((c) => c.startsWith('Level 1 ·'))).toBeInTheDocument();
+    expect(within(table).getByText((c) => c.startsWith('Level 2 ·'))).toBeInTheDocument();
+    expect(within(table).getByText((c) => c.startsWith('Level 3 ·'))).toBeInTheDocument();
+  });
 });

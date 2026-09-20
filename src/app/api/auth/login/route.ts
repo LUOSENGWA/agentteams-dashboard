@@ -193,9 +193,14 @@ export async function POST(request: NextRequest) {
 
     return await attemptMatrixLogin(request, username, password, adminUsername, adminPassword, controllerToken);
   } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : 'Unknown error';
-    // Fail-closed: a missing session secret surfaces here (dashboard-session throws).
-    return NextResponse.json({ success: false, error: message }, { status: 502 });
+    // SEC-09: the raw error can carry internal details (session secret
+    // config, upstream fetch failures). Log it server-side, return a
+    // generic message — fail-closed semantics (502) are preserved.
+    console.error('[auth/login] internal error:', err);
+    return NextResponse.json(
+      { success: false, error: 'Login failed due to an internal server error' },
+      { status: 502 },
+    );
   }
 }
 

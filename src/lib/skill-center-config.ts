@@ -7,6 +7,22 @@ import { createMinioClient, getMinioBucket } from '@/lib/minio-client';
 
 const CONFIG_OBJECT_KEY = 'skills/config/nacos.json';
 
+/**
+ * GET/PUT 响应中的密码掩码占位符。GET 用它替换真实密码；PUT 收到它表示
+ * "保留已存密码"（客户端未修改密码字段），由路由从存储回填真实值。
+ */
+export const NACOS_PASSWORD_MASK = '__nacos-saved__';
+
+export function isNacosPasswordMask(value: string | undefined): boolean {
+  return value === NACOS_PASSWORD_MASK;
+}
+
+/** 返回掩码后的配置副本（password 替换为占位符），null/无密码时原样返回。 */
+export function maskNacosConfig(config: NacosConfig | null): NacosConfig | null {
+  if (!config?.password) return config;
+  return { ...config, password: NACOS_PASSWORD_MASK };
+}
+
 export interface NacosConfig {
   registryUrl: string;
   namespace: string;

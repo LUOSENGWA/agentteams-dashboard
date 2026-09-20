@@ -378,6 +378,56 @@ Type /approve to approve, or send any message to deny.`;
     unmount();
   });
 
+  it('keeps polling in a remounted effect while the previous long-poll is in flight (FUNC-01)', async () => {
+    // First poll hangs like a 25s long-poll; the old effect stays "busy".
+    let resolveFirst!: (_v: MatrixSyncResponse) => void;
+    const firstLongPoll = new Promise<MatrixSyncResponse>((resolve) => {
+      resolveFirst = resolve;
+    });
+    const syncMock = matrixApi.sync as ReturnType<typeof vi.fn>;
+    syncMock.mockImplementationOnce(() => firstLongPoll);
+    syncMock.mockResolvedValue(
+      syncWith({ '!r1:test': joinedRoom() }),
+    );
+
+    const queryClient = getQueryClientMock();
+    const first = renderHook(() => useGlobalMatrixSync(), {
+      wrapper: wrapWithQueryClient(queryClient),
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600);
+    });
+    expect(syncMock.mock.calls.length).toBe(1); // first poll stuck in flight
+
+    // Remount: StrictMode/error-boundary style re-creation. The previous
+    // request is still pending, but the new effect must start its own loop
+    // instead of waiting forever on a component-level busy flag.
+    first.unmount();
+    const queryClient2 = getQueryClientMock();
+    const second = renderHook(() => useGlobalMatrixSync(), {
+      wrapper: wrapWithQueryClient(queryClient2),
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(600);
+    });
+    expect(syncMock.mock.calls.length).toBeGreaterThanOrEqual(2);
+
+    // Drain the orphaned first-generation request, then confirm the new
+    // loop keeps polling (the chain did not die with the old effect).
+    await act(async () => {
+      resolveFirst(syncWith({ '!r1:test': joinedRoom() }));
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    const callsAfterDrain = syncMock.mock.calls.length;
+    expect(callsAfterDrain).toBeGreaterThanOrEqual(2);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+    expect(syncMock.mock.calls.length).toBeGreaterThan(callsAfterDrain);
+
+    second.unmount();
+  });
+
   it('ingests HITL confirmations from historical message load (loadHistorical)', async () => {
     const body = `⏳ Waiting for approval / 等待审批
 Tool / 工具: execute_shell_command

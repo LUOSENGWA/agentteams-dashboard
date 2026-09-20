@@ -77,7 +77,7 @@ See [docs/plugin-development.md](docs/plugin-development.md) (English), [docs/pl
 
 The Dashboard integrates with the [AgentTeams](https://github.com/agentscope-ai/AgentTeams) installer as an optional step in `agentteams-install.sh` (merged upstream via [PR #1075](https://github.com/agentscope-ai/AgentTeams/pull/1075)) — the interactive installer will prompt whether to install it, and the container is automatically started alongside the Controller/Manager. Further upstream changes are contributed through pull requests to the AgentTeams repository; the patch-based flow under `install/patches/` has been retired.
 
-- **Current Dashboard release**: `v1.2.3.1`
+- **Current Dashboard release**: `v1.2.3.1` (release tag). The app version source of truth is `version` in `package.json` (`1.2.3`); release tags use a four-segment variant for hotfixes (`v1.2.3.1` = `1.2.3` + first hotfix)
 - **Installer default**: `v1.2.2`; set `AGENTTEAMS_DASHBOARD_VERSION` to override
 - **Default port**: `13000`, bound to `127.0.0.1` (set `AGENTTEAMS_LOCAL_ONLY=0` to expose on `0.0.0.0`)
 - **Available versions**: tagged at https://github.com/agentteams-group/agentteams-dashboard/tags

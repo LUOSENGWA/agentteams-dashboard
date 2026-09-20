@@ -75,13 +75,17 @@ export function ChatSection() {
     [workers, teams, managers, roomMeta],
   );
 
-  // Atomically consume the pending chat room deep-link during render.
-  // This avoids the react-hooks/set-state-in-effect lint error by reading
-  // and clearing the store value in one step, then deriving the selection.
-  const pendingChatRoomId = useHitlInboxStore.getState().takePendingChatRoomId();
-  if (pendingChatRoomId && !isLoading && rooms.some((r) => r.id === pendingChatRoomId)) {
-    setSelectedRoomId(pendingChatRoomId);
-    useRoomMetaStore.getState().setActiveRoomId(pendingChatRoomId);
+  // Deep-link consumption: read the pending value WITHOUT clearing it, and
+  // only take (clear) it once the room list is loaded and actually contains
+  // the target room. FUNC-04: clearing unconditionally during render dropped
+  // the deep link whenever the rooms list was still loading.
+  if (!isLoading) {
+    const pendingChatRoomId = useHitlInboxStore.getState().pendingChatRoomId;
+    if (pendingChatRoomId && rooms.some((r) => r.id === pendingChatRoomId)) {
+      useHitlInboxStore.getState().takePendingChatRoomId();
+      setSelectedRoomId(pendingChatRoomId);
+      useRoomMetaStore.getState().setActiveRoomId(pendingChatRoomId);
+    }
   }
 
   useEffect(() => {

@@ -223,7 +223,7 @@ export function CommandPalette({
                         {result.subtitle}
                       </p>
                     </div>
-                    <Badge variant="outline" className="text-[9px] shrink-0">
+                    <Badge variant="outline" className="text-[11px] shrink-0">
                       {result.phase}
                     </Badge>
                     <ArrowRight className="w-3 h-3 text-muted-foreground shrink-0" />

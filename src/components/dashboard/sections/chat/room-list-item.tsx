@@ -113,7 +113,7 @@ export function RoomListItem({
             {room.phase ? (
               <Badge
                 variant="outline"
-                className={`text-[8px] px-1 py-0 h-3.5 shrink-0 ${PHASE_COLOR[room.phase] || ''}`}
+                className={`text-[10px] px-1 py-0 h-3.5 shrink-0 ${PHASE_COLOR[room.phase] || ''}`}
               >
                 {room.phase}
               </Badge>
@@ -125,7 +125,7 @@ export function RoomListItem({
             {room.runtime ? (
               <Badge
                 variant="outline"
-                className="text-[8px] px-1 py-0 h-3.5 shrink-0"
+                className="text-[10px] px-1 py-0 h-3.5 shrink-0"
                 title={room.runtime}
               >
                 {RUNTIME_LABELS[room.runtime] || room.runtime}

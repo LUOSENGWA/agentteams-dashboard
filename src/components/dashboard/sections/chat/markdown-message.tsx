@@ -7,6 +7,8 @@ import remarkMath from 'remark-math';
 import rehypeHighlight from 'rehype-highlight';
 import rehypeRaw from 'rehype-raw';
 import rehypeKatex from 'rehype-katex';
+import rehypeSanitize from 'rehype-sanitize';
+import { chatMarkdownSchema } from './sanitize-schema';
 import { Copy, Check, Download, FileText, Play, Volume2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { MermaidRenderer } from './mermaid-renderer';
@@ -346,7 +348,12 @@ export function MarkdownMessage({ content, formattedContent, msgType, mediaUrl, 
       {hasMermaid && <MermaidRenderer content={resolvedContent} />}
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeRaw, rehypeHighlight, rehypeKatex]}
+        rehypePlugins={[
+          rehypeRaw,
+          [rehypeSanitize, chatMarkdownSchema],
+          rehypeHighlight,
+          rehypeKatex,
+        ]}
         components={{
           code({ className, children, ...props }) {
             const language = className?.replace('language-', '');

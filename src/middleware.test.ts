@@ -78,9 +78,9 @@ describe('middleware auth gate (M19 dashboard session)', () => {
     expect(res.status).toBe(200);
   });
 
-  it('keeps the PUBLIC_PATHS escape (setup/status without a session)', async () => {
+  it('gates setup/status behind the session (SEC-06: SA-token relay)', async () => {
     const res = await middleware(dataRequest('/api/agentteams/setup/status'));
-    expect(res.status).toBe(200);
+    expect(res.status).toBe(401);
   });
 
   it('keeps the AGENTTEAMS_AUTH_DISABLED escape hatch', async () => {

@@ -284,15 +284,22 @@ export function FilesBrowserPanel({ kind, ownerName }: FilesBrowserPanelProps) {
                           {formatSize(obj.size)}
                         </span>
                       </button>
-                      <a
-                        href={downloadUrl(obj.key)}
-                        download
-                        className="shrink-0 opacity-0 group-hover:opacity-100 p-1 rounded hover:bg-background text-muted-foreground hover:text-foreground transition-all"
-                        title="下载文件"
-                        onClick={(e) => e.stopPropagation()}
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="shrink-0 opacity-0 group-hover:opacity-100 h-6 w-6 p-1"
+                        asChild
                       >
-                        <Download className="h-3.5 w-3.5" />
-                      </a>
+                        <a
+                          href={downloadUrl(obj.key)}
+                          download
+                          title="下载文件"
+                          aria-label={`下载文件 ${obj.key.split('/').pop() || obj.key}`}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <Download className="h-3.5 w-3.5" />
+                        </a>
+                      </Button>
                     </div>
                   ))}
                 </div>

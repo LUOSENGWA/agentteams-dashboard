@@ -29,6 +29,7 @@ import { MatrixRequestError, getRateLimitRetryDelay } from '@/lib/matrix-api';
 import { useMatrixReadReceipts, useRoomMetaStore } from '@/hooks/use-matrix';
 import { Avatar, AvatarFallback } from '@/components/ui/avatar';
 import { Badge } from '@/components/ui/badge';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Users, PanelRightClose, ArrowDown, FolderTree, UserCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ChatComposer, type MentionEntry } from './chat-composer';
@@ -732,12 +733,12 @@ export function ChatRoom({
             : null}
           <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 shrink-0" title="实时同步" />
           {roomPhase && (
-            <Badge variant="outline" className="text-[9px] px-1 py-0 h-4 shrink-0">
+            <Badge variant="outline" className="text-[11px] px-1 py-0 h-4 shrink-0">
               {roomPhase}
             </Badge>
           )}
           {roomRuntime && (
-            <Badge variant="secondary" className="text-[9px] px-1 py-0 h-4 shrink-0">
+            <Badge variant="secondary" className="text-[11px] px-1 py-0 h-4 shrink-0">
               {RUNTIME_LABELS[roomRuntime] || roomRuntime}
             </Badge>
           )}
@@ -957,13 +958,13 @@ export function ChatRoom({
                   title="点击复制用户ID"
                 >
                   <Avatar className="w-6 h-6 shrink-0">
-                    <AvatarFallback className={`text-[8px] ${color}`}>
+                    <AvatarFallback className={`text-[10px] ${color}`}>
                       {member.displayName.slice(0, 2).toUpperCase()}
                     </AvatarFallback>
                   </Avatar>
                   <div className="min-w-0 flex-1">
                     <p className="text-xs font-medium truncate">{member.displayName}</p>
-                    <p className="text-[9px] text-muted-foreground font-mono truncate">
+                    <p className="text-[11px] text-muted-foreground font-mono truncate">
                       {member.userId.split(':')[0].slice(1)}
                     </p>
                   </div>
@@ -1008,16 +1009,19 @@ export function ChatRoom({
               </div>
             )}
             <div className="p-2 border-b border-border">
-              <select
+              <Select
                 value={effectiveSelectedWorker || ''}
-                onChange={(e) => setSelectedWorker(e.target.value || null)}
-                className="w-full text-xs rounded-md border border-input bg-background px-2 py-1.5"
+                onValueChange={(v) => setSelectedWorker(v || null)}
               >
-                {workerOptions.length === 0 && <option value="">暂无可用的 Worker</option>}
-                {workerOptions.map((w) => (
-                  <option key={w.userId} value={w.workerName}>{w.label}</option>
-                ))}
-              </select>
+                <SelectTrigger className="w-full h-7 text-xs" aria-label="选择 Worker">
+                  <SelectValue placeholder={workerOptions.length === 0 ? '暂无可用的 Worker' : '选择 Worker'} />
+                </SelectTrigger>
+                <SelectContent>
+                  {workerOptions.map((w) => (
+                    <SelectItem key={w.userId} value={w.workerName}>{w.label}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             {effectiveSelectedWorker ? (
               <div className="flex-1 overflow-hidden">

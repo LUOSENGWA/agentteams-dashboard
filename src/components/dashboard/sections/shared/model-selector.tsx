@@ -149,7 +149,7 @@ export function ModelSelector({
                 <SelectItem key={option.alias} value={option.alias} className="min-w-0">
                   <span className="flex items-center gap-1.5 min-w-0">
                     <span className="font-mono truncate">{option.alias}</span>
-                    <Badge variant="secondary" className="text-[9px] shrink-0">
+                    <Badge variant="secondary" className="text-[11px] shrink-0">
                       <Sparkles className="mr-0.5 size-2.5" />
                       内置
                     </Badge>
@@ -168,7 +168,7 @@ export function ModelSelector({
                 <SelectItem key={option.alias} value={option.alias} className="min-w-0">
                   <span className="flex items-center gap-1.5 min-w-0">
                     <span className="font-mono truncate">{option.alias}</span>
-                    <Badge variant="secondary" className="text-[9px] shrink-0">
+                    <Badge variant="secondary" className="text-[11px] shrink-0">
                       <Cpu className="mr-0.5 size-2.5" />
                       SGLang
                     </Badge>

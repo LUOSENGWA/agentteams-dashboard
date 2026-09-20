@@ -261,7 +261,7 @@ export function PluginsTab() {
 
               <div className="flex flex-wrap items-center gap-1">
                 {(manifest.extensionPoints ?? []).map((point) => (
-                  <Badge key={point} variant="outline" className="text-[9px] px-1 h-4">
+                  <Badge key={point} variant="outline" className="text-[11px] px-1 h-4">
                     {EXTENSION_POINT_LABELS[point as ExtensionPointId] ?? point}
                   </Badge>
                 ))}

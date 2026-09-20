@@ -73,7 +73,7 @@ function ToolCallCard({ payload }: { payload: Record<string, unknown> }) {
           {args !== undefined && (
             <div>
               <p className="flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground mb-1">
-                <span className="rounded px-1.5 text-[9px] font-semibold bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">IN</span>
+                <span className="rounded px-1.5 text-[11px] font-semibold bg-emerald-500/10 text-emerald-600 border border-emerald-500/20">IN</span>
                 参数
               </p>
               <pre className="text-xs whitespace-pre-wrap font-mono bg-muted/50 rounded p-2 overflow-x-auto">
@@ -84,7 +84,7 @@ function ToolCallCard({ payload }: { payload: Record<string, unknown> }) {
           {result !== undefined && (
             <div>
               <p className="flex items-center gap-1.5 text-[10px] font-medium text-muted-foreground mb-1">
-                <span className={`rounded px-1.5 text-[9px] font-semibold border ${isError ? 'bg-red-500/10 text-red-600 border-red-500/20' : 'bg-sky-500/10 text-sky-600 border-sky-500/20'}`}>OUT</span>
+                <span className={`rounded px-1.5 text-[11px] font-semibold border ${isError ? 'bg-red-500/10 text-red-600 border-red-500/20' : 'bg-sky-500/10 text-sky-600 border-sky-500/20'}`}>OUT</span>
                 结果
               </p>
               <pre className={`text-xs whitespace-pre-wrap font-mono bg-muted/50 rounded p-2 overflow-x-auto ${isError ? 'text-red-600' : ''}`}>

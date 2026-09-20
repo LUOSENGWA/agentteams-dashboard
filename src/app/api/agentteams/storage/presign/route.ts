@@ -1,10 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createMinioClient } from '@/lib/minio-client';
 import { enforceLevelOnlyRbac } from '@/lib/server-auth';
+import { isSensitiveObjectKey } from '@/lib/sensitive-files';
 
 const PRESIGN_EXPIRY_SECONDS = 15 * 60;
 
 export async function GET(request: NextRequest) {
+  const denied = await enforceLevelOnlyRbac(request, 'view', 'storage', 'presign');
+  if (denied) return denied;
   const bucket = request.nextUrl.searchParams.get('bucket') || '';
   const key = request.nextUrl.searchParams.get('key') || '';
 
@@ -13,10 +16,16 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // 敏感文件不签发预签名 URL（与 download 路由同语义，统一 404）。
+    const objectName = decodeURIComponent(key);
+    if (isSensitiveObjectKey(objectName)) {
+      return NextResponse.json({ error: '文件不存在' }, { status: 404 });
+    }
+
     const client = createMinioClient();
     const url = await client.presignedGetObject(
       decodeURIComponent(bucket),
-      decodeURIComponent(key),
+      objectName,
       PRESIGN_EXPIRY_SECONDS
     );
     return NextResponse.json({ url });

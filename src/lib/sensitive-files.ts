@@ -24,3 +24,21 @@ export const SENSITIVE_PATTERNS: readonly RegExp[] = [
 export function isSensitiveFileName(name: string, rel: string): boolean {
   return SENSITIVE_PATTERNS.some((p) => p.test(rel) || p.test(name));
 }
+
+/**
+ * 对象存储 bucket 键的敏感判断。bucket 键常带任意前缀
+ * （如 workers/demo/.ssh/id_rsa），SENSITIVE_PATTERNS 的目录规则按
+ * 顶层相对路径设计，直接测全键会漏掉嵌在前缀下的敏感目录——
+ * 这里对每个相对后缀路径逐级重测（basename 与全键已由
+ * isSensitiveFileName 覆盖）。
+ */
+export function isSensitiveObjectKey(key: string): boolean {
+  const segments = key.split('/');
+  const base = segments[segments.length - 1] || key;
+  if (isSensitiveFileName(base, key)) return true;
+  for (let i = 1; i < segments.length - 1; i++) {
+    const suffix = segments.slice(i).join('/');
+    if (isSensitiveFileName(segments[i], suffix)) return true;
+  }
+  return false;
+}

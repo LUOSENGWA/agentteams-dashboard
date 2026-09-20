@@ -85,9 +85,19 @@ export function AgentTeamsDashboard() {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isRefreshingAll, setIsRefreshingAll] = useState(false);
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const { isConnected, openSettings, controllerUrl, connectionLatency, reconnectInterval,
-    taskBoardVisible, userLevel } = useAgentTeamsStore();
-  const { isLoggedIn: matrixLoggedIn, isSyncing: matrixSyncing } = useMatrixStore();
+  // FUNC-06: subscribe per-field. Matrix sync bumps isSyncing/lastSyncedAt
+  // and the connection probe bumps connectionLatency on every poll — a
+  // selector-less subscription re-rendered the entire shell (and every
+  // section below it) each time.
+  const isConnected = useAgentTeamsStore((s) => s.isConnected);
+  const openSettings = useAgentTeamsStore((s) => s.openSettings);
+  const controllerUrl = useAgentTeamsStore((s) => s.controllerUrl);
+  const connectionLatency = useAgentTeamsStore((s) => s.connectionLatency);
+  const reconnectInterval = useAgentTeamsStore((s) => s.reconnectInterval);
+  const taskBoardVisible = useAgentTeamsStore((s) => s.taskBoardVisible);
+  const userLevel = useAgentTeamsStore((s) => s.userLevel);
+  const matrixLoggedIn = useMatrixStore((s) => s.isLoggedIn);
+  const matrixSyncing = useMatrixStore((s) => s.isSyncing);
   const notifications = useNotificationStore((s) => s.notifications);
   const { searchQuery, setSearchQuery } = useSearch();
   const { data: versionData } = useVersion();

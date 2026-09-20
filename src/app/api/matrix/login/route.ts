@@ -18,7 +18,8 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      validateHomeserverUrl(homeserver);
+      // SEC-05：登录请求携带原始用户名/密码，目标 homeserver 必须在允许列表内。
+      validateHomeserverUrl(homeserver, { requireAllowlist: true });
     } catch (err) {
       if (err instanceof HomeserverValidationError) {
         return NextResponse.json(

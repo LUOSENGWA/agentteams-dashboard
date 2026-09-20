@@ -317,7 +317,7 @@ export function BackendTab() {
                   {row.url}
                 </span>
                 {effective[name] === row.url && (
-                  <Badge variant="secondary" className="text-[9px] h-4 px-1 shrink-0">
+                  <Badge variant="secondary" className="text-[11px] h-4 px-1 shrink-0">
                     在生效
                   </Badge>
                 )}

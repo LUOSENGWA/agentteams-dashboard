@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { useMatrixStore } from '@/lib/matrix-store';
 import { useTaskStore, markEventSeen } from '@/lib/task-store';
@@ -48,14 +48,18 @@ export function useGlobalMatrixSync(): void {
   const isLoggedIn = useMatrixStore((s) => s.isLoggedIn);
   const userId = useMatrixStore((s) => s.userId);
 
-  const busyRef = useRef(false);
-
   useEffect(() => {
     if (!isLoggedIn || !homeserver || !accessToken) return;
 
     const generation = useMatrixStore.getState().syncGeneration;
     const isStale = () => useMatrixStore.getState().syncGeneration !== generation;
 
+    // FUNC-01: the in-flight flag is per-effect (closure), NOT a hook-level
+    // ref. A component ref survives effect re-creation (StrictMode double
+    // mount, error-boundary remount), so the new loop's first poll used to
+    // hit busyRef=true left by the previous long-poll and bail out without
+    // rescheduling — the whole sync chain went dark until a manual refresh.
+    let busy = false;
     let syncToken: string | undefined;
     let cancelled = false;
     let timeoutId: ReturnType<typeof setTimeout>;
@@ -253,8 +257,15 @@ export function useGlobalMatrixSync(): void {
     };
 
     const poll = async () => {
-      if (cancelled || isStale() || busyRef.current) return;
-      busyRef.current = true;
+      // Stale/cancelled: this effect instance is dead — never reschedule.
+      if (cancelled || isStale()) return;
+      // Busy: a previous long-poll is still in flight (its finally will clear
+      // the flag) — reschedule so the loop keeps breathing instead of dying.
+      if (busy) {
+        timeoutId = setTimeout(poll, retryDelay);
+        return;
+      }
+      busy = true;
       try {
         const resp = await matrixApi.sync(
           homeserver,
@@ -320,7 +331,7 @@ export function useGlobalMatrixSync(): void {
           retryDelay = Math.min(retryDelay * 2, 5000);
         }
       } finally {
-        busyRef.current = false;
+        busy = false;
       }
 
       if (!cancelled && !isStale()) {

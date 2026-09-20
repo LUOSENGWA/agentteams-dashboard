@@ -43,6 +43,7 @@ import { computeInsights, type Insight } from '@/lib/insights-engine';
 import { useDeploymentMode } from '@/hooks/use-deployment-mode';
 import { useAgentTeamsStore } from '@/lib/agentteams-store';
 import { WORKER_PHASE_COLORS } from '@/lib/phase-colors';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useNotificationStore } from '@/lib/notification-store';
 import { useCounter } from '@/hooks/use-counter';
 import { useApiTaskBoard } from '@/hooks/use-projects';
@@ -281,7 +282,11 @@ function ActiveWorkPanel({ projects, tasks, isLoading }: {
       </CardHeader>
       <CardContent className="p-4 pt-0">
         {isLoading ? (
-          <p className="py-4 text-center text-sm text-muted-foreground">加载项目数据...</p>
+          <div className="space-y-2.5 py-1" role="status" aria-label="加载中">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <Skeleton key={i} className="h-12 w-full" />
+            ))}
+          </div>
         ) : rows.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-4 text-muted-foreground">
             <ListTodo className="w-7 h-7 mb-1.5 opacity-30" />

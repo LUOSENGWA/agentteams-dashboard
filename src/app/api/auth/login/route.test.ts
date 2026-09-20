@@ -625,4 +625,28 @@ describe('POST /api/auth/login (dual track, M19)', () => {
     const adminCheckCalls = fetchMock.mock.calls.map((c) => String(c[0])).filter((u) => u.endsWith('/api/v1/humans'));
     expect(adminCheckCalls.length).toBe(1);
   });
+
+  it('SEC-09: an unexpected internal error returns a generic 502 without internal details', async () => {
+    const requestSpy = vi.spyOn(NextRequest.prototype, 'json').mockRejectedValue(
+      new Error('DASHBOARD_SESSION_SECRET not configured; fetch ECONNREFUSED 10.0.0.9'),
+    );
+    try {
+      const response = await POST(
+        new NextRequest('http://dashboard.test/api/auth/login', {
+          method: 'POST',
+          body: 'not-json',
+          headers: { 'content-type': 'application/json' },
+        }),
+      );
+      expect(response.status).toBe(502);
+      const data = await responseJson(response);
+      expect(data.success).toBe(false);
+      const err = String(data.error);
+      expect(err).toBe('Login failed due to an internal server error');
+      expect(err).not.toContain('DASHBOARD_SESSION_SECRET');
+      expect(err).not.toContain('ECONNREFUSED');
+    } finally {
+      requestSpy.mockRestore();
+    }
+  });
 });

@@ -41,7 +41,8 @@ export async function GET(
     );
   }
   try {
-    validateHomeserverUrl(homeserver);
+    // SEC-05：media 请求会转发调用方的 Authorization header，目标必须入白名单。
+    validateHomeserverUrl(homeserver, { requireAllowlist: true });
   } catch (err) {
     if (err instanceof HomeserverValidationError) {
       return NextResponse.json(

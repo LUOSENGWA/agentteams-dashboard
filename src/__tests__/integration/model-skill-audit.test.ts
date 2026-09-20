@@ -85,9 +85,12 @@ describe('AgentTeams API 端点认证门控', () => {
 // ============================================================
 
 describe('公开端点无需认证', () => {
-  it('GET /api/agentteams/setup/status — 公开访问', async () => {
+  // SEC-06: setup/status now sits behind the session gate — it proxies the
+  // controller's setup state with the server-side SA credential attached,
+  // so it must never be reachable anonymously.
+  it('GET /api/agentteams/setup/status — 无会话时返回 401', async () => {
     const res = await fetch(`${BASE_URL}/api/agentteams/setup/status`, { redirect: 'follow' });
-    expect(res.status).not.toBe(401);
+    expect(res.status).toBe(401);
   });
 
   it('GET /api/agentteams/setup/ensure-ai — 公开访问', async () => {

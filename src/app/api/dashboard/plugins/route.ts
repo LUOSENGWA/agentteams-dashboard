@@ -3,7 +3,7 @@ import { readdir, access } from 'node:fs/promises';
 import path from 'node:path';
 import { installPluginPackage, MAX_ZIP_BYTES } from '@/lib/plugins/server-package';
 import { PluginManifestError } from '@/lib/plugins/manifest';
-import { validateHigressSession } from '@/lib/api-auth';
+import { getSessionFromRequest } from '@/lib/dashboard-session';
 
 export const dynamic = 'force-dynamic';
 
@@ -47,16 +47,29 @@ async function listPlugins() {
   }
 }
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  // SEC-08: these routes sit outside the middleware matcher (/api/dashboard/*
+  // is not /api/agentteams/*), so the gate is enforced here on the Dashboard
+  // session — the same identity model as every other dashboard surface.
+  const session = getSessionFromRequest(request);
+  if (!session) {
+    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
   return NextResponse.json({ plugins: await listPlugins() });
 }
 
 export async function POST(request: NextRequest) {
   // Plugin packages become executable frontend code for every dashboard user.
-  // Require the same Higress Console session gate as /api/agentteams/* writes.
-  const { valid } = await validateHigressSession(request);
-  if (!valid) {
+  // SEC-08: gate on the Dashboard session with admin level, replacing the
+  // Higress Console cookie check (a Console session holder must not be able
+  // to ship code to Dashboard users, and Matrix-authenticated Dashboard
+  // admins must be able to).
+  const session = getSessionFromRequest(request);
+  if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  if (session.level < 3) {
+    return NextResponse.json({ error: 'Forbidden: admin (L3) required' }, { status: 403 });
   }
 
   const contentType = request.headers.get('content-type') || '';

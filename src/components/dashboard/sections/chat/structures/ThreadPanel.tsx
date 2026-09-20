@@ -103,7 +103,7 @@ export function ThreadPanel({ roomId, rootMessage, memberMap, onClose }: ThreadP
         </div>
         <div className="mt-1.5 flex items-start gap-2 min-w-0">
           <Avatar className="w-5 h-5 shrink-0">
-            <div className="w-full h-full rounded-full flex items-center justify-center text-[9px] font-medium bg-muted text-muted-foreground">
+            <div className="w-full h-full rounded-full flex items-center justify-center text-[11px] font-medium bg-muted text-muted-foreground">
               {rootMessage.senderShort.slice(0, 2).toUpperCase()}
             </div>
           </Avatar>

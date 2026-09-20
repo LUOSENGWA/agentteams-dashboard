@@ -249,10 +249,18 @@ if (typeof window !== 'undefined') {
     // Connected or autoReconnect turned off or settings opened
     stopAutoReconnect();
   }
-  
+
   // If reconnectInterval changed while reconnecting, restart with new interval
   if (state.reconnectInterval !== prevState.reconnectInterval && shouldReconnect) {
     startAutoReconnect();
   }
   });
+
+  // FUNC-03: the subscription above only fires on a state TRANSITION into
+  // the disconnected-and-enabled shape. A store that mounts already
+  // disconnected (initial state or a rehydrated offline session) never
+  // produces that transition, so the timer would never start until the user
+  // toggled settings. Kick it once at module init — startAutoReconnect is
+  // idempotent (stop-then-start) and a no-op when already connected.
+  startAutoReconnect();
 }

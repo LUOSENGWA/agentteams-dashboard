@@ -1,24 +1,24 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getAuthToken, getControllerUrl } from '../../proxy-helper';
+import { enforceLevelOnlyRbac } from '@/lib/server-auth';
 import type { LogLine } from '@/lib/agentteams-api';
 
 const DEFAULT_TAIL = 500;
 const MAX_TAIL = 10000;
 
-function resolveContainerName(component: string): string {
-  switch (component) {
-    case 'controller':
-      return 'agentteams-controller';
-    case 'manager':
-      return 'agentteams-manager';
-    case 'matrix':
-    case 'minio':
-    case 'higress':
-      // In embedded mode these all run inside the controller container.
-      return 'agentteams-controller';
-    default:
-      return component;
-  }
+// SEC-07: container names are resolved from a fixed component whitelist.
+// Arbitrary names would let any authenticated session read the Docker logs
+// of unrelated containers on the host via the controller's Docker proxy.
+const KNOWN_COMPONENT_CONTAINERS: Record<string, string> = {
+  controller: 'agentteams-controller',
+  manager: 'agentteams-manager',
+  matrix: 'agentteams-controller', // embedded mode: all three run inside
+  minio: 'agentteams-controller', // the controller container
+  higress: 'agentteams-controller',
+};
+
+function resolveContainerName(component: string): string | null {
+  return KNOWN_COMPONENT_CONTAINERS[component] ?? null;
 }
 
 function parseDockerLogs(buffer: ArrayBuffer, component: string): LogLine[] {
@@ -70,7 +70,19 @@ export async function GET(
   { params }: { params: Promise<{ component: string }> }
 ) {
   const { component } = await params;
+  // SEC-07: host-level container logs are an admin-adjacent read (L3 only).
+  // 'manage' = host/admin-adjacent read (Docker container logs): L3 only.
+  // Observer/operator sessions must stay away from host-level log data.
+  const rbacDenied = await enforceLevelOnlyRbac(request, 'manage', 'container-log', component);
+  if (rbacDenied) return rbacDenied;
+
   const container = resolveContainerName(decodeURIComponent(component));
+  if (!container) {
+    return NextResponse.json(
+      { error: `Unknown log component "${component}". Known: ${Object.keys(KNOWN_COMPONENT_CONTAINERS).join(', ')}` },
+      { status: 404 }
+    );
+  }
   const tailParam = request.nextUrl.searchParams.get('tail');
   const tail = Math.min(
     Math.max(parseInt(tailParam || String(DEFAULT_TAIL), 10), 1),

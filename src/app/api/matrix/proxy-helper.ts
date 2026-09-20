@@ -13,7 +13,11 @@ export function getMatrixHomeserver(request: NextRequest): string {
     throw new Error('Missing homeserver URL. Provide via ?homeserver= parameter.');
   }
   try {
-    validateHomeserverUrl(url);
+    // SEC-05：这些路由会把用户的 Authorization Bearer token 转发给
+    // homeserver——必须强制允许列表（内置默认列表覆盖嵌入部署的
+    // localhost / agentteams-controller / matrix-local.agentteams.io），
+    // 避免 token 中继到运维未批准的任意公网主机。
+    validateHomeserverUrl(url, { requireAllowlist: true });
   } catch (err) {
     if (err instanceof HomeserverValidationError) {
       throw err;

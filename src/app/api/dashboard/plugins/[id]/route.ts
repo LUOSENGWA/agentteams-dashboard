@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { removePluginPackage } from '@/lib/plugins/server-package';
 import { PluginManifestError } from '@/lib/plugins/manifest';
-import { validateHigressSession } from '@/lib/api-auth';
+import { getSessionFromRequest } from '@/lib/dashboard-session';
 
 export const dynamic = 'force-dynamic';
 
@@ -12,9 +12,13 @@ export const dynamic = 'force-dynamic';
  * The dashboard plugin registry entry is dropped client-side on uninstall.
  */
 export async function DELETE(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { valid } = await validateHigressSession(request);
-  if (!valid) {
+  // SEC-08: Dashboard session + admin level (parity with the POST route).
+  const session = getSessionFromRequest(request);
+  if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+  }
+  if (session.level < 3) {
+    return NextResponse.json({ error: 'Forbidden: admin (L3) required' }, { status: 403 });
   }
 
   const { id } = await params;

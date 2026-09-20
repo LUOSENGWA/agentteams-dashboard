@@ -165,7 +165,7 @@ function ToolValue({ label, value, kind }: { label: string; value: unknown; kind
     <div className="rounded-lg bg-muted/40 border border-border/30">
       <div className="flex items-center gap-1.5 px-3 py-1.5 border-b border-border/20">
         {kind === 'in' || kind === 'out' || kind === 'out-error' ? (
-          <Badge variant="outline" className={`h-4 px-1.5 text-[9px] font-semibold leading-none ${badge}`}>
+          <Badge variant="outline" className={`h-4 px-1.5 text-[11px] font-semibold leading-none ${badge}`}>
             {kind === 'in' ? 'IN' : 'OUT'}
           </Badge>
         ) : null}

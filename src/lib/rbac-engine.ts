@@ -3,7 +3,7 @@
 
 import type { HumanResponse } from '@/lib/agentteams-api';
 
-export type Permission = 'view' | 'create' | 'update' | 'delete' | 'wake' | 'sleep' | 'ensure-ready';
+export type Permission = 'view' | 'create' | 'update' | 'delete' | 'wake' | 'sleep' | 'ensure-ready' | 'manage';
 
 export interface RBACRule {
   id: string;
@@ -25,7 +25,9 @@ export interface RBACRule {
 const LEVEL_PERMISSIONS: Record<number, Permission[]> = {
   1: ['view'],
   2: ['view', 'wake', 'sleep', 'ensure-ready'],
-  3: ['view', 'create', 'update', 'delete', 'wake', 'sleep', 'ensure-ready'],
+  // 'manage' marks host/admin-adjacent operations (Docker container logs,
+  // storage maintenance, ...) that only an admin-grade session may perform.
+  3: ['view', 'create', 'update', 'delete', 'wake', 'sleep', 'ensure-ready', 'manage'],
 };
 
 function getLevelPermissions(level: number | undefined): Permission[] {

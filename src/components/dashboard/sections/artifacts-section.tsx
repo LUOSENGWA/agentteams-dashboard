@@ -580,7 +580,7 @@ export function ArtifactsSection() {
                             {title}
                           </span>
                           {project.status && project.status !== 'active' && (
-                            <Badge variant="secondary" className="ml-auto h-4 px-1 text-[9px] shrink-0">
+                            <Badge variant="secondary" className="ml-auto h-4 px-1 text-[11px] shrink-0">
                               {project.status}
                             </Badge>
                           )}
@@ -630,7 +630,7 @@ export function ArtifactsSection() {
                               {task.assigned_to && (
                                 <span className="truncate text-[10px] text-muted-foreground">· {task.assigned_to}</span>
                               )}
-                              <span className="ml-auto text-[9px] text-muted-foreground shrink-0">
+                              <span className="ml-auto text-[11px] text-muted-foreground shrink-0">
                                 {taskFiles.length > 0 ? `${taskFiles.length} 文件` : ''}
                               </span>
                             </div>
@@ -697,7 +697,7 @@ export function ArtifactsSection() {
                         {entry.path ? '' : ' · 结果文件'}
                       </p>
                     </div>
-                    <Badge variant="secondary" className="h-4 px-1 text-[9px] shrink-0">
+                    <Badge variant="secondary" className="h-4 px-1 text-[11px] shrink-0">
                       {meta.label}
                     </Badge>
                     <span className="hidden text-[10px] text-muted-foreground sm:inline shrink-0">

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isSensitiveFileName } from './sensitive-files';
+import { isSensitiveFileName, isSensitiveObjectKey } from './sensitive-files';
 
 describe('sensitive-files（对齐 workbench 插件 _kb_is_sensitive）', () => {
   it.each([
@@ -29,7 +29,39 @@ describe('sensitive-files（对齐 workbench 插件 _kb_is_sensitive）', () => 
     // 近似名不放行（模式精确匹配，不误伤）
     ['my-credentials.yaml', 'my-credentials.yaml'],
     ['crednotes.md', 'digest/crednotes.md'],
-  ])('放行：name=%s rel=%s → false', (name, rel) => {
+  ]  )('放行：name=%s rel=%s → false', (name, rel) => {
     expect(isSensitiveFileName(name, rel)).toBe(false);
+  });
+});
+
+describe('isSensitiveObjectKey（bucket 键，含任意前缀）', () => {
+  it.each([
+    // basename 命中：任意前缀下的独立凭证文件
+    'workers/demo/credentials.yaml',
+    'teams/t1/shared/credentials.yml',
+    // 嵌套前缀下的敏感目录（isSensitiveFileName 顶层规则测不到的场景）
+    'workers/demo/.ssh/id_rsa',
+    'workers/demo/.hermes/config.yaml',
+    'teams/t1/credentials/api-key.txt',
+    // .lock 通配
+    'workers/demo/memory/session.lock',
+  ])('敏感：%s → true', (key) => {
+    expect(isSensitiveObjectKey(key)).toBe(true);
+  });
+
+  it.each([
+    'workers/demo/README.md',
+    'teams/t1/shared/report.pdf',
+    // 近似名不误伤
+    'workers/demo/my-credentials.yaml',
+    'memory/2026-09-15.md',
+  ])('放行：%s → false', (key) => {
+    expect(isSensitiveObjectKey(key)).toBe(false);
+  });
+
+  it('无前缀裸键退化为 isSensitiveFileName 语义', () => {
+    expect(isSensitiveObjectKey('credentials.yaml')).toBe(true);
+    expect(isSensitiveObjectKey('.ssh/id_rsa')).toBe(true);
+    expect(isSensitiveObjectKey('README.md')).toBe(false);
   });
 });

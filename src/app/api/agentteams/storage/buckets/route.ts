@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { createMinioClient, getMinioBucket } from '@/lib/minio-client';
 import { enforceLevelOnlyRbac } from '@/lib/server-auth';
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  const denied = await enforceLevelOnlyRbac(request, 'view', 'storage', 'buckets');
+  if (denied) return denied;
   try {
     const client = createMinioClient();
     const configured = getMinioBucket();

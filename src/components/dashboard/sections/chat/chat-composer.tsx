@@ -400,7 +400,7 @@ export function ChatComposer({
                   onMouseEnter={() => setMenuSelectedIdx(idx)}
                 >
                   <Avatar className="w-5 h-5 shrink-0">
-                    <AvatarFallback className={`text-[8px] ${color}`}>
+                    <AvatarFallback className={`text-[10px] ${color}`}>
                       {member.displayName.slice(0, 2).toUpperCase()}
                     </AvatarFallback>
                   </Avatar>

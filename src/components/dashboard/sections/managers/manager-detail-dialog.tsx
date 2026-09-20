@@ -69,7 +69,7 @@ function renderTaskRow(
       <span className="text-muted-foreground text-[10px]">
         {new Date(task.updatedAt).toLocaleTimeString()}
       </span>
-      {running && <Badge variant="outline" className="text-[9px] px-1 py-0">进行中</Badge>}
+      {running && <Badge variant="outline" className="text-[11px] px-1 py-0">进行中</Badge>}
     </div>
   );
 }
@@ -163,7 +163,7 @@ export function ManagerDetailDialog({
                   managedTeams.map((t) => (
                     <Badge key={t.name} variant="secondary" className="text-xs gap-1">
                       {t.name}
-                      <Badge variant="outline" className="text-[8px] px-1 py-0 h-3.5">
+                      <Badge variant="outline" className="text-[10px] px-1 py-0 h-3.5">
                         {t.readyWorkers}/{t.totalWorkers}
                       </Badge>
                     </Badge>

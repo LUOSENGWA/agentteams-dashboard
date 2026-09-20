@@ -388,7 +388,7 @@ function ThemeCard({
       {badges.length > 0 && (
         <span className="flex gap-1">
           {badges.map((b) => (
-            <Badge key={b} variant="secondary" className="text-[9px] px-1 h-4">
+            <Badge key={b} variant="secondary" className="text-[11px] px-1 h-4">
               {b}
             </Badge>
           ))}

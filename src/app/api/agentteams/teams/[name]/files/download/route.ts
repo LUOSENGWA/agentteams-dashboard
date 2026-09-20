@@ -3,6 +3,8 @@ import { Readable } from 'node:stream';
 import type { Client } from 'minio';
 import { createMinioClient, getMinioBucket } from '@/lib/minio-client';
 import { isValidNameSegment } from '@/lib/skill-package';
+import { enforceServerSideRbac } from '@/lib/server-auth';
+import { isSensitiveObjectKey } from '@/lib/sensitive-files';
 
 async function tryStatAndGet(
   client: Client,
@@ -29,6 +31,12 @@ export async function GET(
     return NextResponse.json({ error: '非法 Team 名' }, { status: 400 });
   }
 
+  // SEC-03：对齐 workers/[name]/files/download 的双门——
+  // ① 服务端 RBAC：team 可见性由会话身份判定（L2 团队范围 / L1 全局只读）；
+  // ② 敏感文件过滤（credentials/.ssh 等）：统一 404，不暴露存在性。
+  const denied = await enforceServerSideRbac(request, 'view', 'team', name);
+  if (denied) return denied;
+
   const bucket = getMinioBucket();
   if (!bucket) {
     return NextResponse.json({ error: 'MinIO 未配置' }, { status: 503 });
@@ -36,6 +44,10 @@ export async function GET(
 
   if (!key.startsWith(`teams/${name}/`)) {
     return NextResponse.json({ error: '非法 Team 文件路径' }, { status: 400 });
+  }
+
+  if (isSensitiveObjectKey(key)) {
+    return NextResponse.json({ error: '文件不存在' }, { status: 404 });
   }
 
   try {

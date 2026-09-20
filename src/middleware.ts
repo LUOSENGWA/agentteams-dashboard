@@ -8,9 +8,13 @@ export const runtime = 'nodejs';
 
 // Public endpoints that do NOT require a Higress browser session.
 // Only genuinely public endpoints (health checks, setup bootstrap) belong here.
+// setup/status used to be listed here, but it proxies the controller's setup
+// state with the server-side SA token attached — an unauthenticated caller
+// could abuse ?controllerUrl= to make the dashboard relay that credential to
+// an arbitrary internal host:port (SEC-06). The page only calls it from the
+// authenticated branch (page.tsx), so it now sits behind the normal gate.
 const PUBLIC_PATHS = [
   '/api/agentteams/setup/ensure-ai',
-  '/api/agentteams/setup/status',
   // F1 backend setup: the pre-login first-launch flow must be reachable
   // before any session exists. Writes are token-gated (pre-login one-shot)
   // or level-3 session-gated (post-login) inside the route itself.

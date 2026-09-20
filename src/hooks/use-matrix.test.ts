@@ -1,10 +1,11 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, beforeEach } from 'vitest';
 import type { MatrixEvent } from '@/lib/matrix-api';
 import {
   formatMatrixEvent,
   formatMatrixEvents,
   isMessageReadByOthers,
   mergeRawEventsInto,
+  useRoomMetaStore,
 } from './use-matrix';
 
 function message(
@@ -410,5 +411,46 @@ describe('mergeRawEventsInto', () => {
     } as unknown as MatrixEvent;
     const merged = mergeRawEventsInto(chunk, [anon]);
     expect(merged.map((e) => e.event_id)).toEqual(['$old1']);
+  });
+});
+
+describe('useRoomMetaStore.setRoomMeta (FUNC-02)', () => {
+  beforeEach(() => {
+    useRoomMetaStore.setState({ meta: {}, activeRoomId: null });
+  });
+
+  it('applies a patch that only carries roomName (rename must not be dropped)', () => {
+    useRoomMetaStore.getState().setRoomMeta('!r:test', { roomName: 'Old name' });
+    // All four counter fields are unchanged — only roomName differs.
+    useRoomMetaStore.getState().setRoomMeta('!r:test', { roomName: 'New name' });
+    expect(useRoomMetaStore.getState().meta['!r:test'].roomName).toBe('New name');
+  });
+
+  it('applies a patch that only carries memberCount', () => {
+    useRoomMetaStore.getState().setRoomMeta('!r:test', { roomName: 'Room' });
+    useRoomMetaStore.getState().setRoomMeta('!r:test', { memberCount: 5 });
+    expect(useRoomMetaStore.getState().meta['!r:test'].memberCount).toBe(5);
+  });
+
+  it('still drops a fully identical patch', () => {
+    useRoomMetaStore.getState().setRoomMeta('!r:test', {
+      roomName: 'Room',
+      lastMessageTs: 1000,
+      lastMessagePreview: 'hello',
+      unreadCount: 1,
+      unreadHighlightCount: 0,
+      memberCount: 3,
+    });
+    const before = useRoomMetaStore.getState().meta['!r:test'];
+    useRoomMetaStore.getState().setRoomMeta('!r:test', {
+      roomName: 'Room',
+      lastMessageTs: 1000,
+      lastMessagePreview: 'hello',
+      unreadCount: 1,
+      unreadHighlightCount: 0,
+      memberCount: 3,
+    });
+    // updatedAt is the only field that differs on a no-op drop — same object.
+    expect(useRoomMetaStore.getState().meta['!r:test']).toBe(before);
   });
 });

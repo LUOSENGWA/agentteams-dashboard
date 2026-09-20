@@ -26,13 +26,36 @@ describe('readServerIdentity', () => {
     });
   });
 
-  it('captures the first forwarded IP for audit attribution', () => {
+  it('ignores x-forwarded-for by default (SEC-10: untrusted proxy)', () => {
     const headers = new Headers();
     headers.set(SERVER_USER_HEADER, 'alice');
     headers.set(SERVER_USER_LEVEL_HEADER, '3');
     headers.set('x-forwarded-for', '10.1.2.3, 10.0.0.1');
     const req = new NextRequest('http://localhost/api', { headers });
-    expect(readServerIdentity(req)?.sourceIp).toBe('10.1.2.3');
+    expect(readServerIdentity(req)?.sourceIp).toBeUndefined();
+  });
+
+  it('captures the first forwarded IP when AGENTTEAMS_TRUST_PROXY=true', () => {
+    process.env.AGENTTEAMS_TRUST_PROXY = 'true';
+    try {
+      const headers = new Headers();
+      headers.set(SERVER_USER_HEADER, 'alice');
+      headers.set(SERVER_USER_LEVEL_HEADER, '3');
+      headers.set('x-forwarded-for', '10.1.2.3, 10.0.0.1');
+      const req = new NextRequest('http://localhost/api', { headers });
+      expect(readServerIdentity(req)?.sourceIp).toBe('10.1.2.3');
+    } finally {
+      delete process.env.AGENTTEAMS_TRUST_PROXY;
+    }
+  });
+
+  it('trusted-proxy mode falls back to undefined without the header', () => {
+    process.env.AGENTTEAMS_TRUST_PROXY = 'true';
+    try {
+      expect(readServerIdentity(makeRequest('alice', 3))?.sourceIp).toBeUndefined();
+    } finally {
+      delete process.env.AGENTTEAMS_TRUST_PROXY;
+    }
   });
 });
 

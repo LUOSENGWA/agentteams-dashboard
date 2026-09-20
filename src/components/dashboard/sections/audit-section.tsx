@@ -12,7 +12,16 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from '@/components/ui/table';
 import { SectionHeader } from '@/components/dashboard/section-header';
+import { Skeleton } from '@/components/ui/skeleton';
 import { useAuditEvents, type AuditEvent, type AuditQuery } from '@/hooks/use-audit-events';
 
 type EntityFilter = AuditEvent['entity_type'] | 'all';
@@ -141,7 +150,11 @@ export function AuditSection() {
               </div>
             </div>
           ) : isLoading ? (
-            <p className="py-6 text-center text-sm text-muted-foreground">加载中...</p>
+            <div className="space-y-2 py-1" role="status" aria-label="加载中">
+              {Array.from({ length: 6 }).map((_, i) => (
+                <Skeleton key={i} className="h-9 w-full" />
+              ))}
+            </div>
           ) : !data?.events?.length ? (
             <div className="space-y-2 py-6 text-center text-sm text-muted-foreground">
               <p>暂无审计事件</p>
@@ -150,59 +163,57 @@ export function AuditSection() {
               ) : null}
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
-                    <th className="px-2 py-2">时间</th>
-                    <th className="px-2 py-2">操作者</th>
-                    <th className="px-2 py-2">实体</th>
-                    <th className="px-2 py-2">动作</th>
-                    <th className="px-2 py-2">严重度</th>
-                    <th className="px-2 py-2">详情</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.events.map((event) => {
-                    const meta = SEVERITY_META[event.severity];
-                    const Icon = meta.icon;
-                    return (
-                      <tr key={event.id} className="border-b last:border-0 align-top">
-                        <td className="px-2 py-2 font-mono text-xs whitespace-nowrap">{formatTimestamp(event.timestamp)}</td>
-                        <td className="px-2 py-2">
-                          <span className="font-medium">{event.actor ?? '系统'}</span>
-                          {event.actor_level !== undefined ? (
-                            <span className="ml-1 text-xs text-muted-foreground">L{event.actor_level}</span>
-                          ) : null}
-                          {event.source_ip ? (
-                            <div className="text-xs text-muted-foreground">{event.source_ip}</div>
-                          ) : null}
-                        </td>
-                        <td className="px-2 py-2">
-                          <Badge variant="outline" className="font-mono text-xs">
-                            {event.kind ?? event.entity_type}
-                          </Badge>
-                          <div className="text-xs text-muted-foreground">{event.entity_name}</div>
-                          {event.team ? (
-                            <div className="text-xs text-muted-foreground">团队：{event.team}</div>
-                          ) : null}
-                        </td>
-                        <td className="px-2 py-2 font-mono text-xs">{actionLabel(event.action)}</td>
-                        <td className="px-2 py-2">
-                          <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${meta.className}`}>
-                            <Icon className="h-3 w-3" aria-hidden />
-                            {meta.label}
-                          </span>
-                        </td>
-                        <td className="px-2 py-2 max-w-md break-words text-xs text-muted-foreground">
-                          {event.details ?? '—'}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+            <Table>
+              <TableHeader>
+                <TableRow className="hover:bg-transparent">
+                  <TableHead className="h-9 px-2 text-xs uppercase tracking-wide">时间</TableHead>
+                  <TableHead className="h-9 px-2 text-xs uppercase tracking-wide">操作者</TableHead>
+                  <TableHead className="h-9 px-2 text-xs uppercase tracking-wide">实体</TableHead>
+                  <TableHead className="h-9 px-2 text-xs uppercase tracking-wide">动作</TableHead>
+                  <TableHead className="h-9 px-2 text-xs uppercase tracking-wide">严重度</TableHead>
+                  <TableHead className="h-9 px-2 text-xs uppercase tracking-wide">详情</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {data.events.map((event) => {
+                  const meta = SEVERITY_META[event.severity];
+                  const Icon = meta.icon;
+                  return (
+                    <TableRow key={event.id} className="align-top">
+                      <TableCell className="px-2 py-2 font-mono text-xs whitespace-nowrap">{formatTimestamp(event.timestamp)}</TableCell>
+                      <TableCell className="px-2 py-2">
+                        <span className="font-medium">{event.actor ?? '系统'}</span>
+                        {event.actor_level !== undefined ? (
+                          <span className="ml-1 text-xs text-muted-foreground">L{event.actor_level}</span>
+                        ) : null}
+                        {event.source_ip ? (
+                          <div className="text-xs text-muted-foreground">{event.source_ip}</div>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="px-2 py-2">
+                        <Badge variant="outline" className="font-mono text-xs">
+                          {event.kind ?? event.entity_type}
+                        </Badge>
+                        <div className="text-xs text-muted-foreground">{event.entity_name}</div>
+                        {event.team ? (
+                          <div className="text-xs text-muted-foreground">团队：{event.team}</div>
+                        ) : null}
+                      </TableCell>
+                      <TableCell className="px-2 py-2 font-mono text-xs">{actionLabel(event.action)}</TableCell>
+                      <TableCell className="px-2 py-2">
+                        <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium ${meta.className}`}>
+                          <Icon className="h-3 w-3" aria-hidden />
+                          {meta.label}
+                        </span>
+                      </TableCell>
+                      <TableCell className="px-2 py-2 max-w-md break-words text-xs text-muted-foreground">
+                        {event.details ?? '—'}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
           )}
         </CardContent>
       </Card>

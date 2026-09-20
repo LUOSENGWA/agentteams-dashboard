@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import {
@@ -302,7 +302,8 @@ export function buildReport(args: {
 function collectSSE(
   url: string,
   body: unknown,
-  extraHeaders?: Record<string, string>
+  extraHeaders?: Record<string, string>,
+  signal?: AbortSignal
 ): AsyncGenerator<{ event: string; data: unknown }, void, void> {
   return (async function* () {
     const res = await fetch(url, {
@@ -310,6 +311,7 @@ function collectSSE(
       credentials: 'same-origin',
       headers: { 'Content-Type': 'application/json', ...extraHeaders },
       body: JSON.stringify(body),
+      signal,
     });
     if (!res.ok) {
       const text = await res.text().catch(() => '');
@@ -660,6 +662,12 @@ function createDiagnosticsPage(api: DashboardPluginApi) {
     const [diagAnswer, setDiagAnswer] = useState('');
     const [diagError, setDiagError] = useState<string | null>(null);
     const [diagMeta, setDiagMeta] = useState<{ model: string; finishedAt: number } | null>(null);
+    // FUNC-05: abort channel for the SSE diagnosis stream — the old request
+    // must stop when the user re-runs the diagnosis or leaves the page.
+    const diagAbortRef = useRef<AbortController | null>(null);
+
+    useEffect(() => () => diagAbortRef.current?.abort(), []);
+
     const [zipping, setZipping] = useState(false);
 
     const { isLoggedIn, accessToken, homeserver } = useMatrixStore();
@@ -700,7 +708,7 @@ function createDiagnosticsPage(api: DashboardPluginApi) {
       } finally {
         setLoading(false);
       }
-    }, [api]);
+    }, []);
 
     useEffect(() => {
       void refresh();
@@ -845,6 +853,10 @@ function createDiagnosticsPage(api: DashboardPluginApi) {
         toast.warning('请填写症状描述');
         return;
       }
+      // FUNC-05: abort any in-flight stream before starting a new one.
+      diagAbortRef.current?.abort();
+      const controller = new AbortController();
+      diagAbortRef.current = controller;
       setDiagRunning(true);
       setDiagError(null);
       setDiagAnswer('');
@@ -865,7 +877,7 @@ function createDiagnosticsPage(api: DashboardPluginApi) {
           snapshot,
         };
         const modelLabel = model.trim() || '默认模型';
-        for await (const { event, data } of collectSSE(apiUrl('/api/agentteams/wen-tian/logs'), body, headers)) {
+        for await (const { event, data } of collectSSE(apiUrl('/api/agentteams/wen-tian/logs'), body, headers, controller.signal)) {
           if (event === 'progress' && isObject(data)) {
             const d = data as Record<string, unknown>;
             setDiagProgress({
@@ -893,10 +905,18 @@ function createDiagnosticsPage(api: DashboardPluginApi) {
           }
         }
       } catch (err) {
+        // FUNC-05: an abort is an intentional stop (unmount / re-run), not a
+        // diagnostic failure — leave the partial answer in place quietly.
+        if (controller.signal.aborted) return;
         setDiagError(err instanceof Error ? err.message : 'AI 日志分析诊断失败');
         toast.error('AI 日志分析诊断失败');
       } finally {
-        setDiagRunning(false);
+        if (!controller.signal.aborted) {
+          setDiagRunning(false);
+        }
+        if (diagAbortRef.current === controller) {
+          diagAbortRef.current = null;
+        }
       }
     };
 
@@ -1215,7 +1235,7 @@ function createHealthWidget(api: DashboardPluginApi) {
       return () => {
         cancelled = true;
       };
-    }, [api]);
+    }, []);
 
     return (
       <Card>

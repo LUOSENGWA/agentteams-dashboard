@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { createMinioClient, getMinioBucket } from '@/lib/minio-client';
 import { isValidNameSegment } from '@/lib/skill-package';
+import { enforceServerSideRbac } from '@/lib/server-auth';
+import { isSensitiveObjectKey } from '@/lib/sensitive-files';
 import type { StorageObject } from '@/lib/agentteams-api';
 
 // AgentTeams team workspace layout (see team-tasks/route.ts):
@@ -44,6 +46,11 @@ export async function GET(
     return NextResponse.json({ error: '非法 Team 名' }, { status: 400 });
   }
 
+  // SEC-03：对齐 workers/[name]/files 读入口——list 同样加服务端 RBAC 门，
+  // 并过滤敏感条目（credentials/.ssh 等），不向范围外用户暴露文件 key。
+  const denied = await enforceServerSideRbac(request, 'view', 'team', name);
+  if (denied) return denied;
+
   const bucket = getMinioBucket();
   if (!bucket) {
     return NextResponse.json({ error: 'MinIO 未配置' }, { status: 503 });
@@ -56,7 +63,11 @@ export async function GET(
     // path relative to the team root, then always list under teams/{name}/.
     const base = subPrefix.startsWith(teamRoot) ? subPrefix : `${teamRoot}${subPrefix}`;
     const objects = await listFiles(client, bucket, base);
-    const trimmed = objects.filter((obj) => obj.key === base || obj.key.startsWith(base));
+    // 范围收敛 + 敏感条目过滤：credentials/.ssh 等不进列表。
+    const trimmed = objects.filter((obj) => {
+      if (obj.key !== base && !obj.key.startsWith(base)) return false;
+      return !isSensitiveObjectKey(obj.key);
+    });
     return NextResponse.json({
       objects: trimmed,
       prefix: subPrefix,

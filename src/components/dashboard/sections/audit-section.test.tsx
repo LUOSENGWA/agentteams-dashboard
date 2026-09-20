@@ -177,4 +177,53 @@ describe('AuditSection', () => {
     });
     expect(screen.getByText('Controller 不可达，显示本实例本地日志')).toBeInTheDocument();
   });
+
+  // ── ARCH-01 / UI-06 consistency regression ──────────────────────────────
+
+  it('renders a skeleton (not bare text) while loading (ARCH-01)', async () => {
+    mockedUseAuditEvents.mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      isFetching: false,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useAuditEvents>);
+    render(<AuditSection />, { wrapper: makeWrapper() });
+    const status = await screen.findByRole('status', { name: '加载中' });
+    expect(status.querySelectorAll('[data-slot="skeleton"]').length).toBeGreaterThan(0);
+    // The old bare-text placeholder is gone.
+    expect(screen.queryByText('加载中...')).not.toBeInTheDocument();
+  });
+
+  it('renders audit rows with the shared shadcn Table primitives (UI-06)', async () => {
+    mockedUseAuditEvents.mockReturnValue({
+      data: {
+        success: true,
+        events: [
+          {
+            id: 'audit-1',
+            timestamp: Date.UTC(2026, 7, 25, 10, 0, 0),
+            actor: 'alice',
+            actor_level: 3,
+            entity_type: 'worker',
+            entity_name: 'w-1',
+            action: 'create',
+            severity: 'info',
+          },
+        ],
+      },
+      isLoading: false,
+      isFetching: false,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useAuditEvents>);
+    const { container } = render(<AuditSection />, { wrapper: makeWrapper() });
+    await waitFor(() => {
+      expect(screen.getByText('alice')).toBeInTheDocument();
+    });
+    // shadcn Table marks its <table> host with data-slot="table".
+    expect(container.querySelector('[data-slot="table"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-slot="table-header"]')).toBeInTheDocument();
+    expect(container.querySelector('[data-slot="table-body"]')).toBeInTheDocument();
+    // No hand-rolled <table> without the shadcn wrapper.
+    expect(container.querySelector('table:not([data-slot="table"])')).toBeNull();
+  });
 });
