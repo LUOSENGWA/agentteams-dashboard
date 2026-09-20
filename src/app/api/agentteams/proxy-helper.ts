@@ -293,6 +293,31 @@ export async function proxyToAgentTeams(
         }
 
         const data = await res.arrayBuffer();
+        // HTML-fallback guard: a stale/misrouted gateway (or a console SPA
+        // catch-all, e.g. QwenPaw Console for a nonexistent worker) can answer
+        // an API path with an HTML page while still claiming JSON — surfacing
+        // that raw body would blow up every client res.json() with
+        // "Unexpected token '<'". Rewrite it into an actionable 502 instead.
+        const head = new Uint8Array(data.slice(0, 512));
+        const headText = new TextDecoder('utf-8', { fatal: false })
+          .decode(head)
+          .trimStart()
+          .slice(0, 64)
+          .toLowerCase();
+        if (headText.startsWith('<!doctype html') || headText.startsWith('<html')) {
+          console.error(
+            `[dashboard] upstream returned HTML for API path (gateway fallback?)`,
+            JSON.stringify({ path, method, upstream_status: res.status }),
+          );
+          return NextResponse.json(
+            {
+              message:
+                '上游返回了 HTML 页面而非 API 数据（常见原因：目标 Worker 不存在，请求被网关兜底到了控制台页面，或上游登录态失效）',
+              upstream_status: res.status,
+            },
+            { status: 502 },
+          );
+        }
         const responseHeaders = new Headers();
         const resCT = res.headers.get('content-type');
         if (resCT) responseHeaders.set('content-type', resCT);
