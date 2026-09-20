@@ -3,7 +3,11 @@ import { cleanup, fireEvent, render, screen, waitFor } from '@testing-library/re
 import '@testing-library/jest-dom/vitest';
 
 vi.mock('@/hooks/use-agentteams-workers', () => ({
-  useWorkers: () => ({ data: [{ name: 'w1' }], isLoading: false, error: null }),
+  useWorkers: vi.fn(() => ({
+    data: [{ name: 'w1', runtime: 'qwenpaw' }],
+    isLoading: false,
+    error: null,
+  })),
 }));
 
 // MarkdownMessage 替身（避免拉聊天栈；断言透传 content）
@@ -12,6 +16,7 @@ vi.mock('@/components/dashboard/sections/chat/markdown-message', () => ({
 }));
 
 import { KnowledgeSection } from './knowledge-section';
+import { useWorkers } from '@/hooks/use-agentteams-workers';
 
 const TREE_MEMORY = {
   directory: 'memory',
@@ -120,5 +125,48 @@ describe('B7 KnowledgeSection（#1208 消费）', () => {
     expect(
       await screen.findByText(/tree memory → worker workspace API unreachable/),
     ).toBeInTheDocument();
+  });
+
+  it('⑥ worker 下拉仅列 qwenpaw 运行时（FUNC-10 过滤）', async () => {
+    vi.mocked(useWorkers).mockReturnValue({
+      data: [
+        { name: 'oc-w', runtime: 'openclaw' },
+        { name: 'qw-w', runtime: 'qwenpaw' },
+      ],
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useWorkers>);
+    mockFetch();
+    render(<KnowledgeSection />);
+    const select = await screen.findByRole('combobox', { name: '选择 Worker' });
+    const options = Array.from(select.querySelectorAll('option')).map((o) => o.value);
+    expect(options).toEqual(['qw-w']);
+    // 运行时徽章提示数据面来源
+    expect(screen.getByText('QwenPaw')).toBeInTheDocument();
+    // 首个合法 worker 自动加载（请求路径指向 qw-w，oc-w 被过滤）
+    await waitFor(() => {
+      const called = vi.mocked(fetch).mock.calls.some(([u]) => String(u).includes('workers/qw-w/workspace-files'));
+      expect(called).toBe(true);
+    });
+    const ocCalled = vi.mocked(fetch).mock.calls.some(([u]) => String(u).includes('workers/oc-w/'));
+    expect(ocCalled).toBe(false);
+  });
+
+  it('⑦ 全部非 qwenpaw → 仅支持 QwenPaw 空态说明且不发请求', async () => {
+    const fetchSpy = vi.fn(async () => ({ ok: false, status: 404, json: async () => ({}) }) as unknown as Response);
+    vi.stubGlobal('fetch', fetchSpy);
+    vi.mocked(useWorkers).mockReturnValue({
+      data: [{ name: 'oc-w', runtime: 'openclaw' }],
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof useWorkers>);
+    render(<KnowledgeSection />);
+    expect(
+      await screen.findByText(/知识库当前仅支持 QwenPaw 运行时的 Worker/),
+    ).toBeInTheDocument();
+    // KB 数据面为 QwenPaw 专属：空态下不得向 workspace-files 发请求
+    await waitFor(() => {
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
   });
 });

@@ -277,7 +277,16 @@ function KnowledgeGraph({
 export function KnowledgeSection() {
   const { data: workers } = useWorkers();
   const [worker, setWorker] = useState('');
-  const effectiveWorker = worker || workers?.[0]?.name || '';
+  // KB 数据面（workspace-files）是 QwenPaw 运行时专属能力（FUNC-10）：
+  // 非 qwenpaw Worker 的 tree 端点 404/形状失配，必须整体过滤。
+  const kbWorkers = useMemo(
+    () => (workers ?? []).filter((wd) => wd.runtime === 'qwenpaw'),
+    [workers],
+  );
+  const effectiveWorker = kbWorkers.some((wd) => wd.name === worker)
+    ? worker
+    : kbWorkers[0]?.name || '';
+  const noKbWorker = (workers?.length ?? 0) > 0 && kbWorkers.length === 0;
 
   const [unavailable, setUnavailable] = useState(false);
   const [loadError, setLoadError] = useState('');
@@ -420,10 +429,15 @@ export function KnowledgeSection() {
               onChange={(e) => setWorker(e.target.value)}
               aria-label="选择 Worker"
             >
-              {(workers ?? []).map((wd) => (
+              {kbWorkers.map((wd) => (
                 <option key={wd.name} value={wd.name}>{wd.name}</option>
               ))}
             </select>
+            {effectiveWorker && (
+              <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground" title="知识库数据面来自该 Worker 的 workspace-files 端点（QwenPaw 专属）">
+                QwenPaw
+              </span>
+            )}
             <Button
               variant="ghost"
               size="sm"
@@ -439,7 +453,12 @@ export function KnowledgeSection() {
         isRefreshing={loading || graphLoading}
       />
 
-      {unavailable ? (
+      {noKbWorker ? (
+        <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
+          <span>知识库当前仅支持 QwenPaw 运行时的 Worker；当前实例没有 QwenPaw Worker，请先用该运行时创建 Worker。</span>
+        </div>
+      ) : unavailable ? (
         <div className="flex items-start gap-2 rounded-md border border-amber-300 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-200">
           <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" aria-hidden="true" />
           <span>当前 Controller 版本未提供知识库端点，升级 AgentTeams 后自动生效。</span>

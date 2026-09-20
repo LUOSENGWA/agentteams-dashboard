@@ -114,9 +114,13 @@ export function selectConfirmationList(
   return Object.values(confirmations).sort((a, b) => b.timestamp - a.timestamp);
 }
 
+/** 多语言审批/拒绝关键词（大小写不敏感；见 FUNC-07）。 */
+const APPROVE_KEYWORDS = new Set(['/approve', 'approve', 'approved', '同意', '批准', '允许']);
+const REJECT_KEYWORDS = new Set(['/deny', 'deny', 'denied', '/reject', 'reject', 'rejected', '拒绝', '驳回', '不允许']);
+
 export function isHitlResolutionReply(body: string): boolean {
-  const text = body.trim();
-  return text === '/approve' || text === '拒绝';
+  const text = body.trim().toLowerCase();
+  return APPROVE_KEYWORDS.has(text) || REJECT_KEYWORDS.has(text);
 }
 
 export function resolveEventContent(event: MatrixEvent): Record<string, unknown> {

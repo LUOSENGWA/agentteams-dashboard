@@ -39,6 +39,20 @@ describe('isHitlResolutionReply', () => {
     expect(isHitlResolutionReply('  拒绝  ')).toBe(true);
     expect(isHitlResolutionReply('ok')).toBe(false);
   });
+
+  it('recognises multilingual approve/deny keywords case-insensitively (FUNC-07)', () => {
+    expect(isHitlResolutionReply('Approve')).toBe(true);
+    expect(isHitlResolutionReply('DENY')).toBe(true);
+    expect(isHitlResolutionReply(' reject ')).toBe(true);
+    expect(isHitlResolutionReply('同意')).toBe(true);
+    expect(isHitlResolutionReply('批准')).toBe(true);
+    expect(isHitlResolutionReply('驳回')).toBe(true);
+    expect(isHitlResolutionReply('/reject')).toBe(true);
+    // Non-exact phrases must not resolve.
+    expect(isHitlResolutionReply('I approve this')).toBe(false);
+    expect(isHitlResolutionReply('拒绝执行')).toBe(false);
+    expect(isHitlResolutionReply('')).toBe(false);
+  });
 });
 
 describe('extractConfirmationFromEvent', () => {

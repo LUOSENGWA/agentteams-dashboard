@@ -141,6 +141,12 @@
 - 描述：每个使用会话状态点的组件各持有独立的 60 秒 `setInterval` 与 state，列表页 N 行即 N 个定时器和 N 次独立重渲染。
 - 建议：提升为模块级共享 tick（单 interval + 订阅计数）或使用 context 提供。
 
+### FUNC-10（中）知识库面板未按 runtime 过滤，非 qwenpaw Worker 选中后必然空转
+- 位置：`src/components/dashboard/sections/knowledge-section.tsx:278-280`、`423`（worker 下拉与 effectiveWorker 兜底）
+- 描述：KB 数据面 `/api/agentteams/workers/[name]/workspace-files/*` 是 QwenPaw 专属能力（文件头部注释即注明布局按「QwenPaw workspace_files.py 实锤形状」定案：MEMORY.md / memory/** / digest/**）。但 worker 下拉直接渲染 `useWorkers()` 全量列表，`effectiveWorker` 兜底取 `workers[0]`，两者均不过滤 `runtime`。选中 openclaw/copaw/hermes/openhuman/deepseek-harness 的 Worker 时，tree 端点 404 或返回非约定形状，表现为降级横幅/空树，用户无从得知原因。
+- 建议：下拉仅列 `runtime === 'qwenpaw'` 的 Worker；无 qwenpaw Worker 时显示说明性空态（「知识库当前仅支持 QwenPaw 运行时的 Worker」），并附 runtime badge 防后续 runtime 接入时静默失配。`WorkerResponse.runtime` 字段已存在（agentteams-api.ts:31），改动纯前端。
+- 备注（2026-09-20 用户确认）：知识库目前只支持 Qwenpaw，按此口径做过滤与文案说明。
+
 ---
 
 ## 三、样式 / 主题 / 视觉

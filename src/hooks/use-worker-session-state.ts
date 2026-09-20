@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useSyncExternalStore } from 'react';
 
 import { useRoomMetaStore, useTypingStore } from '@/hooks/use-matrix';
 import { useWorkers } from '@/hooks/use-agentteams-workers';
@@ -35,14 +35,39 @@ export function useWorkerAgentStatusMap(): Record<string, WorkerAgentStatusInfo>
 /**
  * Shared 60s clock driving the done→idle aging of the session dots.
  * (Re-derivation only — no network; see worker-session-state.ts.)
+ *
+ * Module-level single interval with subscriber counting (FUNC-09): the
+ * timer runs only while at least one consumer is mounted, and every
+ * consumer re-derives from the same tick instead of N separate
+ * intervals firing N re-renders.
  */
+const tickListeners = new Set<() => void>();
+let sharedTickNow = Date.now();
+let tickTimer: ReturnType<typeof setInterval> | null = null;
+
+function subscribeTick(onStoreChange: () => void): () => void {
+  tickListeners.add(onStoreChange);
+  if (tickTimer === null) {
+    tickTimer = setInterval(() => {
+      sharedTickNow = Date.now();
+      for (const listener of tickListeners) listener();
+    }, TICK_MS);
+  }
+  return () => {
+    tickListeners.delete(onStoreChange);
+    if (tickListeners.size === 0 && tickTimer !== null) {
+      clearInterval(tickTimer);
+      tickTimer = null;
+    }
+  };
+}
+
 export function useSessionTick(): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), TICK_MS);
-    return () => clearInterval(id);
-  }, []);
-  return now;
+  return useSyncExternalStore(
+    subscribeTick,
+    () => sharedTickNow,
+    () => sharedTickNow,
+  );
 }
 
 /**

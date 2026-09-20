@@ -3,20 +3,28 @@
 import { useEffect, useState, useRef } from 'react';
 import { SyncEvent } from '@/lib/nacos-sync-engine';
 
+const INITIAL_DELAY = 5000;
+const MAX_DELAY = 60_000;
+
 export function useNacosEvents() {
   const [events, setEvents] = useState<SyncEvent[]>([]);
   const [connected, setConnected] = useState(false);
   const esRef = useRef<EventSource | null>(null);
 
   useEffect(() => {
-    let es: EventSource;
-    let reconnectTimer: ReturnType<typeof setTimeout>;
+    let reconnectTimer: ReturnType<typeof setTimeout> | undefined;
+    let backoff = INITIAL_DELAY;
+    let disposed = false;
 
     function connect() {
-      es = new EventSource('/api/agentteams/skills/nacos/events');
+      if (disposed) return;
+      const es = new EventSource('/api/agentteams/skills/nacos/events');
       esRef.current = es;
 
-      es.onopen = () => setConnected(true);
+      es.onopen = () => {
+        setConnected(true);
+        backoff = INITIAL_DELAY;
+      };
 
       es.onmessage = (e) => {
         try {
@@ -28,15 +36,21 @@ export function useNacosEvents() {
       es.onerror = () => {
         setConnected(false);
         es.close();
-        reconnectTimer = setTimeout(connect, 5000);
+        if (disposed) return;
+        reconnectTimer = setTimeout(connect, backoff);
+        backoff = Math.min(backoff * 2, MAX_DELAY);
       };
     }
 
     connect();
 
     return () => {
-      es?.close();
-      clearTimeout(reconnectTimer);
+      disposed = true;
+      // Close the *latest* instance (a reconnect may have replaced the
+      // original one) — see FUNC-08 cleanup race.
+      esRef.current?.close();
+      esRef.current = null;
+      if (reconnectTimer) clearTimeout(reconnectTimer);
     };
   }, []);
 

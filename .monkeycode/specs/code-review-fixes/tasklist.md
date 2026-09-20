@@ -4,7 +4,7 @@
 > RBAC 实现模式参考：`.monkeycode/specs/server-side-rbac-audit/design.md`
 > 说明：所有测试任务均为必做（用户已确认执行全部任务）。
 
-- [ ] 1. RBAC 补齐与凭据掩码（SEC-01/02/03）
+- [x] 1. RBAC 补齐与凭据掩码（SEC-01/02/03）
   - [x] 1.1 Nacos 配置 GET 接口补 RBAC 并掩码密码（SEC-01）
     - `src/app/api/agentteams/skills/nacos/config/route.ts` GET 增加 `enforceLevelOnlyRbac(request, 'view', 'skill.nacos.config', 'config')`（对齐 PUT 的既有模式）
     - 响应中 `password` 字段掩码为固定占位符，PUT 侧忽略掩码占位值避免把掩码写回存储
@@ -20,7 +20,7 @@
     - Nacos GET 响应断言无明文 password
     - team 文件下载对敏感文件名返回 404
 
-- [ ] 2. XSS 防护与 token 转发收敛（SEC-04/05）
+- [x] 2. XSS 防护与 token 转发收敛（SEC-04/05）
   - [x] 2.1 聊天 Markdown 链路接入 rehype-sanitize（SEC-04）
     - 安装 `rehype-sanitize`，在 `markdown-message.tsx:349` 的 rehype 插件链中 `rehypeRaw` 之后插入 sanitize
     - 定义 schema：放行 GFM/math/highlight 所需标签与属性，拒绝事件属性与脚本类标签
@@ -31,7 +31,7 @@
     - 用 fast-check 生成随机 HTML 片段，断言净化输出不含脚本向量（SEC-04）
     - 用 fast-check 生成随机 host，断言未入允许列表的 host 被拒绝（SEC-05）
 
-- [ ] 3. 服务端其余安全问题（SEC-06~10）
+- [x] 3. 服务端其余安全问题（SEC-06~10）
   - [x] 3.1 `setup/status` 增加 token gate（SEC-06）：middleware PUBLIC_PATHS 移除或路由内校验，未认证时剥离 SA token
   - [x] 3.2 容器日志接口收紧（SEC-07）：`logs/[component]` 增加 `enforceLevelOnlyRbac`，`resolveContainerName` 收敛到已知组件白名单
   - [x] 3.3 插件路由鉴权统一（SEC-08）：`dashboard/plugins` 与 `[id]` 改用 Dashboard 会话 + level 3 RBAC，GET 列表至少要求已登录
@@ -43,7 +43,7 @@
     - 插件上传对无 Dashboard 会话的请求返回 401
     - login 失败响应不包含内部异常文本
 
-- [ ] 4. Matrix 同步与状态管理缺陷修复（FUNC-01~04）
+- [x] 4. Matrix 同步与状态管理缺陷修复（FUNC-01~04）
   - [x] 4.1 修复同步循环停摆（FUNC-01）：`use-global-matrix-sync.ts` 对 `busyRef` 做分代化处理，提前返回路径重新调度，cleanup 后旧请求结果按代丢弃
   - [x] 4.2 修复房间改名丢失（FUNC-02）：`use-matrix.ts` setRoomMeta 比较条件纳入 `roomName`
   - [x] 4.3 修复自动重连挂载竞态（FUNC-03）：`agentteams-store.ts` 初始订阅时对已处于断开态的 store 调用一次 `startAutoReconnect()`
@@ -54,22 +54,23 @@
     - 初始断开态下订阅建立即启动重连定时器
     - 列表加载中到达的深链接在加载完成后仍生效
 
-- [ ] 5. SSE 取消与渲染性能（FUNC-05/06）
+- [x] 5. SSE 取消与渲染性能（FUNC-05/06）
   - [x] 5.1 `collectSSE` 增加 `signal` 参数（FUNC-05）：`wen-tian/index.tsx` 诊断流程接入 AbortController，卸载/重试时 abort；修复 703/1218 两处 `[api]` 无效依赖（消除全部 lint warning）
   - [x] 5.2 外壳 store 订阅 selector 化（FUNC-06）：`agent-teams-dashboard.tsx:88-90` 两个无 selector 订阅改为逐字段选择（对齐 91 行既有写法）
   - [ ] 5.3 lint 验证与 wen-tian 回归测试
     - `npm run lint` 输出 0 warning
     - abort 后 SSE 生成器终止、不再产生新事件
 
-- [ ] 6. 检查点 - 确保所有测试通过，如有疑问请询问用户（安全批 + 核心功能批完成，运行 `npm run lint && npm run typecheck && npm test`）
+- [x] 6. 检查点 - 确保所有测试通过，如有疑问请询问用户（安全批 + 核心功能批完成，运行 `npm run lint && npm run typecheck && npm test`）
 
-- [ ] 7. 低优先级健壮性修复（FUNC-07~09）
-  - [ ] 7.1 HITL 审批关键词多语言（FUNC-07）：`hitl-inbox.ts` `isHitlResolutionReply` 扩展 deny/reject 等关键词集合
-  - [ ] 7.2 Nacos SSE 退避与清理（FUNC-08）：`use-nacos-events.ts` 指数退避上限、`es` 引用 ref 化修复清理竞态
-  - [ ] 7.3 共享 tick（FUNC-09）：`use-worker-session-state.ts` `useSessionTick` 改为模块级单 interval + 订阅计数
-  - [ ] 7.4 为退避逻辑与共享 tick 编写单元测试
+- [x] 7. 低优先级健壮性修复（FUNC-07~10）
+  - [x] 7.1 HITL 审批关键词多语言（FUNC-07）：`hitl-inbox.ts` `isHitlResolutionReply` 扩展 deny/reject 等关键词集合
+  - [x] 7.2 Nacos SSE 退避与清理（FUNC-08）：`use-nacos-events.ts` 指数退避上限、`es` 引用 ref 化修复清理竞态
+  - [x] 7.3 共享 tick（FUNC-09）：`use-worker-session-state.ts` `useSessionTick` 改为模块级单 interval + 订阅计数
+  - [x] 7.4 为退避逻辑与共享 tick 编写单元测试
     - 连续失败时重连间隔按退避序列增长且不超过上限
     - 多组件共享同一 tick，卸载全部组件后 interval 清理
+  - [x] 7.5 知识库 runtime 过滤（FUNC-10）：`knowledge-section.tsx` worker 下拉仅列 `runtime === 'qwenpaw'`，无 qwenpaw Worker 时显示「知识库当前仅支持 QwenPaw 运行时」空态说明（用户 2026-09-20 确认口径）
 
 - [ ] 8. 主题与视觉修复（UI-01~05）
   - [ ] 8.1 状态徽章配色修复（UI-01）：`projects-section.tsx`/`tasks-section.tsx` 改为 `text-*-700 dark:text-*-400` 双模式，抽取共享常量模块消除双份镜像 map
@@ -88,7 +89,7 @@
   - [ ] 9.5 axe-core 可访问性检查（devDependencies 已含 axe-core）
     - 对 workers/chat/settings 关键 section 断言无 critical violation
 
-- [ ] 10. 组件与架构一致性（UI-06/07、ARCH-01/02）
+- [x] 10. 组件与架构一致性（UI-06/07、ARCH-01/02）
   - [x] 10.1 收敛手写组件（UI-06）：audit/security 手写 table、ChatRoom 原生 select、worker-files-panel 的 a 标签按钮替换为 shadcn 既有原语
   - [x] 10.2 小字号收敛（UI-07）：`text-[8px]`/`[9px]` 离群值提升至可读下限
   - [x] 10.3 统一加载/错误态（ARCH-01）：audit/overview/tasks/artifacts/projects/knowledge 接入 SectionSkeleton 与 ApiErrorState
