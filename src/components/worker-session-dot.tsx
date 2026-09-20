@@ -13,7 +13,8 @@ import type { WorkerSessionState } from '@/lib/worker-session-state';
 const STATE_STYLE: Record<WorkerSessionState, { color: string; label: string; pulse: boolean }> = {
   running: { color: '#3b82f6', label: '运行中', pulse: true },
   done: { color: '#52c41a', label: '运行完成', pulse: false },
-  idle: { color: '#c0c4cc', label: '无任务', pulse: false },
+  // Theme token: the old fixed #c0c4cc is ~1.6:1 on light backgrounds (UI-02).
+  idle: { color: 'var(--muted-foreground)', label: '无任务', pulse: false },
 };
 
 export function WorkerSessionDot({

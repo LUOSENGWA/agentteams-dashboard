@@ -24,9 +24,19 @@ const MermaidBlock = memo(function MermaidBlock({ chart }: MermaidBlockProps) {
         const mod = await import('mermaid');
         if (cancelled) return;
         const mermaid = mod.default || mod;
+        // Theme follows the app theme classes (see lib/theme/apply.ts):
+        // dark / high-contrast roots get mermaid's dark palette, light
+        // roots get 'default' (UI-04).
+        const root = document.documentElement;
+        const mermaidTheme = root.classList.contains('dark') || root.classList.contains('high-contrast')
+          ? 'dark'
+          : 'default';
         mermaid.initialize({
           startOnLoad: false,
-          theme: 'default',
+          theme: mermaidTheme,
+          // Explicit: dangerouslySetInnerHTML below relies on mermaid's
+          // sanitizing; never depend on the library default silently.
+          securityLevel: 'strict',
           flowchart: { useMaxWidth: true, htmlLabels: true },
           sequence: { useMaxWidth: true },
           gantt: { useMaxWidth: true },
@@ -69,7 +79,7 @@ const MermaidBlock = memo(function MermaidBlock({ chart }: MermaidBlockProps) {
             <span className="ml-2 text-xs text-muted-foreground">渲染中...</span>
           </div>
         ) : error ? (
-          <div className="text-xs text-red-500 py-2 font-mono break-all">{error}</div>
+          <div className="text-xs text-red-600 dark:text-red-400 py-2 font-mono break-all">{error}</div>
         ) : svg ? (
           <div
             className="mermaid-svg min-w-max"

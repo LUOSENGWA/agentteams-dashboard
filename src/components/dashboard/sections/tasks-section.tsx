@@ -58,6 +58,8 @@ import { ProjectDagSvg, type DagNodeColor } from '@/components/dashboard/project
 
 // ----- Status config -----
 
+import { PROJECT_STATUS_COLOR, OUTCOME_COLOR } from '@/lib/status-colors';
+
 const TASK_STATUS_COLUMNS: Array<{
   key: TaskStatus;
   label: string;
@@ -129,22 +131,6 @@ const PROJECT_STATUS_LABEL: Record<ProjectStatus, string> = {
   paused: '已暂停',
   completed: '已完成',
   unknown: '未知',
-};
-
-const PROJECT_STATUS_COLOR: Record<ProjectStatus, string> = {
-  planning: 'bg-slate-500/15 text-slate-300 border-slate-500/30',
-  active: 'bg-violet-500/15 text-violet-300 border-violet-500/30',
-  paused: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
-  completed: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
-  unknown: 'bg-muted text-muted-foreground border-border',
-};
-
-const OUTCOME_COLOR: Record<NonNullable<BoardTask['outcome']>, string> = {
-  SUCCESS: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400 border-emerald-500/30',
-  SUCCESS_WITH_NOTES:
-    'bg-cyan-500/15 text-cyan-700 dark:text-cyan-400 border-cyan-500/30',
-  REVISION_NEEDED: 'bg-amber-500/15 text-amber-700 dark:text-amber-400 border-amber-500/30',
-  BLOCKED: 'bg-red-500/15 text-red-700 dark:text-red-400 border-red-500/30',
 };
 
 const OUTCOME_LABEL: Record<NonNullable<BoardTask['outcome']>, string> = {

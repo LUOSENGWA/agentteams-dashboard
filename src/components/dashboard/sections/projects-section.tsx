@@ -47,16 +47,11 @@ import {
   type WorkflowTaskDetail,
 } from '@/lib/agentteams-projects-api';
 
-// ----- Status config (mirrors tasks-section colors/labels so the two
-// project views on the dashboard look consistent) -----
+// ----- Status config -----
+// Colors live in src/lib/status-colors.ts (shared with tasks-section,
+// dual-mode for light/dark themes — UI-01).
 
-const PROJECT_STATUS_COLOR: Record<ProjectStatus, string> = {
-  planning: 'bg-slate-500/15 text-slate-300 border-slate-500/30',
-  active: 'bg-violet-500/15 text-violet-300 border-violet-500/30',
-  paused: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
-  completed: 'bg-emerald-500/15 text-emerald-300 border-emerald-500/30',
-  unknown: 'bg-muted text-muted-foreground border-border',
-};
+import { PROJECT_STATUS_COLOR } from '@/lib/status-colors';
 
 // Same Chinese labels as tasks-section's PROJECT_STATUS_LABEL.
 const PROJECT_STATUS_LABEL: Record<ProjectStatus, string> = {

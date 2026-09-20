@@ -111,7 +111,8 @@ const COLOR_SCHEMES: Record<string, { label: string; variables: Record<string, s
     label: '翠绿',
     variables: {
       '--primary': '#10b981',
-      '--primary-foreground': '#ffffff',
+      // Dark foreground: white on #10b981 is only ~2.5:1 (UI-05).
+      '--primary-foreground': '#052e16',
       '--background': '#0a0a0a',
       '--foreground': '#fafafa',
       '--card': '#171717',

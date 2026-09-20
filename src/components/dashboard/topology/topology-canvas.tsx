@@ -135,7 +135,7 @@ export function TopologyCanvas({
 
   return (
     <div ref={containerRef} className="w-full h-[400px] border border-border rounded-lg bg-card/30 overflow-hidden">
-      <svg width={size.width} height={size.height}>
+      <svg width={size.width} height={size.height} role="img" aria-label="集群拓扑图：Manager → Team → Worker 三层节点与连线">
         {/* Layer labels */}
         <text x={12} y={30} className="fill-muted-foreground text-[10px] font-medium">Managers</text>
         <text x={12} y={size.height * 0.4 - 10} className="fill-muted-foreground text-[10px] font-medium">Teams</text>
@@ -154,10 +154,9 @@ export function TopologyCanvas({
               y1={src.y + 12}
               x2={tgt.x}
               y2={tgt.y - 12}
-              stroke={isHighlighted ? '#10b981' : '#64748b'}
-              strokeWidth={isHighlighted ? 2 : 1}
+              strokeWidth={isHighlighted ? 2 : 1.5}
               strokeDasharray={isHighlighted ? undefined : '4 2'}
-              opacity={isHighlighted ? 1 : 0.4}
+              className={isHighlighted ? 'stroke-primary' : 'stroke-muted-foreground/60'}
             />
           );
         })}
@@ -174,8 +173,8 @@ export function TopologyCanvas({
               key={node.id}
               onMouseEnter={() => setHoveredNode(node.id)}
               onMouseLeave={() => setHoveredNode(null)}
-              style={{ cursor: 'pointer' }}
             >
+              <title>{`${node.label}（${node.type} / ${node.phase}）`}</title>
               {/* Outer ring (phase color) */}
               <circle cx={node.x} cy={node.y} r={radius + 3} fill={phaseFill} opacity={0.3} />
               {/* Main circle */}
@@ -184,8 +183,9 @@ export function TopologyCanvas({
                 cy={node.y}
                 r={radius}
                 fill={color}
-                stroke={isHovered ? '#fff' : 'transparent'}
+                stroke={isHovered ? 'currentColor' : 'transparent'}
                 strokeWidth={2}
+                className="text-foreground"
               />
               {/* Label */}
               <text

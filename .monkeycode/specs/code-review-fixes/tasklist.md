@@ -72,13 +72,13 @@
     - 多组件共享同一 tick，卸载全部组件后 interval 清理
   - [x] 7.5 知识库 runtime 过滤（FUNC-10）：`knowledge-section.tsx` worker 下拉仅列 `runtime === 'qwenpaw'`，无 qwenpaw Worker 时显示「知识库当前仅支持 QwenPaw 运行时」空态说明（用户 2026-09-20 确认口径）
 
-- [ ] 8. 主题与视觉修复（UI-01~05）
-  - [ ] 8.1 状态徽章配色修复（UI-01）：`projects-section.tsx`/`tasks-section.tsx` 改为 `text-*-700 dark:text-*-400` 双模式，抽取共享常量模块消除双份镜像 map
-  - [ ] 8.2 可视化配色接入主题 token（UI-02）：`topology-canvas.tsx` 色板改用 CSS 变量，连带 `overview-section` recharts、`phase-colors`、`agent-health`、`worker-session-dot`；去掉无 onClick 的 pointer 光标
-  - [ ] 8.3 quickstart 无效 CSS 修复（UI-03）：`rgba(var(--primary),0.1)` 改为 Tailwind 透明度类，完成开关补 `aria-pressed`
-  - [ ] 8.4 mermaid 主题跟随（UI-04）：`mermaid-renderer.tsx` 按解析主题选择 mermaid theme，显式声明 `securityLevel: 'strict'`
-  - [ ] 8.5 浅色主题对比度达标（UI-05）：`globals.css` muted-foreground 加深、聊天链接/错误色加深、theme-tab emerald 预设前景改深色
-  - [ ] 8.6 为对比度计算编写属性测试（主题 token 满足 WCAG AA）
+- [x] 8. 主题与视觉修复（UI-01~05）
+  - [x] 8.1 状态徽章配色修复（UI-01）：`projects-section.tsx`/`tasks-section.tsx` 改为 `text-*-700 dark:text-*-400` 双模式，抽取共享常量模块消除双份镜像 map
+  - [x] 8.2 可视化配色接入主题 token（UI-02）：`topology-canvas.tsx` 色板改用 CSS 变量，连带 `overview-section` recharts、`phase-colors`、`agent-health`、`worker-session-dot`；去掉无 onClick 的 pointer 光标
+  - [x] 8.3 quickstart 无效 CSS 修复（UI-03）：`rgba(var(--primary),0.1)` 改为 Tailwind 透明度类，完成开关补 `aria-pressed`
+  - [x] 8.4 mermaid 主题跟随（UI-04）：`mermaid-renderer.tsx` 按解析主题选择 mermaid theme，显式声明 `securityLevel: 'strict'`
+  - [x] 8.5 浅色主题对比度达标（UI-05）：`globals.css` muted-foreground 加深、聊天链接/错误色加深、theme-tab emerald 预设前景改深色
+  - [x] 8.6 为对比度计算编写属性测试（主题 token 满足 WCAG AA）
     - 对 light/dark/high-contrast 三组核心 token 计算 WCAG 对比度，正文级组合 ≥ 4.5:1
 
 - [ ] 9. 可访问性修复（A11Y-01~04）

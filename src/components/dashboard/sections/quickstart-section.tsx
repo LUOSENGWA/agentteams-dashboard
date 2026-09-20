@@ -337,11 +337,9 @@ export function QuickstartSection() {
                     {/* Step number / completion indicator */}
                     <button
                       onClick={() => toggleStep(step.step)}
-                      className="w-8 h-8 rounded-full flex items-center justify-center shrink-0 transition-colors cursor-pointer"
+                      aria-pressed={isCompleted}
+                      className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 transition-colors cursor-pointer ${isCompleted ? 'bg-emerald-500/10' : 'bg-primary/10'}`}
                       title={isCompleted ? '标记为未完成' : '标记为已完成'}
-                      style={{
-                        backgroundColor: isCompleted ? 'rgba(16,185,129,0.1)' : 'rgba(var(--primary),0.1)',
-                      }}
                     >
                       {isCompleted ? (
                         <CheckCircle2 className="w-5 h-5 text-emerald-500" />

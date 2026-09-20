@@ -155,7 +155,7 @@ export function MarkdownMessage({ content, formattedContent, msgType, mediaUrl, 
       const mentionResolved = resolveMentionsInHtml(
         formatted,
         memberMap,
-        (name) => `<span class="matrix-mention text-emerald-600 font-medium">${name}</span>`
+        (name) => `<span class="matrix-mention text-emerald-700 dark:text-emerald-400 font-medium">${name}</span>`
       );
       // Runtimes that wrap GFM tables in <pre><code> blocks render as literal
       // pipes; convert them to real tables before the HTML path renders.
@@ -198,7 +198,7 @@ export function MarkdownMessage({ content, formattedContent, msgType, mediaUrl, 
             href={mxcToDownloadUrl(mediaUrl ?? '', resolvedHomeserver, { download: true })}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex items-center gap-1 text-xs text-emerald-600 hover:underline shrink-0"
+            className="inline-flex items-center gap-1 text-xs text-emerald-700 dark:text-emerald-400 hover:underline shrink-0"
           >
             <Download className="w-3 h-3" />
             下载
@@ -252,7 +252,7 @@ export function MarkdownMessage({ content, formattedContent, msgType, mediaUrl, 
           href={mxcToDownloadUrl(mediaUrl ?? '', resolvedHomeserver, { download: true })}
           target="_blank"
           rel="noopener noreferrer"
-          className="flex items-center gap-2 text-sm text-emerald-600 hover:underline"
+          className="flex items-center gap-2 text-sm text-emerald-700 dark:text-emerald-400 hover:underline"
           title="下载文件"
         >
           <FileText className="w-4 h-4 shrink-0" />
@@ -312,7 +312,7 @@ export function MarkdownMessage({ content, formattedContent, msgType, mediaUrl, 
           <div
             dangerouslySetInnerHTML={{ __html: enhancedHtml }}
             className="[&>p]:mb-1 [&>br]:block
-              [&_a]:text-emerald-600 [&_a]:hover:underline
+              [&_a]:text-emerald-700 dark:text-emerald-400 [&_a]:hover:underline
               [&_img]:max-w-full [&_img]:max-h-64 [&_img]:rounded-lg
               [&_pre]:bg-muted/50 [&_pre]:rounded-lg [&_pre]:p-3
               [&_code]:bg-muted/50 [&_code]:px-1 [&_code]:py-0.5 [&_code]:rounded
@@ -398,7 +398,7 @@ export function MarkdownMessage({ content, formattedContent, msgType, mediaUrl, 
                 href={href}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="text-emerald-600 hover:underline"
+                className="text-emerald-700 dark:text-emerald-400 hover:underline"
               >
                 {children}
               </a>
